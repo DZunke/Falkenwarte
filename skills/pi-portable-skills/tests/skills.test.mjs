@@ -49,6 +49,8 @@ test("team issue workshop delegates read-only expertise and requires approved, v
   assert.match(workshop, /Albert Metzler/);
   assert.match(workshop, /Brunhilde Nordwald/);
   assert.match(workshop, /read-only, bounded/);
+  assert.match(workshop, /workflow: "parallel"/);
+  assert.match(workshop, /Never issue two simultaneous foreground/);
   assert.match(workshop, /draft the Issue title and body in English by default/);
   assert.match(workshop, /exact target repository, title and full body/);
   assert.match(workshop, /gh issue create --repo OWNER\/REPO/);
@@ -56,6 +58,7 @@ test("team issue workshop delegates read-only expertise and requires approved, v
   assert.match(workshop, /Do not auto-retry/);
   assert.match(waldemar, /Reply to the user in the language of their latest substantive message/);
   assert.match(waldemar, /Write work products in English by default/);
+  assert.match(waldemar, /do not issue two concurrent foreground/);
   assert.match(waldemar, /^    - team-issue-workshop$/m);
   assert.match(brunhilde, /^    - team-issue-workshop$/m);
 });

@@ -18,6 +18,22 @@ Do not use `/run` when you expect the child's answer to appear directly in chat.
 
 [`agents/albert-metzler.md`](../agents/albert-metzler.md) loads a separate, fixed [`albert.ts`](../albert.ts), requests fresh context, and selects the four skills from [`skills/pi-portable-skills/`](../../../skills/pi-portable-skills/). The agent has `read` and `bash` for inspecting a repository and using the pinned browser CLI; it is **not** a read-only tool sandbox. Its instructions prohibit edits and external submissions, but use a protected environment for untrusted tasks. Ask Waldemar to call `subagent` directly with `agent: "albert-metzler"`, `context: "fresh"`, a bounded domain question and `async: false` if you need the answer returned in chat. Albert will identify gaps, ask one consequential question at a time through Waldemar and distinguish expert evidence from web research. Brunhilde can request his input through Waldemar rather than inventing business rules. A separate browser download may be necessary on a new machine; see [the skill package](../../../skills/pi-portable-skills/README.md).
 
+## Ask both specialists in parallel
+
+When Albert and Brunhilde can examine the same brief independently, use **one** `subagent` call with a parallel workflow, not two simultaneous foreground tool calls. Each task gets a distinct read-only assignment; Waldemar reconciles their findings after both finish. The tool's rejection message about "one subagent call per turn" refers to overlapping foreground dispatches, not a limit of one child.
+
+```js
+subagent({
+  workflow: "parallel",
+  args: { tasks: [
+    { agent: "albert-metzler", task: "Check the domain terms and user journeys in the provided brief. Read only; report open questions." },
+    { agent: "brunhilde-nordwald", task: "Check the architecture and failure modes in the same brief. Read only; report risks." }
+  ] }
+})
+```
+
+Give each child the actual project path, relevant files and brief rather than the placeholder tasks above. When Brunhilde's review must build on Albert's output, use a single scripted sequential workflow instead. Do not switch to a different runner just to bypass a launch rejection; first inspect the run state.
+
 ## Select a personality for a one-off child
 
 Use `personality-delegate` for another loaded identity. Waldemar can call pi-subagents with a per-run binding (the actual tool input, not a Pi slash command):
