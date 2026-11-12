@@ -8,7 +8,7 @@ Who benefits, and what should be different when this is done?
 
 ## Context
 
-What happens today? Link observed behavior, related Issues or accepted project decisions when known. Separate evidence from assumptions.
+What happens today? Link observed behavior, related Issues or accepted project decisions when known. For each evidence item, state the fact or behavior it supports and why it matters to this Issue; a bare list of files, classes or symbols is not evidence. Separate evidence from assumptions.
 
 ## Acceptance examples
 
@@ -17,7 +17,7 @@ What happens today? Link observed behavior, related Issues or accepted project d
 
 ## Scope and non-goals
 
-Name the smallest useful increment and what this Issue does not decide or implement.
+Name the smallest useful increment and only the related boundaries this Issue does not decide or implement. Omit unrelated brainstorming ideas, hypothetical future work and rejected alternatives unless their relation is needed to disambiguate this Issue.
 
 ## Risks
 
