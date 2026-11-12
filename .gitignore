@@ -7,6 +7,12 @@
 !config/mcp.json
 **/settings.json
 !config/settings.json
+!.falkenwarte/settings.json
+!templates/falkenwarte-project/settings.json
+**/.falkenwarte/runs/
+**/.falkenwarte/reviews/
+**/.pi/workflows/
+**/.pi/workflow-subagents/
 **/models.json
 **/models-store.json
 **/sessions/

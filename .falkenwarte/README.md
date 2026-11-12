@@ -1,0 +1,7 @@
+# Falkenwarte in this project
+
+This directory holds **this repository's** project-owned configuration, run references, review output, durable decisions and domain knowledge. Falkenwarte is the portable Pi profile; a different project owns its own `.falkenwarte/` after that project's maintainer opts in. The global profile supplies the methods and specialists, not a shared store of customer rules.
+
+Start at [`knowledge/README.md`](knowledge/README.md). Markdown here is reviewed project content. [`settings.json`](settings.json) selects `review.delivery: "pr"`, keeps `execution.autoStart` disabled until the worker tool ceiling is enforced, and declares reviewed host-run verification argv. It is not trusted Pi configuration; treat edits to test commands as executable-code review. Pi still discovers trusted project settings under `.pi/`. Ignored `runs/` holds per-project flow snapshots; ignored `reviews/` is reserved for review output. Neither belongs in Git. Do not store credentials, browser sessions, provider usage responses or raw subagent transcripts here. The old `docs/adr/` path has navigation pointers only.
+
+To work on a new project, first inspect its `AGENTS.md` and existing ADR/domain conventions. Falkenwarte's default is `.falkenwarte/knowledge/decisions/` and `.falkenwarte/knowledge/domain/` when no established convention exists. Preserve a project's existing decision archive instead of silently migrating it. See [`docs/adr-workflow.md`](../docs/adr-workflow.md) for review and approval.

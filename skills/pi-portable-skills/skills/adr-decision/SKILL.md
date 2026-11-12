@@ -5,7 +5,7 @@ description: Coordinate a bounded architecture decision with evidence, specialis
 
 # Coordinate a decision
 
-This skill is reusable across projects; the ADR belongs to the **current project**, not to this portable profile. Follow the project's `AGENTS.md` and existing decision directory if one exists; otherwise propose `docs/adr/`. Use [assets/adr-template.md](assets/adr-template.md) as a starting point, not an authority to overwrite a project's format.
+This skill is reusable across projects; the ADR belongs to the **current project**, not to this portable profile. Follow the project's `AGENTS.md` and existing decision directory if one exists; otherwise use `.falkenwarte/knowledge/decisions/` after the project owner opts into Falkenwarte. Never silently migrate another project's existing ADR archive. Use [assets/adr-template.md](assets/adr-template.md) as a starting point, not an authority to overwrite a project's format.
 
 1. State the decision in one sentence, the scope, constraints, known evidence, and what can wait. If no consequential choice exists, skip the ADR and explain why. Reuse or supersede an existing relevant ADR rather than duplicating it.
 2. Ask Albert Metzler to investigate contested domain language, business invariants, examples and exceptions **when relevant**. Ask Brunhilde Nordwald to challenge boundaries, alternatives and architectural consequences. Give each a bounded read-only brief with source paths; Waldemar owns synthesis and must distinguish observations from proposals. Do not summon specialists for ceremonial approval.
