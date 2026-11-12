@@ -8,7 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
 const domainNames = ["ddd-domain-discovery", "ddd-strategic-modeling", "domain-story-mapping"];
-const names = ["agent-browser", ...domainNames, "adr-decision", "github-issues-projects"];
+const names = ["agent-browser", ...domainNames, "adr-decision", "github-issues-projects", "team-issue-workshop"];
 
 test("portable skill package pins its browser CLI and exposes discoverable skill directories", () => {
   assert.deepEqual(pkg.pi.skills, ["./skills"]);
@@ -39,4 +39,23 @@ test("decision and GitHub workflows link durable evidence without silently mutat
   assert.match(adr, /until the user approves/);
   assert.match(github, /actual task repository/);
   assert.match(github, /Never delete issues/);
+});
+
+test("team issue workshop delegates read-only expertise and requires approved, verified issue creation", () => {
+  const workshop = readFileSync(join(root, "skills/team-issue-workshop/SKILL.md"), "utf8");
+  const waldemar = readFileSync(join(root, "../../personalities/waldemar.md"), "utf8");
+  const brunhilde = readFileSync(join(root, "../../personalities/brunhilde-nordwald.md"), "utf8");
+  assert.ok(existsSync(join(root, "skills/team-issue-workshop/assets/issue-draft.md")));
+  assert.match(workshop, /Albert Metzler/);
+  assert.match(workshop, /Brunhilde Nordwald/);
+  assert.match(workshop, /read-only, bounded/);
+  assert.match(workshop, /draft the Issue title and body in English by default/);
+  assert.match(workshop, /exact target repository, title and full body/);
+  assert.match(workshop, /gh issue create --repo OWNER\/REPO/);
+  assert.match(workshop, /gh issue view <exact-url>/);
+  assert.match(workshop, /Do not auto-retry/);
+  assert.match(waldemar, /Reply to the user in the language of their latest substantive message/);
+  assert.match(waldemar, /Write work products in English by default/);
+  assert.match(waldemar, /^    - team-issue-workshop$/m);
+  assert.match(brunhilde, /^    - team-issue-workshop$/m);
 });
