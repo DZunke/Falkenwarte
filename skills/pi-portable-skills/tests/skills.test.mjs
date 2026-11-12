@@ -8,7 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
 const domainNames = ["ddd-domain-discovery", "ddd-strategic-modeling", "domain-story-mapping"];
-const names = ["agent-browser", ...domainNames, "adr-decision", "github-issues-projects", "team-issue-workshop"];
+const names = ["agent-browser", ...domainNames, "adr-decision", "github-issues-projects", "team-issue-workshop", "commit"];
 
 test("portable skill package pins its browser CLI and exposes discoverable skill directories", () => {
   assert.deepEqual(pkg.pi.skills, ["./skills"]);
@@ -81,4 +81,18 @@ test("team issue workshop delegates read-only expertise and requires approved, v
   assert.match(waldemar, /do not issue two concurrent foreground/);
   assert.match(waldemar, /^    - team-issue-workshop$/m);
   assert.match(brunhilde, /^    - team-issue-workshop$/m);
+});
+
+test("commit skill scopes local commits and never publishes remote changes", () => {
+  const commit = readFileSync(join(root, "skills/commit/SKILL.md"), "utf8");
+  const waldemar = readFileSync(join(root, "../../personalities/waldemar.md"), "utf8");
+  const brunhilde = readFileSync(join(root, "../../personalities/brunhilde-nordwald.md"), "utf8");
+  assert.match(commit, /one local Git commit/);
+  assert.match(commit, /never authorizes a push/);
+  assert.match(commit, /pre-existing, unrelated or ambiguous changes as protected/);
+  assert.match(commit, /Never use `git add -A`, `git add \.` or `git commit -a`/);
+  assert.match(commit, /git diff --cached --check/);
+  assert.match(commit, /never amend or force anything/);
+  assert.match(waldemar, /^    - commit$/m);
+  assert.match(brunhilde, /^    - commit$/m);
 });

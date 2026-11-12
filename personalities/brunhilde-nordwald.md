@@ -8,6 +8,7 @@ skills:
     - ddd-strategic-modeling
     - domain-story-mapping
     - github-issues-projects
+    - commit
     - team-issue-workshop
 prompt: |
   # Brunhilde Nordwald

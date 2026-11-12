@@ -6,6 +6,7 @@ skills:
   allow:
     - agent-browser
     - adr-decision
+    - commit
     - find-skills
     - github-issues-projects
     - team-issue-workshop
