@@ -1,0 +1,17 @@
+{
+  "name": "pi-subscription-status",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional, fail-closed provider quota status for the Falkenwarte footer.",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/status.test.mjs",
+    "smoke": "node --test tests/pi-smoke.test.mjs"
+  }
+}

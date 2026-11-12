@@ -5,10 +5,12 @@
   "separator": "none",
   "iconMode": "nerd",
   "terminal": { "widthMode": "full", "colorLevel": "truecolor" },
-  "extensionStatusRow": { "hiddenKeys": ["pi-personalities"], "knownKeys": ["pi-personalities"] },
+  "extensionStatusRow": { "hiddenKeys": ["pi-personalities", "falkenwarte-usage"], "knownKeys": ["pi-personalities", "falkenwarte-usage"] },
   "lines": [
     [
       { "id": "model", "type": "model-provider", "enabled": true, "options": { "fg": "ansi256:230", "bg": "ansi256:94", "bold": true } },
+      { "id": "thinking", "type": "thinking-level", "enabled": true, "options": { "icon": " · ", "fg": "ansi256:230", "bg": "ansi256:94", "bold": true, "hideWhenEmpty": true } },
+      { "id": "subscription", "type": "external-status", "enabled": true, "options": { "externalStatusKey": "falkenwarte-usage", "icon": " · ", "fg": "ansi256:230", "bg": "ansi256:94", "bold": true, "hideWhenEmpty": true } },
       { "id": "model-branch", "type": "separator", "enabled": true, "options": { "separator": "powerline-right-spaced", "fg": "ansi256:94", "bg": "ansi256:180" } },
       { "id": "branch", "type": "git-branch", "enabled": true, "options": { "fg": "ansi256:235", "bg": "ansi256:180", "bold": true } },
       { "id": "branch-tokens", "type": "separator", "enabled": true, "options": { "separator": "powerline-right-spaced", "fg": "ansi256:180", "bg": "ansi256:223" } },
