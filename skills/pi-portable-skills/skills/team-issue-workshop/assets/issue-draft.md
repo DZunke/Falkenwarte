@@ -1,6 +1,6 @@
 # Issue draft checklist
 
-Use only sections supported by the conversation. Remove placeholders before showing the user the final body.
+Use only sections supported by the conversation. Remove placeholders and empty sections before showing the user the final body. The approval preview needs the title and full body, not a repository line when using the current checkout.
 
 ## Outcome
 
@@ -19,6 +19,10 @@ What happens today? Link observed behavior, related Issues or accepted project d
 
 Name the smallest useful increment and what this Issue does not decide or implement.
 
-## Risks and open questions
+## Risks
 
-Record unresolved specialist findings and decisions the implementer must obtain; do not silently choose an architecture.
+Record known failure modes or tradeoffs and how they will be checked or mitigated. Risks are not questions.
+
+## Open questions (only if the user explicitly keeps them open)
+
+Record only decisions the user knowingly deferred, who should resolve them and when. Otherwise settle questions during the workshop and omit this section; never invent a requirement or silently choose an architecture.

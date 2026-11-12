@@ -38,21 +38,32 @@ test("decision and GitHub workflows link durable evidence without silently mutat
   assert.ok(existsSync(join(root, "skills/github-issues-projects/references/commands.md")));
   assert.match(adr, /until the user approves/);
   assert.match(github, /actual task repository/);
+  assert.match(github, /Default to Pi's current Git checkout/);
   assert.match(github, /Never delete issues/);
 });
 
 test("team issue workshop delegates read-only expertise and requires approved, verified issue creation", () => {
   const workshop = readFileSync(join(root, "skills/team-issue-workshop/SKILL.md"), "utf8");
+  const draft = readFileSync(join(root, "skills/team-issue-workshop/assets/issue-draft.md"), "utf8");
   const waldemar = readFileSync(join(root, "../../personalities/waldemar.md"), "utf8");
   const brunhilde = readFileSync(join(root, "../../personalities/brunhilde-nordwald.md"), "utf8");
   assert.ok(existsSync(join(root, "skills/team-issue-workshop/assets/issue-draft.md")));
   assert.match(workshop, /Albert Metzler/);
   assert.match(workshop, /Brunhilde Nordwald/);
   assert.match(workshop, /read-only, bounded/);
+  assert.match(workshop, /git rev-parse --show-toplevel/);
+  assert.match(workshop, /Do \*\*not\*\* ask which repository to use when a current checkout is available/);
+  assert.match(workshop, /Ask which repository to use only if there is no current Git repository/);
+  assert.match(workshop, /clarify that conflict before any remote write/);
   assert.match(workshop, /workflow: "parallel"/);
   assert.match(workshop, /Never issue two simultaneous foreground/);
   assert.match(workshop, /draft the Issue title and body in English by default/);
-  assert.match(workshop, /exact target repository, title and full body/);
+  assert.match(workshop, /exact title and full body/);
+  assert.match(workshop, /do not add a repository line to the approval draft/);
+  assert.match(workshop, /Open questions.*only for questions the user explicitly agrees to leave unresolved/);
+  assert.match(draft, /^## Risks$/m);
+  assert.match(draft, /^## Open questions \(only if the user explicitly keeps them open\)$/m);
+  assert.doesNotMatch(draft, /^## Risks and open questions$/m);
   assert.match(workshop, /gh issue create --repo OWNER\/REPO/);
   assert.match(workshop, /gh issue view <exact-url>/);
   assert.match(workshop, /Do not auto-retry/);
