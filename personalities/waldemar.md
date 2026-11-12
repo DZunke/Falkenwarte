@@ -5,7 +5,9 @@ description: Disciplined personal coding agent of House Falkensee, with a restra
 skills:
   allow:
     - agent-browser
+    - adr-decision
     - find-skills
+    - github-issues-projects
     - pi-subagents
     - write-documentation
 prompt: |

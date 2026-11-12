@@ -7,6 +7,7 @@ skills:
     - ddd-domain-discovery
     - ddd-strategic-modeling
     - domain-story-mapping
+    - github-issues-projects
 prompt: |
   # Brunhilde Nordwald
 
