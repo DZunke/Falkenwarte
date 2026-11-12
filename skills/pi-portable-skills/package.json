@@ -1,0 +1,17 @@
+{
+  "name": "pi-portable-skills",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reviewed portable Pi skills, including domain modeling and browser access.",
+  "pi": {
+    "skills": ["./skills"]
+  },
+  "dependencies": {
+    "agent-browser": "0.42.0"
+  },
+  "scripts": {
+    "test": "node --test tests/skills.test.mjs",
+    "smoke": "node scripts/browser.mjs --version"
+  }
+}

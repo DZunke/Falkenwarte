@@ -1,0 +1,20 @@
+{
+  "name": "pi-personalities",
+  "version": "0.1.0",
+  "description": "Select Markdown-defined personalities for individual Pi processes and sessions.",
+  "keywords": ["pi-package", "pi", "personalities", "extension"],
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "pi-subagents": {
+    "agents": ["./agents"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/registry.test.mjs",
+    "smoke": "node --test tests/pi-smoke.test.mjs"
+  }
+}

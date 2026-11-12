@@ -1,0 +1,16 @@
+**/node_modules/
+**/.env
+**/.env.*
+**/auth.json
+**/mcp-auth.json
+**/mcp.json
+!config/mcp.json
+**/settings.json
+!config/settings.json
+**/models.json
+**/models-store.json
+**/sessions/
+**/portable-pi-backups/
+**/.portable-pi-state.json
+**/*.pem
+**/*.key

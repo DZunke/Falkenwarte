@@ -1,0 +1,15 @@
+{
+  "name": "pi-atlavium",
+  "version": "0.1.0",
+  "description": "Atlavium: warm parchment-and-gold light and dark themes for Pi.",
+  "keywords": ["pi-package", "pi-theme", "atlavium"],
+  "pi": {
+    "themes": ["./themes/atlavium-light.json", "./themes/atlavium.json"]
+  },
+  "scripts": {
+    "test": "node --test tests/theme.test.mjs",
+    "preview": "node scripts/preview.mjs",
+    "visual:update": "node scripts/visual.mjs --update",
+    "visual:test": "node scripts/visual.mjs"
+  }
+}

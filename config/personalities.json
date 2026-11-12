@@ -1,0 +1,4 @@
+{
+  "sources": ["personalities/waldemar.md", "personalities/brunhilde-nordwald.md", "personalities/albert-metzler.md"],
+  "default": "waldemar"
+}

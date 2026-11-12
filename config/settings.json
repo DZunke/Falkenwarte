@@ -1,0 +1,54 @@
+{
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-luna",
+  "defaultThinkingLevel": "max",
+  "theme": "atlavium-light/atlavium",
+  "skills": [
+    "-skills/sentry-php-sdk/SKILL.md",
+    "-skills/sentry-fix-issues/SKILL.md",
+    "-skills/sentry-feature-setup/SKILL.md",
+    "-skills/sentry-cli/SKILL.md",
+    "-skills/tabler/SKILL.md",
+    "-skills/postgres/SKILL.md",
+    "-skills/pgvector-semantic-search/SKILL.md",
+    "-skills/microsoft-foundry/SKILL.md",
+    "-skills/gh-cli/SKILL.md",
+    "+skills/find-skills/SKILL.md",
+    "-skills/excalidraw-diagram-generator/SKILL.md"
+  ],
+  "quietStartup": true,
+  "hideThinkingBlock": false,
+  "editorPaddingX": 1,
+  "outputPad": 1,
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "autocompleteMaxVisible": 8,
+  "doubleEscapeAction": "tree",
+  "treeFilterMode": "default",
+  "collapseChangelog": true,
+  "enableSkillCommands": true,
+  "branchSummary": {
+    "reserveTokens": 16384,
+    "skipPrompt": false
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3,
+    "baseDelayMs": 2000,
+    "provider": {
+      "maxRetries": 0,
+      "maxRetryDelayMs": 60000
+    }
+  },
+  "terminal": {
+    "showImages": true,
+    "imageWidthCells": 60
+  },
+  "images": {
+    "autoResize": true,
+    "blockImages": false
+  }
+}

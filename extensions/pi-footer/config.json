@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "enabled": true,
+  "preset": "powerline",
+  "separator": "none",
+  "iconMode": "nerd",
+  "terminal": { "widthMode": "full", "colorLevel": "truecolor" },
+  "extensionStatusRow": { "hiddenKeys": ["pi-personalities"], "knownKeys": ["pi-personalities"] },
+  "lines": [
+    [
+      { "id": "model", "type": "model-provider", "enabled": true, "options": { "fg": "ansi256:230", "bg": "ansi256:94", "bold": true } },
+      { "id": "model-branch", "type": "separator", "enabled": true, "options": { "separator": "powerline-right-spaced", "fg": "ansi256:94", "bg": "ansi256:180" } },
+      { "id": "branch", "type": "git-branch", "enabled": true, "options": { "fg": "ansi256:235", "bg": "ansi256:180", "bold": true } },
+      { "id": "branch-tokens", "type": "separator", "enabled": true, "options": { "separator": "powerline-right-spaced", "fg": "ansi256:180", "bg": "ansi256:223" } },
+      { "id": "tokens", "type": "tokens", "enabled": true, "options": { "fg": "ansi256:235", "bg": "ansi256:223" } },
+      { "id": "tokens-context", "type": "separator", "enabled": true, "options": { "separator": "powerline-right-spaced", "fg": "ansi256:223", "bg": "ansi256:144" } },
+      { "id": "context", "type": "context-bar", "enabled": true, "options": { "fg": "ansi256:235", "bg": "ansi256:144", "contextBarMode": "medium" } },
+      { "id": "context-speed", "type": "separator", "enabled": true, "options": { "separator": "powerline-right-spaced", "fg": "ansi256:144", "bg": "ansi256:108" } },
+      { "id": "speed", "type": "output-speed", "enabled": true, "options": { "fg": "ansi256:235", "bg": "ansi256:108" } },
+      { "id": "speed-time", "type": "separator", "enabled": true, "options": { "separator": "powerline-right-spaced", "fg": "ansi256:108", "bg": "ansi256:187" } },
+      { "id": "time", "type": "total-time", "enabled": true, "options": { "fg": "ansi256:235", "bg": "ansi256:187" } },
+      { "id": "right-align-personality", "type": "flex-separator", "enabled": true, "options": {} },
+      { "id": "active-personality", "type": "external-status", "enabled": true, "options": { "externalStatusKey": "pi-personalities", "icon": "󰀄 ", "fg": "ansi256:230", "bg": "ansi256:94", "bold": true, "hideWhenEmpty": true } }
+    ]
+  ]
+}
