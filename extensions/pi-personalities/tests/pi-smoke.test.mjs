@@ -14,7 +14,7 @@ const brunhildeProfile = resolve(dirname(fileURLToPath(import.meta.url)), "../..
 const albertProfile = resolve(dirname(fileURLToPath(import.meta.url)), "../../../personalities/albert-metzler.md");
 const markdown = (name) => `---\nname: ${name}\ntitle: ${name} title\ndescription: ${name} description\nprompt: |\n  # ${name} instructions\n\n  Follow the task.\n---\n`;
 
-function runPi({ flag, envName, binding, commands, probe = false, config, subagent = false, childExtension = extension, skillFixtures = false }) {
+function runPi({ flag, envName, binding, commands, probe = false, config, subagent = false, workflowWorker = false, childExtension = extension, skillFixtures = false }) {
   const root = mkdtempSync(join(tmpdir(), "pi-personalities-smoke-"));
   const agentDir = join(root, "agent");
   const profiles = join(agentDir, "personalities");
@@ -65,6 +65,7 @@ function runPi({ flag, envName, binding, commands, probe = false, config, subage
       PI_OFFLINE: "1",
       PI_SKIP_VERSION_CHECK: "1",
       PI_SUBAGENT_CHILD: subagent ? "1" : "",
+      PI_WORKFLOW_ROLE: workflowWorker ? "worker" : "",
       ...(envName ? { PI_PERSONALITY: envName } : { PI_PERSONALITY: "" }),
       ...(binding ? { PI_SUBAGENT_EXTENSION_BINDINGS: JSON.stringify({ "pi-personalities/1": { name: binding } }) } :
         { PI_SUBAGENT_EXTENSION_BINDINGS: "" }),
@@ -133,6 +134,15 @@ test("background children never inherit Waldemar's default or shell selection", 
   assert.equal(child.savedConfig.default, "waldemar");
   const bound = runPi({ subagent: true, config, envName: "waldemar", binding: "brunhilde-nordwald", commands: ["/personality list"] });
   assert.ok(bound.messages.some((message) => message.includes("Personality: brunhilde-nordwald")));
+});
+
+test("pi-workflow workers do not inherit Waldemar's default or shell identity", () => {
+  const config = { default: "waldemar", sources: ["personalities/waldemar.md", "personalities/brunhilde-nordwald.md"] };
+  const worker = runPi({ workflowWorker: true, config, envName: "waldemar", commands: ["/personality list", "/personality use waldemar"] });
+  assert.ok(worker.messages.some((message) => message.includes("Waldemar is the main orchestrator")));
+  assert.ok(worker.messages.some((message) => message.includes("default: none")));
+  const probe = runPi({ workflowWorker: true, config, envName: "waldemar", probe: true, commands: ["test prompt"] });
+  assert.ok(probe.stderr.includes("PERSONALITY_SECTION=undefined"), probe.stderr);
 });
 
 test("generic foreground children select a bound identity, never a saved Waldemar default", () => {

@@ -1,7 +1,11 @@
 {
-  "local": ["extensions/pi-personalities", "themes/pi-atlavium", "skills/pi-portable-skills"],
+  "local": ["extensions/pi-personalities", "extensions/pi-subscription-status", "extensions/pi-factory-flow", "themes/pi-atlavium", "skills/pi-portable-skills"],
   "remote": [
     "git:github.com/wobondar/pi-footer@e339196b1ee0285b5dc9508a6e4d61aff5dc4fb2",
-    "npm:pi-subagents@0.88.0"
-  ]
+    "npm:pi-subagents@0.88.0",
+    "npm:@agwab/pi-workflow@0.17.0"
+  ],
+  "platforms": {
+    "npm:@agwab/pi-workflow": ["linux", "darwin"]
+  }
 }

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "review": {
+    "delivery": "pr"
+  },
+  "execution": {
+    "autoStart": false
+  },
+  "verification": {
+    "commands": [
+      ["node", "--test", "tests/portable-pi.test.mjs", "tests/falkenwarte-project.test.mjs", "tests/falkenwarte-workflow.test.mjs"],
+      ["npm", "--prefix", "extensions/pi-factory-flow", "test"],
+      ["npm", "--prefix", "extensions/pi-personalities", "test"]
+    ]
+  }
+}

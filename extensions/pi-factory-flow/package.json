@@ -1,0 +1,12 @@
+{
+  "name": "pi-factory-flow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "pi": { "extensions": ["./index.ts"] },
+  "peerDependencies": { "@sinclair/typebox": "*", "@earendil-works/pi-tui": "*", "@earendil-works/pi-coding-agent": "*" },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/*.test.mjs",
+    "smoke": "node --test tests/pi-smoke.test.mjs"
+  }
+}

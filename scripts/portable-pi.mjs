@@ -181,6 +181,16 @@ function manifest(root) {
   if (!Array.isArray(packages.local) || !Array.isArray(packages.remote)) throw new Error("config/packages.json: expected local and remote arrays");
   packages.local.forEach((item) => localPackage(root, item));
   packages.remote.forEach(remoteSource);
+  if (packages.platforms !== undefined) {
+    object(packages.platforms, "config/packages.json.platforms");
+    for (const [name, platforms] of Object.entries(packages.platforms)) {
+      if (!packages.remote.some((source) => remoteIdentity(source) === name) || !Array.isArray(platforms) || !platforms.length ||
+          platforms.some((platform) => !["linux", "darwin", "win32"].includes(platform)) ||
+          new Set(platforms).size !== platforms.length) {
+        throw new Error(`config/packages.json.platforms: invalid restriction for ${name}`);
+      }
+    }
+  }
   const personalities = loadJson(path.join(root, "config/personalities.json"), {}, true);
   if (!Array.isArray(personalities.sources)) throw new Error("config/personalities.json: expected sources array");
   validDefault(root, personalities);
@@ -196,15 +206,21 @@ function manifest(root) {
 export function resourcePaths(root, agentDir, pathApi = path) {
   const relative = (filename) => pathApi.relative(agentDir, filename);
   return {
-    local: ["extensions/pi-personalities", "themes/pi-atlavium", "skills/pi-portable-skills"].map((dir) => relative(pathApi.join(root, dir))),
+    local: ["extensions/pi-personalities", "extensions/pi-subscription-status", "extensions/pi-factory-flow", "themes/pi-atlavium", "skills/pi-portable-skills"].map((dir) => relative(pathApi.join(root, dir))),
     personality: relative(pathApi.join(root, "personalities", "waldemar.md")),
   };
 }
 function source(entry) { return typeof entry === "string" ? entry : entry?.source; }
+export function managedPackageSources(config, platform = process.platform) {
+  return config.remote.filter((source) => {
+    const allowed = config.platforms?.[remoteIdentity(source)];
+    return !allowed || allowed.includes(platform);
+  });
+}
 function settingsPackages(root, agentDir, config) {
   return [
     ...config.local.map((dir) => path.relative(agentDir, localPackage(root, dir))),
-    ...config.remote,
+    ...managedPackageSources(config),
   ];
 }
 function personalitySources(root, agentDir, config) {
@@ -420,8 +436,10 @@ export function verifyInstalled(root, agentDir, runner = run) {
   });
   const response = result.trim().split("\n").map((line) => JSON.parse(line)).find((item) => item.id === "commands");
   const names = response?.data?.commands?.map((item) => item.name) ?? [];
-  if (!response?.success || !["personality", "skills", "footer", "subagents", "subagents-doctor"].every((name) => names.includes(name))) {
-    throw new Error("Pi integration check failed: expected /personality, /skills, /footer and pi-subagents commands");
+  const required = ["personality", "skills", "footer", "falkenwarte-usage", "factory", "subagents", "subagents-doctor"];
+  if (managedPackageSources(manifest(root).packages).some((source) => remoteIdentity(source) === "npm:@agwab/pi-workflow")) required.push("workflow");
+  if (!response?.success || !required.every((name) => names.includes(name))) {
+    throw new Error("Pi integration check failed: expected /personality, /skills, /footer, /falkenwarte-usage, /factory and pi-subagents commands");
   }
   return names;
 }
@@ -463,7 +481,7 @@ function main() {
     if (command === "update") {
       // Pi update refreshes installed packages, but does not install a newly declared
       // remote that has no cache yet. Install exact pins first; pi install is idempotent.
-      for (const source of manifest(ROOT).packages.remote) {
+      for (const source of managedPackageSources(manifest(ROOT).packages)) {
         run("pi", ["install", source], { stdio: "inherit", env: { ...process.env, PI_CODING_AGENT_DIR: agentDir } });
       }
       run("pi", ["update", "--extensions"], { stdio: "inherit", env: { ...process.env, PI_CODING_AGENT_DIR: agentDir } });

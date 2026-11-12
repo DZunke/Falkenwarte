@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { apply, capture, prepare, resourcePaths, checkRemoteUpdates, pinRemote, verifyInstalled, ROOT } from "../scripts/portable-pi.mjs";
+import { apply, capture, prepare, resourcePaths, checkRemoteUpdates, pinRemote, verifyInstalled, managedPackageSources, ROOT } from "../scripts/portable-pi.mjs";
 import { contrast } from "../themes/pi-atlavium/scripts/colors.mjs";
 
 function fixture(t) {
@@ -13,7 +13,7 @@ function fixture(t) {
   const agent = path.join(base, "another home", ".pi", "agent");
   mkdirSync(agent, { recursive: true });
   for (const dirname of ["config", "personalities", "extensions/pi-footer"]) cpSync(path.join(ROOT, dirname), path.join(repo, dirname), { recursive: true });
-  for (const dirname of ["extensions/pi-personalities", "themes/pi-atlavium", "skills/pi-portable-skills"]) {
+  for (const dirname of ["extensions/pi-personalities", "extensions/pi-subscription-status", "extensions/pi-factory-flow", "themes/pi-atlavium", "skills/pi-portable-skills"]) {
     mkdirSync(path.join(repo, dirname), { recursive: true });
     cpSync(path.join(ROOT, dirname, "package.json"), path.join(repo, dirname, "package.json"));
   }
@@ -32,6 +32,14 @@ function ansi256(value) {
   return `#${channels.map((channel) => (channel ? 55 + 40 * channel : 0).toString(16).padStart(2, "0")).join("")}`;
 }
 
+test("workflow backend is pinned only on supported host platforms", () => {
+  const config = read(path.join(ROOT, "config/packages.json"));
+  assert.ok(managedPackageSources(config, "linux").includes("npm:@agwab/pi-workflow@0.17.0"));
+  assert.ok(managedPackageSources(config, "darwin").includes("npm:@agwab/pi-workflow@0.17.0"));
+  assert.ok(!managedPackageSources(config, "win32").some((source) => source.includes("@agwab/pi-workflow")));
+  assert.ok(managedPackageSources(config, "win32").includes("npm:pi-subagents@0.88.0"));
+});
+
 test("fresh install, repeatable apply, unrelated settings/packages are preserved", (t) => {
   const { repo, agent } = fixture(t);
   put(path.join(agent, "settings.json"), { quietStartup: true, packages: ["npm:unrelated@1.0.0"], localOnly: 5 });
@@ -39,7 +47,7 @@ test("fresh install, repeatable apply, unrelated settings/packages are preserved
   const first = apply(repo, agent);
   assert.ok(first.changes.includes("footer"));
   assert.equal(first.conflicts.length, 0);
-  assert.equal(read(path.join(agent, "settings.json")).packages.length, 6);
+  assert.equal(read(path.join(agent, "settings.json")).packages.length, 1 + 5 + managedPackageSources(read(path.join(repo, "config/packages.json"))).length);
   assert.ok(read(path.join(agent, "settings.json")).packages.includes("npm:pi-subagents@0.88.0"));
   assert.equal(read(path.join(agent, "settings.json")).localOnly, 5);
   assert.equal(read(path.join(agent, "mcp.json")).mcpServers.local.command, "echo");
@@ -47,7 +55,10 @@ test("fresh install, repeatable apply, unrelated settings/packages are preserved
   assert.equal(read(path.join(agent, "personalities.json")).sources.length, 3);
   const footer = read(path.join(agent, "extensions", "pi-footer.json"));
   assert.equal(footer.lines.length, 1);
-  assert.equal(footer.lines[0].filter((widget) => widget.type === "external-status").length, 1);
+  assert.equal(footer.lines[0].filter((widget) => widget.type === "external-status").length, 2);
+  assert.equal(footer.lines[0][1].type, "thinking-level");
+  assert.equal(footer.lines[0][2].options.externalStatusKey, "falkenwarte-usage");
+  assert.ok(footer.extensionStatusRow.hiddenKeys.includes("falkenwarte-usage"));
   assert.equal(footer.lines[0].at(-1).options.externalStatusKey, "pi-personalities");
   assert.ok(footer.extensionStatusRow.hiddenKeys.includes("pi-personalities"));
   const widgets = footer.lines[0];
@@ -194,7 +205,7 @@ test("moving the checkout retires paths from the previous location", (t) => {
   assert.equal(moved.conflicts.length, 0);
   apply(relocated, agent);
   const packages = read(path.join(agent, "settings.json")).packages;
-  assert.equal(packages.length, 5);
+  assert.equal(packages.length, 5 + managedPackageSources(read(path.join(repo, "config/packages.json"))).length);
   assert.equal(path.resolve(agent, packages[0]), path.join(relocated, "extensions/pi-personalities"));
   assert.equal(path.resolve(agent, read(path.join(agent, "personalities.json")).sources[0]), path.join(relocated, "personalities", "waldemar.md"));
 });
@@ -210,8 +221,10 @@ test("upstream checks are read-only; pin needs the exact reviewed revision", (t)
   const newer = "1234567890123456789012345678901234567890";
   const runner = (bin, argv) => {
     if (bin === "npm") {
-      assert.deepEqual(argv, ["view", "pi-subagents", "version", "--json"]);
-      return '"0.88.0"\n';
+      assert.deepEqual(argv.slice(0, 1), ["view"]);
+      if (argv[1] === "pi-subagents") return '"0.88.0"\n';
+      assert.equal(argv[1], "@agwab/pi-workflow");
+      return '"0.17.0"\n';
     }
     assert.equal(bin, "git");
     assert.deepEqual(argv, ["ls-remote", "https://github.com/wobondar/pi-footer.git", "HEAD"]);
@@ -237,12 +250,13 @@ test("npm revisions are checked and pinned to the exact latest version", (t) => 
   const runner = (bin, argv) => {
     if (bin === "npm") {
       if (argv[1] === "pi-subagents") return '"0.88.0"\n';
+      if (argv[1] === "@agwab/pi-workflow") return '"0.17.0"\n';
       assert.deepEqual(argv, ["view", "@example/pi-tools", "version", "--json"]);
       return '"1.3.0"\n';
     }
     return "e339196b1ee0285b5dc9508a6e4d61aff5dc4fb2\tHEAD\n";
   };
-  assert.equal(checkRemoteUpdates(repo, runner)[2].candidate, "1.3.0");
+  assert.equal(checkRemoteUpdates(repo, runner)[3].candidate, "1.3.0");
   assert.equal(pinRemote(repo, "@example/pi-tools", "1.3.0", runner).written, true);
   assert.ok(read(pkgPath).remote.includes("npm:@example/pi-tools@1.3.0"));
 });
@@ -255,12 +269,12 @@ test("update verification runs all owned package tests after Pi installation", (
     if (bin === "npm") assert.ok(options.cwd.startsWith(repo));
     if (bin === "pi") {
       assert.equal(options.env.PI_CODING_AGENT_DIR, agent);
-      return '{"id":"commands","success":true,"data":{"commands":[{"name":"footer"},{"name":"personality"},{"name":"skills"},{"name":"subagents"},{"name":"subagents-doctor"}]}}\n';
+      return '{"id":"commands","success":true,"data":{"commands":[{"name":"footer"},{"name":"personality"},{"name":"skills"},{"name":"falkenwarte-usage"},{"name":"factory"},{"name":"subagents"},{"name":"subagents-doctor"},{"name":"workflow"}]}}\n';
     }
     return "";
   };
   verifyInstalled(repo, agent, runner);
-  assert.deepEqual(called, ["npm run test", "npm run smoke", "npm run test", "npm ci --omit=peer --ignore-scripts --no-audit --no-fund", "npm run test", "npm run smoke", "pi --offline --mode rpc --no-mcp --no-skills --no-session"]);
+  assert.deepEqual(called, ["npm run test", "npm run smoke", "npm run test", "npm run smoke", "npm run test", "npm run smoke", "npm run test", "npm ci --omit=peer --ignore-scripts --no-audit --no-fund", "npm run test", "npm run smoke", "pi --offline --mode rpc --no-mcp --no-skills --no-session"]);
   assert.throws(() => verifyInstalled(repo, agent, (bin) => bin === "pi" ? '{"id":"commands","success":true,"data":{"commands":[]}}\n' : ""), /integration check failed/);
 });
 
@@ -275,7 +289,7 @@ test("owned runtime dependencies require a lock and install before their tests",
   const calls = [];
   verifyInstalled(repo, agent, (bin, argv) => {
     calls.push([bin, ...argv].join(" "));
-    return bin === "pi" ? '{"id":"commands","success":true,"data":{"commands":[{"name":"footer"},{"name":"personality"},{"name":"skills"},{"name":"subagents"},{"name":"subagents-doctor"}]}}\n' : "";
+    return bin === "pi" ? '{"id":"commands","success":true,"data":{"commands":[{"name":"footer"},{"name":"personality"},{"name":"skills"},{"name":"falkenwarte-usage"},{"name":"factory"},{"name":"subagents"},{"name":"subagents-doctor"},{"name":"workflow"}]}}\n' : "";
   });
   assert.equal(calls[0], "npm ci --omit=peer --ignore-scripts --no-audit --no-fund");
   assert.equal(calls[1], "npm run test");
@@ -287,6 +301,7 @@ test("package version changes are pinned and merge without deleting unrelated pa
   const remote = "git:github.com/wobondar/pi-footer@1234567890123456789012345678901234567890";
   const manifest = read(path.join(repo, "config/packages.json"));
   manifest.remote = [remote];
+  manifest.platforms = {};
   put(path.join(repo, "config/packages.json"), manifest);
   const next = apply(repo, agent);
   assert.ok(next.changes.includes("settings.packages"));

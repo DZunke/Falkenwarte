@@ -17,7 +17,7 @@ function childSelection(): string | undefined {
   }
 }
 
-// Child runners set PI_SUBAGENT_CHILD; foreground children can carry a per-run binding.
+// pi-subagents sets PI_SUBAGENT_CHILD; pi-workflow sets PI_WORKFLOW_ROLE=worker.
 // An explicit child entry point marks foreground children even without a binding.
 export function createPersonalitiesExtension(childName?: string, childOnly = childName !== undefined) {
   return (pi: ExtensionAPI) => personalitiesExtension(pi, childName, childOnly);
@@ -178,7 +178,7 @@ function personalitiesExtension(pi: ExtensionAPI, childName?: string, childOnly 
 
   pi.on("session_start", (_event, ctx) => {
     childSession = childOnly || process.env.PI_SUBAGENT_CHILD === "1" ||
-      Boolean(process.env.PI_SUBAGENT_EXTENSION_BINDINGS);
+      process.env.PI_WORKFLOW_ROLE === "worker" || Boolean(process.env.PI_SUBAGENT_EXTENSION_BINDINGS);
     activeName = undefined;
     refresh(ctx);
     const flag = pi.getFlag("personality");
