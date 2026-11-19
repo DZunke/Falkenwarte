@@ -39,7 +39,7 @@ test('A19 production container boots and preserves human tickets across restart'
   await ownerPage.goto('/#/agents');
   await ownerPage.getByRole('button', { name: /T3 ohne Zugang/ }).click();
   await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
-  await expect(ownerPage.getByText('Für die T3-Prüfung fehlt eine gültige OAuth-Anmeldung.')).toBeVisible({ timeout: 20_000 });
+  await expect(ownerPage.getByTestId('connection-check-result')).toContainText('Für die T3-Prüfung fehlt eine gültige OAuth-Anmeldung.', { timeout: 20_000 });
   await expect(ownerPage.getByRole('button', { name: /T3 ohne Zugang/ })).toContainText('Eingeschränkt');
   const dashboard = await ownerApi.get('/dashboard');
   expect(dashboard.response.status()).toBe(200);

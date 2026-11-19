@@ -295,18 +295,29 @@ final class PluginHandler
     private function createInstallPlan(array $body, Actor $actor): array
     {
         $actor->requireOwner();
+        $operation = $body['operation'] ?? 'install';
         $pluginId = $body['plugin_id'] ?? null;
         $targetVersion = $body['target_version'] ?? null;
         $source = $body['source'] ?? null;
 
-        if (!is_string($pluginId) || 1 !== preg_match('/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/', $pluginId) || !is_string($targetVersion) || '' === trim($targetVersion) || !in_array($source, ['registry', 'local_build'], true)) {
-            throw new Problem(422, 'validation_failed', 'A plugin identifier, version and supported source are required.');
+        if (!is_string($pluginId) || 1 !== preg_match('/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/', $pluginId) || !in_array($operation, ['install', 'remove'], true)) {
+            throw new Problem(422, 'validation_failed', 'A plugin identifier and supported package operation are required.');
+        }
+
+        if ('remove' === $operation) {
+            return $this->store->atomic(fn (): array => $this->createRemovalPlan($pluginId));
+        }
+
+        if (!is_string($targetVersion) || '' === trim($targetVersion) || !in_array($source, ['registry', 'local_build'], true)) {
+            throw new Problem(422, 'validation_failed', 'An installation plan requires a target version and supported source.');
         }
 
         $plan = [
             'id' => $this->store->id(),
+            'operation' => 'install',
             'plugin_id' => $pluginId,
             'target_version' => trim($targetVersion),
+            'source' => $source,
             'status' => 'prepared',
             'requires_build' => true,
             'requires_restart' => true,
@@ -324,8 +335,64 @@ final class PluginHandler
             'warnings' => ['Dieser Plan führt keine Paket-, Shell-, Composer- oder Containeraktion aus.'],
             'created_at' => $this->store->now(),
         ];
+        if (is_string($body['manifest_sha256'] ?? null)) {
+            $plan['manifest_sha256'] = $body['manifest_sha256'];
+        }
 
         return $this->planView($this->store->save('plugin_install_plans', $plan, 'PluginInstallPlanPrepared'));
+    }
+
+    private function createRemovalPlan(string $pluginId): array
+    {
+        $plugin = $this->requireInstalledPlugin($pluginId);
+        if (!in_array($plugin['state'], ['installed_disabled', 'disabled'], true)) {
+            throw new Problem(409, 'plugin_state_conflict', 'A plugin must finish draining and be disabled before a removal plan can be prepared.');
+        }
+
+        $activeWork = $this->activeWorkCounts($pluginId);
+        if (0 !== $activeWork['runs'] || 0 !== $activeWork['jobs'] || 0 !== $activeWork['external']) {
+            throw new Problem(409, 'plugin_work_active', 'Active or unresolved plugin work must be resolved before a removal plan can be prepared.');
+        }
+
+        $activeDependents = [];
+        foreach ($this->registry->manifests() as $manifest) {
+            $dependentId = (string) $manifest['id'];
+            if (!in_array($this->registry->state($dependentId), ['enabled', 'draining'], true)) {
+                continue;
+            }
+            foreach ($this->registry->dependencies($dependentId) as $dependency) {
+                if ($dependency['plugin_id'] === $pluginId) {
+                    $activeDependents[] = $dependentId;
+                    break;
+                }
+            }
+        }
+        if ([] !== $activeDependents) {
+            throw new Problem(409, 'plugin_dependency_active', 'Enabled or draining plugins depend on the requested plugin.');
+        }
+
+        $plan = [
+            'id' => $this->store->id(),
+            'operation' => 'remove',
+            'plugin_id' => $pluginId,
+            'target_version' => $plugin['installed_version'],
+            'status' => 'prepared',
+            'requires_build' => true,
+            'requires_restart' => true,
+            'requires_migration' => false,
+            'steps' => [
+                ['kind' => 'review_dependents', 'description' => 'Abhängige Plugins und verbleibende Daten vor dem Imagewechsel prüfen.', 'operator_required' => true],
+                ['kind' => 'backup', 'description' => 'Vor der Paketentfernung ein konsistentes Backup erstellen.', 'operator_required' => true],
+                ['kind' => 'preserve_data', 'description' => 'Plugin-Daten und historische Ansichten im neuen Image erhalten.', 'operator_required' => true],
+                ['kind' => 'build_image', 'description' => 'Ein geprüftes App-Image ohne das Plugin bauen.', 'operator_required' => true],
+                ['kind' => 'restart', 'description' => 'Die Entfernung mit dem geprüften Image neu starten.', 'operator_required' => true],
+                ['kind' => 'verify', 'description' => 'Prüfen, dass das Paket entfernt ist und lokale Daten lesbar bleiben.', 'operator_required' => true],
+            ],
+            'warnings' => ['Dieser Plan führt keine Paket-, Shell-, Composer- oder Containeraktion aus.', 'Die Erstellung des Plans ändert weder den Pluginstatus noch dessen lokale Daten.'],
+            'created_at' => $this->store->now(),
+        ];
+
+        return $this->planView($this->store->save('plugin_install_plans', $plan, 'PluginRemovalPlanPrepared'));
     }
 
     private function linkNotes(string $taskId, Actor $actor): array
@@ -460,10 +527,13 @@ final class PluginHandler
 
     private function planView(array $plan): array
     {
-        return array_intersect_key($plan, array_flip([
-            'id', 'plugin_id', 'target_version', 'status', 'requires_build', 'requires_restart',
-            'requires_migration', 'steps', 'warnings', 'created_at',
+        $view = array_intersect_key($plan, array_flip([
+            'id', 'operation', 'plugin_id', 'target_version', 'source', 'manifest_sha256', 'status',
+            'requires_build', 'requires_restart', 'requires_migration', 'steps', 'warnings', 'created_at',
         ]));
+        $view['operation'] ??= 'install';
+
+        return $view;
     }
 
     private function requireInstalledPlugin(string $pluginId): array

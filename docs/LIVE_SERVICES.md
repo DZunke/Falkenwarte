@@ -19,6 +19,17 @@ Der Browser verbindet sich direkt mit dem Hub-Endpunkt. Symfony stellt keine eig
 
 Bundle und Component unterstützen die gewählte PHP-/Symfony-Basis. Die tatsächliche eingebettete Hub-Version muss M0 aus dem Image nachweisen; ein PHP-Image-Tag beweist sie nicht. Falls erforderlich, entsteht ein gesperrter eigener xcaddy-Build. Die Paketauflösung, Konfiguration und Protokollrundläufe sind anschließend zu prüfen. In der SBOM wird die AGPL-3.0-Lizenz des Hub-Tags erfasst; die Symfony-Pakete sind MIT-lizenziert. [Bundle](https://packagist.org/packages/symfony/mercure-bundle), [Component](https://packagist.org/packages/symfony/mercure), [Hub-Release](https://github.com/dunglas/mercure/releases/tag/v1.1.6), [Hub-Lizenz](https://github.com/dunglas/mercure/blob/v1.1.6/LICENSE)
 
+Der Imagebuild fixiert das Dockerfile-Frontend per Digest, verwendet für PHP-Erweiterungen den Debian-Snapshot des FrankenPHP-Basisimages und normalisiert Build-Zeitstempel mit `SOURCE_DATE_EPOCH=0`. Er erzeugt aus Composer-Metadaten, dem NPM-Produktionsgraphen, Debian-Paketdaten und den eingebetteten Caddy-Modulen ein CycloneDX-1.5-Inventar. Fehlende Lizenzdaten aus Composer oder NPM brechen den Build ab; Debian-Pakete ohne maschinenlesbares Lizenzfeld werden als `NOASSERTION` ausgewiesen. Das kompakte Laufzeitzeugnis prüft Mercure `v1.1.6` mit AGPL-3.0, beide Symfony-Mercure-Pakete mit MIT sowie SQLite `3.51.3` über SQLite3 und PDO.
+
+Der geprüfte Build kann lokal ohne zusätzlichen Dienst ausgelesen werden:
+
+```sh
+docker build --file docker/Dockerfile --target app --build-arg VCS_REF="$(git rev-parse HEAD)" --build-arg APP_VERSION="$(cat version.txt)" --tag falkenwarte:local .
+scripts/export-image-audit.sh falkenwarte:local var/image-audit
+```
+
+Das Verzeichnis enthält `sbom.cdx.json`, `THIRD-PARTY-NOTICES.txt`, `runtime-evidence.json` und `image-evidence.json`; das letzte bindet deren Hash an Image-ID, Commitlabel und Produktversion.
+
 ## 3. Ein öffentlicher Ursprung
 
 Konfigurierter lokaler Standard ist **`https://localhost:8443`** für Frontend, JSON-API und `/.well-known/mercure`. Der Container lauscht ebenfalls auf HTTPS-Port 8443; der Host bindet ihn ausschließlich an `127.0.0.1`. Ein zweiter lokaler HTTP-Port kann ausschließlich auf diese HTTPS-Adresse umleiten. Gleiche innere und äußere HTTPS-Ports vereinfachen den Publisher-Aufruf aus dem Container, ersetzen aber keine Verbindungsprüfung.

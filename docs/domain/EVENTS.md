@@ -59,6 +59,8 @@ Mindestens-einmal-Zustellung ist die technische Annahme. Genau-einmal-Wirkung en
 
 History speichert redigierte Snapshots und daraus lesbare Änderungen mit Schema, Akteur und Grund. Eine Revisionsansicht benötigt keine damalige PHP-Klasse oder ein noch installiertes Plugin. Bekannte Kernfelder werden verständlich gerendert; unbekannte alte Zusatzfelder bleiben als beschriftetes JSON/Text lesbar.
 
+Bei Ticketrevisionen enthält `custom_field_values` den öffentlichen Stand der typisierten Zusatzfelder. Der Verlauf hält Schlüssel und Bezeichnung zum Zeitpunkt der Revision fest. Bei älteren Snapshots ohne gespeicherte Bezeichnung zeigt er den damaligen Feldschlüssel. Vertrauliche Schlüsselnamen werden vor der Historisierung ausgefiltert. Das Zurückspielen einer Revision erhält zwischenzeitlich deaktivierte Felddefinitionen im inaktiven Zustand.
+
 Eine Wiederherstellung ist ein neuer Command gegen die aktuelle Version. Sie prüft heutige Rechte und Invarianten, kopiert nur erlaubte fachliche Felder und erzeugt eine neue Revision. Run-IDs, offene Freigaben, Authzustand oder externe Ausführung werden nicht aus einem historischen Snapshot blind zurückkopiert.
 
 ## 6. Projektionen und Rebuild

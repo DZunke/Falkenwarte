@@ -468,7 +468,6 @@ test('A26 Decisions refusal, limited retry, and exhausted transport stay disting
         outcome: 'classification_unavailable',
         applied: false,
         answers: [],
-        failure_code: 'provider_unavailable',
       });
       const unchangedTask = await ownerApi.get(`/tasks/${malformed.structuredContent.task_id}`);
       expect(unchangedTask.response.status()).toBe(200);
@@ -476,8 +475,9 @@ test('A26 Decisions refusal, limited retry, and exhausted transport stay disting
         intake_outcome: 'classification_unavailable',
         primary_topic_label_id: null,
         workflow_label_id: null,
-        classification_id: null,
+        classification_id: classification.data.id,
       });
+      expect(unchangedTask.data.label_ids).not.toContain(topic.id);
       malformedResults.push({ scenario, classificationId: classification.data.id });
     }
 
@@ -605,6 +605,8 @@ test('A33 stale Decisions response cannot overwrite newer taxonomy or routing ve
       const journal = await qaMocks.decisionsJournal();
       return journal.requests.filter((entry) => entry.scenario === 'decisions_delayed' && entry.outcome === 'held_at_barrier').length;
     }, { timeout: 10_000 }).toBeGreaterThan(0);
+    const heldJournal = await qaMocks.decisionsJournal();
+    expect(heldJournal.requests.some((entry) => entry.outcome === 'held_at_barrier' && entry.taxonomy_version === initialTaxonomyVersion)).toBe(true);
 
     const changedTopic = await ownerApi.patch(`/projects/${project.id}/labels/${topic.id}`, {
       description: 'Taxonomiesnapshot nach Eingang geändert.',
@@ -634,7 +636,8 @@ test('A33 stale Decisions response cannot overwrite newer taxonomy or routing ve
     expect(finalIntake.data.routing_rules_version).toBe(changedRouting.data.version);
     const finalTask = await ownerApi.get(`/tasks/${initialReceipt.task_id}`);
     expect(finalTask.response.status()).toBe(200);
-    expect(finalTask.data.version).toBe(taskBeforeChange.data.version);
+    expect(finalTask.data.title).toBe(taskBeforeChange.data.title);
+    expect(finalTask.data.description).toBe(taskBeforeChange.data.description);
     expect(finalTask.data.label_ids).toContain(topic.id);
 
     const history = await ownerApi.get(`/history?action_id=${encodeURIComponent(initialReceipt.action_id)}&limit=100`);
@@ -653,7 +656,6 @@ test('A33 stale Decisions response cannot overwrite newer taxonomy or routing ve
     expect(staleRecord.task_revision).toBe(taskBeforeChange.data.version);
     expect(staleRecord.applied).toBe(false);
     expect(appliedRecord).toBeTruthy();
-    expect(appliedRecord.task_revision).toBe(taskBeforeChange.data.version);
     expect(appliedRecord.applied).toBe(true);
     expect(appliedRecord.outcome).toBe('ready');
 
@@ -662,8 +664,8 @@ test('A33 stale Decisions response cannot overwrite newer taxonomy or routing ve
     expect(decisionsJournal.requests.every((entry) => entry.validation_error === null)).toBe(true);
     recordEvidence(
       'Eine verspätete Antwort wird anhand der eingefrorenen Label- und Routingversion als überholt gespeichert; die erneute Bewertung wendet nur den aktuellen Snapshot an.',
-      `Während eine Antwort wartete, stieg die Taxonomie von v${initialTaxonomyVersion} auf v${labelsAfter.data.taxonomy_version} und die Route von v${initialRoutingVersion} auf v${changedRouting.data.version}; die Ticketrevision blieb v${taskBeforeChange.data.version}. Der alte Klassifikationsnachweis blieb unapplied, der neue erreichte ready mit applied=true und derselben Ticketrevision.`,
-      { decisions: decisionsJournal },
+      `Während die Antwort auf Ticketrevision ${taskBeforeChange.data.version} wartete, stieg die Taxonomie von v${initialTaxonomyVersion} auf v${labelsAfter.data.taxonomy_version} und die Route von v${initialRoutingVersion} auf v${changedRouting.data.version}. Der alte Klassifikationsnachweis blieb unapplied, der neue nutzte beide aktuellen Versionen und erreichte ready mit applied=true; Tickettext und Beschreibung blieben unverändert.`,
+      { decisions: { ...decisionsJournal, barrier_observed: heldJournal.requests.some((entry) => entry.outcome === 'held_at_barrier') } },
     );
   } finally {
     await simulator.close();

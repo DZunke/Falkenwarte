@@ -7184,6 +7184,10 @@ components:
         key:
           type: string
           pattern: ^[a-z][a-z0-9_.-]*\.[a-z][a-z0-9_-]*$
+        plugin_id:
+          type: [string, 'null']
+          maxLength: 100
+          description: Optional installed plugin owning the namespaced field. Only the owner can bind it at creation.
         label:
           type: string
           minLength: 1
@@ -7229,10 +7233,63 @@ components:
       - failed
       - cancelled
       - abandoned
+    WorkflowHandoffSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        source_report_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        source_result_digest:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{64}$'
+        source_attempt_id:
+          $ref: '#/components/schemas/Id'
+        source_attempt_no:
+          type: integer
+          minimum: 1
+        task_revision_id:
+          type: integer
+          minimum: 1
+        external_thread_id:
+          type: [string, 'null']
+        summary:
+          type: string
+          maxLength: 30000
+        outcome:
+          type: string
+        context_summary:
+          type: string
+          maxLength: 20000
+        open_questions:
+          type: array
+          items:
+            type: string
+            maxLength: 2000
+          maxItems: 50
+        reported_evidence_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          maxItems: 100
+        link_collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskLinkCollection'
+          maxItems: 30
+      required: [source_report_id, source_result_digest, source_attempt_id, source_attempt_no, task_revision_id, external_thread_id, summary, outcome, context_summary, open_questions, reported_evidence_ids, link_collections]
     RunSnapshot:
       type: object
       additionalProperties: false
       properties:
+        handoff_source_run_id:
+          $ref: '#/components/schemas/Id'
+        handoff_snapshot:
+          $ref: '#/components/schemas/WorkflowHandoffSnapshot'
+        delegation_depth:
+          type: integer
+          minimum: 0
         task_revision:
           type: integer
           minimum: 1
@@ -8188,6 +8245,21 @@ components:
         reason:
           type: string
           maxLength: 2000
+        custom_field_values:
+          type: array
+          maxItems: 50
+          description: Readable public ticket fields captured by this revision, including archived definitions.
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, label, value]
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+              value:
+                $ref: '#/components/schemas/HistoryValue'
         changes:
           type: array
           items:
@@ -9780,6 +9852,11 @@ components:
       type: object
       additionalProperties: false
       properties:
+        operation:
+          type: string
+          enum:
+          - install
+          - remove
         plugin_id:
           type: string
           maxLength: 100
@@ -9795,20 +9872,53 @@ components:
           $ref: '#/components/schemas/Sha256'
       required:
       - plugin_id
-      - target_version
-      - source
+      oneOf:
+      - required:
+        - target_version
+        - source
+        properties:
+          operation:
+            type: string
+            enum:
+            - install
+          target_version:
+            type: string
+            maxLength: 100
+          source:
+            type: string
+            enum:
+            - registry
+            - local_build
+      - required:
+        - operation
+        properties:
+          operation:
+            type: string
+            const: remove
     InstallPlan:
       type: object
       additionalProperties: false
       properties:
         id:
           $ref: '#/components/schemas/Id'
+        operation:
+          type: string
+          enum:
+          - install
+          - remove
         plugin_id:
           type: string
           maxLength: 100
         target_version:
           type: string
           maxLength: 100
+        source:
+          type: string
+          enum:
+          - registry
+          - local_build
+        manifest_sha256:
+          $ref: '#/components/schemas/Sha256'
         status:
           type: string
           enum:
@@ -9831,7 +9941,9 @@ components:
                 enum:
                 - resolve_package
                 - review_dependencies
+                - review_dependents
                 - backup
+                - preserve_data
                 - build_image
                 - migrate
                 - restart
@@ -9857,6 +9969,7 @@ components:
           format: date-time
       required:
       - id
+      - operation
       - plugin_id
       - target_version
       - status
@@ -9866,7 +9979,7 @@ components:
       - steps
       - warnings
       - created_at
-      description: Reviewbarer Betriebsplan. Diese API führt keine Composer-/Docker-/Shell-Kommandos aus.
+      description: Reviewbarer Installations- oder Entfernungsplan. Diese API führt keine Composer-/Docker-/Shell-Kommandos aus; die Umsetzung bleibt beim Betreiber.
     InstallPlanPage:
       type: object
       additionalProperties: false

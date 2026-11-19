@@ -2753,6 +2753,8 @@ export interface components {
         };
         CustomFieldWrite: {
             key: string;
+            /** @description Optional installed plugin owning the namespaced field. Only the owner can bind it at creation. */
+            plugin_id?: string | null;
             label: string;
             /** @enum {string} */
             value_type: "text" | "number" | "boolean" | "date" | "choice" | "multi_choice";
@@ -2762,7 +2764,24 @@ export interface components {
         };
         /** @enum {string} */
         RunState: "queued" | "dispatching" | "running" | "waiting_input" | "auth_blocked" | "reconciling" | "cancel_requested" | "result_reported" | "verifying" | "succeeded" | "failed" | "cancelled" | "abandoned";
+        WorkflowHandoffSnapshot: {
+            source_report_id: components["schemas"]["Id"] | null;
+            source_result_digest: string | null;
+            source_attempt_id: components["schemas"]["Id"];
+            source_attempt_no: number;
+            task_revision_id: number;
+            external_thread_id: string | null;
+            summary: string;
+            outcome: string;
+            context_summary: string;
+            open_questions: string[];
+            reported_evidence_ids: components["schemas"]["Id"][];
+            link_collections: components["schemas"]["TaskLinkCollection"][];
+        };
         RunSnapshot: {
+            handoff_source_run_id?: components["schemas"]["Id"];
+            handoff_snapshot?: components["schemas"]["WorkflowHandoffSnapshot"];
+            delegation_depth?: number;
             task_revision: number;
             title: string;
             description: string;
@@ -3041,6 +3060,12 @@ export interface components {
             schema_version: number;
             summary: string;
             reason?: string;
+            /** @description Readable public ticket fields captured by this revision, including archived definitions. */
+            custom_field_values?: {
+                key: string;
+                label: string;
+                value: components["schemas"]["HistoryValue"];
+            }[];
             changes: components["schemas"]["HistoryChange"][];
             restorable: boolean;
             allowed_actions: components["schemas"]["AllowedAction"][];
@@ -3528,17 +3553,33 @@ export interface components {
             reason: string;
         };
         InstallPlanRequest: {
+            /** @enum {string} */
+            operation?: "install" | "remove";
             plugin_id: string;
+            target_version?: string;
+            /** @enum {string} */
+            source?: "registry" | "local_build";
+            manifest_sha256?: components["schemas"]["Sha256"];
+        } & ({
+            /** @enum {string} */
+            operation?: "install";
             target_version: string;
             /** @enum {string} */
             source: "registry" | "local_build";
-            manifest_sha256?: components["schemas"]["Sha256"];
-        };
-        /** @description Reviewbarer Betriebsplan. Diese API führt keine Composer-/Docker-/Shell-Kommandos aus. */
+        } | {
+            /** @constant */
+            operation: "remove";
+        });
+        /** @description Reviewbarer Installations- oder Entfernungsplan. Diese API führt keine Composer-/Docker-/Shell-Kommandos aus; die Umsetzung bleibt beim Betreiber. */
         InstallPlan: {
             id: components["schemas"]["Id"];
+            /** @enum {string} */
+            operation: "install" | "remove";
             plugin_id: string;
             target_version: string;
+            /** @enum {string} */
+            source?: "registry" | "local_build";
+            manifest_sha256?: components["schemas"]["Sha256"];
             /** @enum {string} */
             status: "prepared" | "blocked";
             requires_build: boolean;
@@ -3546,7 +3587,7 @@ export interface components {
             requires_migration: boolean;
             steps: {
                 /** @enum {string} */
-                kind: "resolve_package" | "review_dependencies" | "backup" | "build_image" | "migrate" | "restart" | "verify";
+                kind: "resolve_package" | "review_dependencies" | "review_dependents" | "backup" | "preserve_data" | "build_image" | "migrate" | "restart" | "verify";
                 description: string;
                 operator_required: boolean;
             }[];

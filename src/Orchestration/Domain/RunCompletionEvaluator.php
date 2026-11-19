@@ -73,7 +73,7 @@ final class RunCompletionEvaluator
                     break;
                 }
             }
-            if (null === $criterion || ($criterion['review_status'] ?? null) !== 'human_confirmed') {
+            if (null === $criterion || ($criterion['state'] ?? null) !== 'human_confirmed') {
                 return RunCompletionDecision::pending('criteria_pending', 'Die Phasenpolicy verlangt die menschliche Bestätigung ausgewählter Akzeptanzkriterien.', 'phase_criteria_pending');
             }
         }

@@ -1,10 +1,12 @@
 import { request as playwrightRequest } from '@playwright/test';
 import { test, expect, createAgentSimulator, recordEvidence } from '../support/fixtures.mjs';
+import { resetStack } from '../support/reset-stack.mjs';
 
 const apiPrefix = process.env.FALKENWARTE_API_PREFIX ?? '/api/v1';
 
-test('A01 A04 A06 A14 A21 project, ticket, history and browser board', async ({ ownerApi, ownerPage }) => {
-  test.info().annotations.push({ type: 'expected', description: 'Projektidentität und Archivierung bleiben getrennt; Ticketänderung, Konflikt, Wiederherstellung und Boarddarstellung stimmen über JSON und Browser überein.' });
+test('A01 A04 A14 A21 project, ticket, history and browser board', async ({ ownerApi, ownerPage }) => {
+  test.skip(!process.env.FALKENWARTE_STACK_CONTROL, 'A04 needs the restart-capable external E2E harness.');
+  test.info().annotations.push({ type: 'expected', description: 'Projektidentität und Archivierung bleiben getrennt; erfolgreiche und abgewiesene Änderungen hinterlassen nach einem App-Neustart konsistente Revisionen.' });
   const project = await ownerApi.createProject({ name: 'Browser QA Falkenwarte', color: '#B8914C', icon: 'bird' });
   const otherProject = await ownerApi.createProject({ name: 'Browser QA Hausarchiv', color: '#7C97B6', icon: 'archive' });
   await ownerApi.ensureDefaultBoard(project.id);
@@ -21,6 +23,13 @@ test('A01 A04 A06 A14 A21 project, ticket, history and browser board', async ({ 
   const updated = await ownerApi.patch(`/tasks/${task.id}`, { title: 'Projektfilter zeigt die aktuelle Auswahl' }, { version: initial.version });
   expect(updated.response.status(), JSON.stringify(updated.data)).toBe(200);
   expect(updated.data.title).toBe('Projektfilter zeigt die aktuelle Auswahl');
+  const projectEvents = await ownerApi.get(`/events?project_id=${encodeURIComponent(project.id)}&limit=100`);
+  expect(projectEvents.response.status(), JSON.stringify(projectEvents.data)).toBe(200);
+  const successfulEvent = projectEvents.data.items.find((item) => item.change.resource_id === task.id && item.change.version === updated.data.version);
+  expect(successfulEvent).toBeTruthy();
+  const successfulAction = await ownerApi.get(`/actions/${successfulEvent.change.action_id}`);
+  expect(successfulAction.response.status(), JSON.stringify(successfulAction.data)).toBe(200);
+  expect(successfulAction.data).toMatchObject({ type: 'tasks_update', status: 'succeeded', actor: { kind: 'owner' } });
 
   const stale = await ownerApi.patch(`/tasks/${task.id}`, { title: 'Veralteter Schreibversuch' }, { version: initial.version });
   expect(stale.response.status(), JSON.stringify(stale.data)).toBe(412);
@@ -37,20 +46,39 @@ test('A01 A04 A06 A14 A21 project, ticket, history and browser board', async ({ 
   expect(afterFailure.data.version).toBe(afterConflict.data.version);
   expect(afterFailure.data.title).toBe(afterConflict.data.title);
 
-  const history = await ownerApi.get(`/history?resource_type=task&resource_id=${encodeURIComponent(task.id)}&limit=100`);
-  expect(history.response.status(), JSON.stringify(history.data)).toBe(200);
-  expect(history.data.items.length).toBeGreaterThanOrEqual(2);
-  expect(history.data.items.every((revision) => revision.project_id === project.id)).toBe(true);
-  const oldestRevision = [...history.data.items].sort((left, right) => left.recorded_at.localeCompare(right.recorded_at))[0];
+  const historyBeforeRestart = await ownerApi.get(`/history?resource_type=task&resource_id=${encodeURIComponent(task.id)}&limit=100`);
+  expect(historyBeforeRestart.response.status(), JSON.stringify(historyBeforeRestart.data)).toBe(200);
+  expect(historyBeforeRestart.data.items.length).toBeGreaterThanOrEqual(2);
+  expect(historyBeforeRestart.data.items.every((revision) => revision.project_id === project.id)).toBe(true);
+  const revisionIdsBeforeRestart = historyBeforeRestart.data.items.map((revision) => revision.id).sort();
+  const successRevision = historyBeforeRestart.data.items.find((revision) => revision.resource.version === updated.data.version);
+  expect(successRevision).toMatchObject({ action_id: successfulAction.data.id });
+
+  await resetStack(process.env.FALKENWARTE_STACK_CONTROL, 'restart-hub');
+
+  const afterRestart = await ownerApi.get(`/tasks/${task.id}`);
+  expect(afterRestart.response.status(), JSON.stringify(afterRestart.data)).toBe(200);
+  expect(afterRestart.data).toMatchObject({ title: afterConflict.data.title, version: afterConflict.data.version });
+  const historyAfterRestart = await ownerApi.get(`/history?resource_type=task&resource_id=${encodeURIComponent(task.id)}&limit=100`);
+  expect(historyAfterRestart.response.status(), JSON.stringify(historyAfterRestart.data)).toBe(200);
+  expect(historyAfterRestart.data.items.map((revision) => revision.id).sort()).toEqual(revisionIdsBeforeRestart);
+  const actionAfterRestart = await ownerApi.get(`/actions/${successfulAction.data.id}`);
+  expect(actionAfterRestart.response.status(), JSON.stringify(actionAfterRestart.data)).toBe(200);
+  expect(actionAfterRestart.data.status).toBe('succeeded');
+  const oldestRevision = [...historyAfterRestart.data.items].sort((left, right) => left.recorded_at.localeCompare(right.recorded_at))[0];
   const restore = await ownerApi.post(`/history/${oldestRevision.id}/restore`, { reason: 'QA prüft die freigegebene Wiederherstellung.' }, {
-    version: afterFailure.data.version,
+    version: afterRestart.data.version,
   });
   expect([200, 202], JSON.stringify(restore.data)).toContain(restore.response.status());
   await expect.poll(async () => (await ownerApi.get(`/tasks/${task.id}`)).data.title, { timeout: 20_000 }).toBe(initialTitle);
   const restored = await ownerApi.get(`/tasks/${task.id}`);
   expect(restored.response.status()).toBe(200);
   expect(restored.data.title).toBe(initialTitle);
-  expect(restored.data.version).toBeGreaterThan(afterFailure.data.version);
+  expect(restored.data.version).toBeGreaterThan(afterRestart.data.version);
+  const restoredHistory = await ownerApi.get(`/history?resource_type=task&resource_id=${encodeURIComponent(task.id)}&limit=100`);
+  expect(restoredHistory.response.status(), JSON.stringify(restoredHistory.data)).toBe(200);
+  const restoreRevision = restoredHistory.data.items.find((revision) => revision.summary === 'task.history_restored');
+  expect(restoreRevision).toMatchObject({ actor: { kind: 'owner' }, reason: 'QA prüft die freigegebene Wiederherstellung.' });
 
   const projectView = await ownerApi.get(`/projects/${project.id}`);
   expect(projectView.response.status()).toBe(200);
@@ -76,7 +104,7 @@ test('A01 A04 A06 A14 A21 project, ticket, history and browser board', async ({ 
 
   recordEvidence(
     'Projekte bleiben getrennt, Projektidentität wird geändert und archiviert, Ticketrevisionen sind atomar und wiederherstellbar, veraltete Änderungen zeigen einen Konflikt, und der Browser zeigt das Ticket im Projektboard.',
-    `Projekt ${project.id} wurde aktualisiert; ${otherProject.id} wurde archiviert; Task ${task.id} wurde über die echte JSON-API geändert, ein veralteter Schreibversuch erhielt HTTP 412, ein Commit-Failpoint ließ Version ${afterFailure.data.version} unverändert, History enthielt ${history.data.items.length} Revisionen und die Wiederherstellung erzeugte Version ${restored.data.version}. Das Browserboard und Ticket-Sheet zeigten den wiederhergestellten Titel.`,
+    `Projekt ${project.id} wurde aktualisiert; ${otherProject.id} wurde archiviert; Task ${task.id} wurde über die echte JSON-API geändert. Erfolgreiche Revision ${successRevision.id}, Event ${successfulEvent.cursor} und Action ${successfulAction.data.id} (succeeded) stimmten überein und blieben nach dem App-Neustart konsistent. Ein veralteter Schreibversuch erhielt HTTP 412; ein Commit-Failpoint ließ Zustand und ${revisionIdsBeforeRestart.length} Revisionen unverändert. Die Wiederherstellung erzeugte Version ${restored.data.version} samt Akteur und Grund; das Browserboard und Ticket-Sheet zeigten den wiederhergestellten Titel.`,
   );
 });
 

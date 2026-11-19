@@ -84,6 +84,7 @@ return static function (ContainerConfigurator $c): void {
     $s->alias(ExtensionPersistence::class, DbalExtensionPersistence::class);
     $s->set(PluginRegistry::class)->arg('$definitions', tagged_iterator('app.plugin_definition'));
     $s->alias(PluginManifestReader::class, PluginRegistry::class);
+    $s->alias(App\Extensions\Application\PluginAvailability::class, PluginRegistry::class);
     $s->set(Falkenwarte\LinkNotes\PluginDefinition::class)->tag('app.plugin_definition');
     $s->set(App\Orchestration\Plugins\T3BridgePluginDefinition::class)->tag('app.plugin_definition');
     $s->set(DbalLinkNoteRepository::class);

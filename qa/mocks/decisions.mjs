@@ -80,11 +80,11 @@ function responseFor(variantId, requestBody) {
     const index = answers.findIndex((answer) => answer.name === 'workflow');
     if (index >= 0) answers[index] = { type: 'refusal', name: 'workflow' };
   }
-  if (variantId === 'decisions_invalid_answer_type') {
+  if (variant?.malformed_answers === 'invalid_type') {
     answers[0] = { ...answers[0], type: 'object' };
-  } else if (variantId === 'decisions_partial_answers') {
+  } else if (variant?.malformed_answers === 'partial') {
     answers.pop();
-  } else if (variantId === 'decisions_unknown_answer') {
+  } else if (variant?.malformed_answers === 'unknown_name') {
     answers[0] = { ...answers[0], name: 'unexpected_question' };
   }
 

@@ -8,7 +8,7 @@ use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
 
 /** Discovers trusted package manifests and checks their runtime contribution gates. */
-final class PluginRegistry implements PluginManifestReader
+final class PluginRegistry implements PluginManifestReader, PluginAvailability
 {
     /** @var array<string, PluginDefinition> */
     private array $definitions = [];

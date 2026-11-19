@@ -66,6 +66,8 @@ Die Tabelle nennt die Hauptwege; der exakte Transition-Guard prüft auch gespeic
 
 Ein früher Agentbericht kann eintreffen, bevor die Launchantwort gespeichert ist. Er wird mit Run-ID und Korrelationsdaten als Kandidat abgelegt und später zugeordnet. Er setzt nicht eigenmächtig den Launch auf erfolgreich. Bei Authentifizierungswechsel wird ein unsicherer Dispatch im bisherigen Idempotenznamespace aufgeklärt.
 
+Beim Übergang zu einer weiteren Rolle speichert der neue Run die ID des Ausgangslaufs und dessen Übergabe in seinem Snapshot. Die Übergabe benennt Versuch, Ticketrevision, T3-Thread und Ergebnisbericht samt Digest. Sie enthält die Agentenmeldung, offene Fragen, die zu diesem Bericht gehörenden Nachweis-IDs und die im Ticket registrierten Link-Collections. Die zweite Rolle erhält diesen Stand in ihrer ersten T3-Nachricht. Bei einem erneuten Zustellversuch verwendet Falkenwarte dieselbe gespeicherte Nachricht. Der erfolgreiche Review beendet die Workflowinstanz. Für das Ticket gelten weiterhin die eigenen Abschlusskriterien.
+
 ## 5. Menschliche Entscheidung und Attention
 
 Ein Approval durchläuft `pending` → `approved` oder `rejected`. Ändern sich relevante Ticketrevision, Versuch oder Ergebnisdigest, wird ein nicht mehr passendes Approval `invalidated`. Eine ältere Zustimmung darf nicht ein neues Ergebnis freigeben.

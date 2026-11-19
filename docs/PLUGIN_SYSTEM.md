@@ -170,13 +170,19 @@ Historische Ereignisse und Objektrevisionen enthalten Schema- und Plugin-Version
 | disabled -> uninstall_pending | Deinstallationsplan enthält Daten-/Abhängigkeitsprüfung |
 | uninstall_pending -> removed | Neues Image ohne Paket aktiv; erforderliche Daten weiterhin lesbar |
 
+Die beiden Entfernungsschritte beschreiben den Zielzustand des Fachvertrags. Ein erstellter Entfernungsplan setzt derzeit noch keinen Pluginstatus `uninstall_pending`; die vorhandene Image-Umstellung bleibt ein Betreiberprozess.
+
 Drain ist selbst eine asynchrone Action. Die UI zeigt aktive Runs, abhängige Plugins und den Grund einer Blockade.
 
 Eine ausdrücklich erzwungene lokale Deaktivierung darf nicht gleichzeitig behaupten, ein externer Agent sei beendet. Bei ausdrücklich aufgegebener Arbeit bleiben betroffene Ausführungsplätze quarantänisiert. Ein Owner kann später eine getrennte Wiederherstellung oder externe Beendigung dokumentieren.
 
 ## 9. Paketänderungen über API und Betrieb
 
-Die JSON-API kann einen Installations-/Entfernungsplan erzeugen: gewünschtes Paket, Version, kompatible Contracts, Abhängigkeiten, Migrationen und erforderlicher Neustart. Dieser Plan ist exportierbar.
+Die Plugin-Ansicht kann Installationspläne für `registry` und `local_build` sowie Entfernungspläne für installierte, deaktivierte Plugins erstellen. Ältere Installationsaufrufe ohne `operation` bleiben gültig und gelten weiter als Installation.
+
+Ein Entfernungsplan wird abgewiesen, solange das Plugin aktiv ist, noch Runs oder ungeklärte externe Arbeit besitzt oder ein aktiviertes beziehungsweise drainendes Plugin davon abhängt. Der Plan ändert weder Runtime-Status noch lokale Daten oder Historie; er ist eine exportierbare Betreiber-Checkliste und kein Installations-/Uninstall-Executor.
+
+Der Export lädt den gespeicherten Plan über `GET /plugin-install-plans/{plan_id}` und speichert die API-Ressource als JSON-Datei. Das geprüfte Image und dessen Neustart setzt der Betreiber nach eigener Prüfung um.
 
 Der tatsächliche Composer-/Frontend-Build erfolgt im Projekt-/CI-Prozess. Das neue Image enthält eine vollständige, überprüfte Pluginmenge. Der lokale Betreiber startet den einen App-Container mit diesem Image neu.
 

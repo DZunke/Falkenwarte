@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, request } from './api'
 import type { Project } from './api'
+import type { components } from '@/generated/api'
 
 export function useProjects() {
   return useQuery({
@@ -35,6 +36,25 @@ export function useProjectLabels(projectId: string | undefined) {
     queryKey: ['project-labels', projectId],
     enabled: Boolean(projectId),
     queryFn: () => request(api.GET('/projects/{project_id}/labels', { params: { path: { project_id: projectId! } } })),
+  })
+}
+
+export function useProjectCustomFields(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ['project-custom-fields', projectId],
+    enabled: Boolean(projectId),
+    queryFn: async () => {
+      const items: components['schemas']['CustomFieldDefinition'][] = []
+      let cursor: string | undefined
+      do {
+        const page = await request(api.GET('/projects/{project_id}/custom-fields', {
+          params: { path: { project_id: projectId! }, query: { limit: 100, ...(cursor ? { cursor } : {}) } },
+        }))
+        items.push(...page.items)
+        cursor = page.next_cursor ?? undefined
+      } while (cursor)
+      return { items }
+    },
   })
 }
 

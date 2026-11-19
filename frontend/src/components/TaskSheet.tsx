@@ -4,7 +4,7 @@ import { ExternalLink, History, Link2, Pencil, Play, Plus, RefreshCw, ShieldChec
 import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request, type Project, type Task, type TaskStatus } from '@/lib/api'
-import { useProjectLabels, useTask, useTaskLinks } from '@/lib/queries'
+import { useProjectCustomFields, useProjectLabels, useTask, useTaskLinks } from '@/lib/queries'
 import TaskExecution from '@/components/TaskExecution'
 import TaskDecisions from '@/components/TaskDecisions'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +18,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import LinkNotesPanel from '@/features/plugins/LinkNotesPanel'
+import { CustomFieldInputs, CustomFieldValues, customFieldDraft, customFieldsPayload, missingRequiredCustomFields, type CustomFieldDraft } from './custom-fields'
 
 const linkKinds = [
   ['source_issue', 'Issue'], ['pull_request', 'Pull request'], ['merge_request', 'Merge request'], ['documentation', 'Dokumentation'], ['other', 'Referenz'],
@@ -25,6 +26,23 @@ const linkKinds = [
 const linkRelations = [
   ['source', 'Quelle'], ['part_of', 'Teil von'], ['delivers', 'Ergebnis'], ['references', 'Referenz'],
 ] as const
+function historyValue(value: components['schemas']['HistoryValue']): string {
+  if ('summary' in value) return value.summary
+  if (!('value' in value)) return '–'
+  if (value.type === 'boolean') return value.value ? 'Ja' : 'Nein'
+  return Array.isArray(value.value) ? value.value.join(', ') : String(value.value ?? '–')
+}
+
+function RevisionFields({ fields }: { fields: components['schemas']['Revision']['custom_field_values'] }) {
+  if (!fields?.length) return null
+  return <dl className="mt-2 grid gap-1.5 text-sm">
+    {fields.map((field) => <div key={field.key} className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{field.label}</dt>
+      <dd className="whitespace-pre-wrap break-words">{historyValue(field.value)}</dd>
+    </div>)}
+  </dl>
+}
+
 type TaskLink = components['schemas']['TaskLink']
 
 export default function TaskSheet({ taskId, project, statuses, onClose, onChanged }: { taskId?: string; project: Project; statuses: TaskStatus[]; onClose: () => void; onChanged: () => Promise<void> }) {
@@ -34,6 +52,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const taskQuery = useTask(taskId)
   const linksQuery = useTaskLinks(taskId)
   const labelsQuery = useProjectLabels(project.id)
+  const customFieldsQuery = useProjectCustomFields(project.id)
   const linkNotesPluginQuery = useQuery({
     queryKey: ['plugin', 'falkenwarte.link-notes'],
     queryFn: () => request(api.GET('/plugins/{plugin_id}', { params: { path: { plugin_id: 'falkenwarte.link-notes' } } })),
@@ -58,12 +77,14 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const task = taskQuery.data
   const linkCollections = linksQuery.data?.items ?? []
   const labels = labelsQuery.data?.items.filter((label) => label.active && !label.system_managed && label.kind !== 'attention') ?? []
+  const customFields = customFieldsQuery.data?.items ?? []
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<Task['priority']>('normal')
   const [labelIds, setLabelIds] = useState<string[]>([])
   const [criteriaText, setCriteriaText] = useState('')
+  const [customFieldDraftValues, setCustomFieldDraftValues] = useState<CustomFieldDraft>({})
   const [editBaseVersion, setEditBaseVersion] = useState<number>()
   const [linkForm, setLinkForm] = useState(false)
   const [collectionName, setCollectionName] = useState('Ergebnisse')
@@ -83,6 +104,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const [saveConflict, setSaveConflict] = useState('')
   const [restoreRevision, setRestoreRevision] = useState<string>()
   const [restoreReason, setRestoreReason] = useState('')
+  const missingCustomFields = missingRequiredCustomFields(customFields, customFieldDraftValues)
 
   useEffect(() => setActiveTab('details'), [taskId])
 
@@ -93,6 +115,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
     setPriority(task.priority)
     setLabelIds(task.label_ids)
     setCriteriaText(task.criteria.map((criterion) => criterion.text).join('\n'))
+    setCustomFieldDraftValues(customFieldDraft(task.custom_fields))
   }, [task?.id, task?.version, editing])
 
   const invalidate = async () => {
@@ -111,6 +134,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const beginTaskEdit = () => {
     if (!task) return
     setEditBaseVersion(task.version)
+    setCustomFieldDraftValues(customFieldDraft(task.custom_fields))
     setEditing(true)
   }
 
@@ -128,6 +152,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
     setPriority(task.priority)
     setLabelIds(task.label_ids)
     setCriteriaText(task.criteria.map((criterion) => criterion.text).join('\n'))
+    setCustomFieldDraftValues(customFieldDraft(task.custom_fields))
     setSaveConflict('')
   }
 
@@ -135,9 +160,11 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
     mutationFn: async () => {
       if (!task) throw new Error('Das Ticket ist nicht geladen.')
       if (editBaseVersion === undefined) throw new Error('Die Bearbeitungsversion ist nicht verfügbar. Öffne das Formular erneut.')
+      if (customFieldsQuery.isPending || customFieldsQuery.isError) throw new Error('Die Projektfelder konnten nicht geladen werden. Lade sie erneut, bevor du speicherst.')
+      if (missingCustomFields.length) throw new Error(`Fülle die erforderlichen Projektfelder aus: ${missingCustomFields.join(', ')}.`)
       const updated = await request(api.PATCH('/tasks/{task_id}', {
         params: { path: { task_id: task.id }, ...mutationParams(editBaseVersion) },
-        body: { title: title.trim(), description, priority, label_ids: labelIds },
+        body: { title: title.trim(), description, priority, label_ids: labelIds, custom_fields: customFieldsPayload(customFields, customFieldDraftValues) },
       }))
       const existing = new Map(task.criteria.map((criterion) => [criterion.text, criterion]))
       const criteria = criteriaText.split('\n').map((text) => text.trim()).filter(Boolean).map((text) => {
@@ -295,6 +322,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                 <TabsList className="falkenwarte-scrollbar mx-4 mt-4 max-w-[calc(100vw-2rem)] overflow-x-auto sm:mx-6 sm:max-w-[calc(100vw-3rem)]"><TabsTrigger value="details">Details</TabsTrigger><TabsTrigger value="decisions"><ShieldCheck />Entscheidungen</TabsTrigger><TabsTrigger value="execution"><Play />Ausführung</TabsTrigger><TabsTrigger value="history"><History />Verlauf</TabsTrigger>{linkNotesContribution && <TabsTrigger value="link-notes"><Link2 />{linkNotesContribution.label}</TabsTrigger>}</TabsList>
                 <TabsContent value="details" className="falkenwarte-scrollbar mt-0 flex-1 space-y-6 overflow-y-auto px-6 pb-8 pt-5">
                   <section className="space-y-2"><h3 className="text-sm font-semibold">Beschreibung</h3><p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{task.description || 'Keine Beschreibung hinterlegt.'}</p></section>
+                  {(Object.keys(task.custom_fields).length > 0 || customFields.length > 0) && <section className="space-y-3"><h3 className="text-sm font-semibold">Projektfelder</h3>{customFieldsQuery.isError && <p role="alert" className="text-xs text-destructive">Feldnamen konnten nicht geladen werden: {formatError(customFieldsQuery.error)}</p>}<CustomFieldValues fields={customFields} values={task.custom_fields} />{Object.keys(task.custom_fields).length === 0 && <p className="text-sm text-muted-foreground">Für dieses Ticket sind keine Projektfeldwerte hinterlegt.</p>}</section>}
                   <section className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-semibold">Erfolgskriterien</h3><Button size="sm" variant="outline" onClick={() => setEvidenceOpen(true)}><Plus />Meldung hinzufügen</Button></div>
                     {task.criteria.length ? <div className="space-y-2">{task.criteria.map((criterion) => <div key={criterion.id} className="rounded-lg border p-3">
                       <div className="flex items-start gap-3"><div className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full text-xs ${criterion.state === 'human_confirmed' ? 'bg-primary text-primary-foreground' : 'border text-muted-foreground'}`}>{criterion.state === 'human_confirmed' ? '✓' : '·'}</div><div className="min-w-0 flex-1"><p className="text-sm">{criterion.text}</p><div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{criterion.is_required ? 'Erforderlich' : 'Optional'}</span><span>·</span><span>{criterion.state === 'human_confirmed' ? 'Menschlich bestätigt' : criterion.state === 'reported' ? 'Agentenmeldung liegt vor' : criterion.state === 'rejected' ? 'Zurückgewiesen' : 'Offen'}</span>{criterion.evidence_ids.length > 0 && <><span>·</span><span>{criterion.evidence_ids.length} Meldung(en)</span></>}</div></div>
@@ -323,7 +351,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                 </TabsContent>
                 <TabsContent value="history" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   {restoreActionQuery.data && <div className={`mb-5 rounded-lg border p-3 text-sm ${restoreActionQuery.data.status === 'failed' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-primary/20 bg-accent text-accent-foreground'}`} role="status"><p className="font-medium">{restoreActionQuery.data.status === 'succeeded' ? 'Wiederherstellung abgeschlossen' : restoreActionQuery.data.status === 'failed' ? 'Wiederherstellung fehlgeschlagen' : 'Wiederherstellung läuft'}</p><p className="mt-1 text-xs">Action {restoreActionQuery.data.id}</p></div>}
-                  {historyQuery.isPending ? <p className="text-sm text-muted-foreground">Verlauf wird geladen…</p> : historyQuery.isError ? <p role="alert" className="text-sm text-destructive">{formatError(historyQuery.error)}</p> : historyQuery.data?.items.length ? <div className="space-y-0">{historyQuery.data.items.map((revision) => <div key={revision.id} className="relative border-l pb-5 pl-5 last:pb-0"><span className="absolute -left-1.5 top-1 size-3 rounded-full border-2 border-primary bg-background" /><div className="flex flex-wrap items-baseline justify-between gap-2"><div><p className="text-sm font-medium">{revision.summary}</p><time className="text-xs text-muted-foreground">{new Date(revision.recorded_at).toLocaleString('de-DE')}</time></div>{revision.restorable && <Button size="sm" variant="outline" onClick={() => setRestoreRevision(revision.id)}>Wiederherstellen</Button>}</div>{revision.reason && <p className="mt-1 text-xs text-muted-foreground">Grund: {revision.reason}</p>}<p className="mt-1 text-xs text-muted-foreground">{revision.actor.display_name}</p></div>)}</div> : <p className="text-sm text-muted-foreground">Für dieses Ticket ist noch kein Verlauf vorhanden.</p>}
+                  {historyQuery.isPending ? <p className="text-sm text-muted-foreground">Verlauf wird geladen…</p> : historyQuery.isError ? <p role="alert" className="text-sm text-destructive">{formatError(historyQuery.error)}</p> : historyQuery.data?.items.length ? <div className="space-y-0">{historyQuery.data.items.map((revision) => <div key={revision.id} className="relative border-l pb-5 pl-5 last:pb-0"><span className="absolute -left-1.5 top-1 size-3 rounded-full border-2 border-primary bg-background" /><div className="flex flex-wrap items-baseline justify-between gap-2"><div><p className="text-sm font-medium">{revision.summary}</p><time className="text-xs text-muted-foreground">{new Date(revision.recorded_at).toLocaleString('de-DE')}</time></div>{revision.restorable && <Button size="sm" variant="outline" onClick={() => setRestoreRevision(revision.id)}>Wiederherstellen</Button>}</div>{revision.reason && <p className="mt-1 text-xs text-muted-foreground">Grund: {revision.reason}</p>}<p className="mt-1 text-xs text-muted-foreground">{revision.actor.display_name}</p><RevisionFields fields={revision.custom_field_values} /></div>)}</div> : <p className="text-sm text-muted-foreground">Für dieses Ticket ist noch kein Verlauf vorhanden.</p>}
                 </TabsContent>
                 {linkNotesContribution && <TabsContent value="link-notes" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5"><LinkNotesPanel taskId={task.id} projectId={project.id} /></TabsContent>}
               </Tabs>
@@ -332,7 +360,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
         </SheetContent>
       </Sheet>
 
-      <Dialog open={editing} onOpenChange={(open) => { setEditing(open); if (!open) { setSaveConflict(''); setEditBaseVersion(undefined) } }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Ticket bearbeiten</DialogTitle><DialogDescription>Änderungen erzeugen eine neue Version und werden im Verlauf festgehalten.</DialogDescription></DialogHeader>{saveConflict && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p>{saveConflict}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={rebaseTaskEdit}>Aktuelle Version als Basis verwenden</Button><Button variant="outline" size="sm" onClick={reloadTaskEdit}>Formular mit aktuellem Stand laden</Button></div></div>}<div className="grid max-h-[65vh] gap-4 overflow-y-auto py-2 pr-1"><div className="grid gap-2"><Label htmlFor="edit-title">Titel</Label><Input id="edit-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label htmlFor="edit-description">Beschreibung</Label><Textarea id="edit-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={20000} /></div><div className="grid gap-2"><Label htmlFor="edit-priority">Priorität</Label><Select value={priority} onValueChange={(value) => setPriority(value as Task['priority'])}><SelectTrigger id="edit-priority"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Niedrig</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">Hoch</SelectItem><SelectItem value="urgent">Dringend</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="edit-criteria">Erfolgskriterien</Label><Textarea id="edit-criteria" value={criteriaText} onChange={(event) => setCriteriaText(event.target.value)} rows={4} placeholder="Ein Kriterium pro Zeile" /></div><fieldset className="grid gap-2"><legend className="text-sm font-medium">Labels</legend>{labels.length ? labels.map((label) => <label key={label.id} className="flex items-center gap-2 text-sm"><Checkbox checked={labelIds.includes(label.id)} onCheckedChange={(checked) => setLabelIds((current) => checked ? [...current, label.id] : current.filter((id) => id !== label.id))} /><span className="size-2 rounded-full" style={{ backgroundColor: label.color }} /><span>{label.name}</span><span className="ml-auto text-xs text-muted-foreground">{label.kind === 'workflow' ? 'Workflow' : 'Thema'}</span></label>) : <p className="text-xs text-muted-foreground">Für dieses Projekt sind noch keine Labels angelegt.</p>}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEditing(false)}>Abbrechen</Button><Button onClick={() => saveTask.mutate()} disabled={!title.trim() || saveTask.isPending}>{saveTask.isPending ? 'Speichert…' : 'Änderungen speichern'}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={editing} onOpenChange={(open) => { setEditing(open); if (!open) { setSaveConflict(''); setEditBaseVersion(undefined) } }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Ticket bearbeiten</DialogTitle><DialogDescription>Änderungen erzeugen eine neue Version und werden im Verlauf festgehalten.</DialogDescription></DialogHeader>{saveConflict && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p>{saveConflict}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={rebaseTaskEdit}>Aktuelle Version als Basis verwenden</Button><Button variant="outline" size="sm" onClick={reloadTaskEdit}>Formular mit aktuellem Stand laden</Button></div></div>}<div className="grid max-h-[65vh] gap-4 overflow-y-auto py-2 pr-1"><div className="grid gap-2"><Label htmlFor="edit-title">Titel</Label><Input id="edit-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label htmlFor="edit-description">Beschreibung</Label><Textarea id="edit-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={20000} /></div><div className="grid gap-2"><Label htmlFor="edit-priority">Priorität</Label><Select value={priority} onValueChange={(value) => setPriority(value as Task['priority'])}><SelectTrigger id="edit-priority"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Niedrig</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">Hoch</SelectItem><SelectItem value="urgent">Dringend</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="edit-criteria">Erfolgskriterien</Label><Textarea id="edit-criteria" value={criteriaText} onChange={(event) => setCriteriaText(event.target.value)} rows={4} placeholder="Ein Kriterium pro Zeile" /></div>{customFieldsQuery.isPending ? <p className="text-xs text-muted-foreground">Projektfelder werden geladen…</p> : customFieldsQuery.isError ? <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm"><p>Projektfelder konnten nicht geladen werden: {formatError(customFieldsQuery.error)}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => void customFieldsQuery.refetch()}>Projektfelder erneut laden</Button></div> : <><CustomFieldInputs fields={customFields} value={customFieldDraftValues} onChange={(key, value) => setCustomFieldDraftValues((current) => ({ ...current, [key]: value }))} idPrefix="edit-task-field" /><CustomFieldValues fields={customFields} values={task?.custom_fields ?? {}} onlyInactive /></>}{missingCustomFields.length > 0 && <p className="text-xs text-amber-800">Erforderlich: {missingCustomFields.join(', ')}</p>}<fieldset className="grid gap-2"><legend className="text-sm font-medium">Labels</legend>{labels.length ? labels.map((label) => <label key={label.id} className="flex items-center gap-2 text-sm"><Checkbox checked={labelIds.includes(label.id)} onCheckedChange={(checked) => setLabelIds((current) => checked ? [...current, label.id] : current.filter((id) => id !== label.id))} /><span className="size-2 rounded-full" style={{ backgroundColor: label.color }} /><span>{label.name}</span><span className="ml-auto text-xs text-muted-foreground">{label.kind === 'workflow' ? 'Workflow' : 'Thema'}</span></label>) : <p className="text-xs text-muted-foreground">Für dieses Projekt sind noch keine Labels angelegt.</p>}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEditing(false)}>Abbrechen</Button><Button onClick={() => saveTask.mutate()} disabled={!title.trim() || customFieldsQuery.isPending || customFieldsQuery.isError || missingCustomFields.length > 0 || saveTask.isPending}>{saveTask.isPending ? 'Speichert…' : 'Änderungen speichern'}</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Meldung hinzufügen</DialogTitle><DialogDescription>Speichere eine nachvollziehbare Meldung zu einem Erfolgskriterium. Die Meldung ist keine automatische Codeprüfung.</DialogDescription></DialogHeader><div className="grid gap-4 py-2"><div className="grid gap-2"><Label htmlFor="evidence-label">Bezeichnung</Label><Input id="evidence-label" value={evidenceLabel} onChange={(event) => setEvidenceLabel(event.target.value)} maxLength={200} /></div><div className="grid gap-2"><Label htmlFor="evidence-text">Meldung</Label><Textarea id="evidence-text" value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} rows={4} maxLength={10000} /></div><fieldset className="grid gap-2"><legend className="text-sm font-medium">Kriterien zuordnen</legend>{task?.criteria.map((criterion) => <label key={criterion.id} className="flex items-start gap-2 text-sm"><Checkbox checked={evidenceCriteria.includes(criterion.id)} onCheckedChange={(checked) => setEvidenceCriteria((current) => checked ? [...current, criterion.id] : current.filter((id) => id !== criterion.id))} /><span>{criterion.text}</span></label>)}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEvidenceOpen(false)}>Abbrechen</Button><Button onClick={() => registerEvidence.mutate()} disabled={!evidenceLabel.trim() || !evidenceText.trim() || registerEvidence.isPending}>{registerEvidence.isPending ? 'Speichert…' : 'Meldung speichern'}</Button></DialogFooter></DialogContent></Dialog>
 

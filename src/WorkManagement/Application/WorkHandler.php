@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\WorkManagement\Application;
 
+use App\Extensions\Application\PluginAvailability;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
+use App\Shared\Domain\CustomFieldHistory;
 use App\Shared\Domain\Problem;
 use App\WorkManagement\Domain\AttentionLabelCatalog;
 use App\WorkManagement\Domain\BoardWipPolicy;
@@ -25,6 +27,7 @@ final class WorkHandler implements AttentionLabelReader
         private readonly BoardWipPolicy $wipPolicy,
         private readonly TaskCompletionPolicy $completionPolicy,
         private readonly TaskLinkPolicy $linkPolicy,
+        private readonly PluginAvailability $plugins,
     ) {
     }
 
@@ -409,7 +412,7 @@ final class WorkHandler implements AttentionLabelReader
                 $task['primary_topic_label_id'] = $this->firstKindLabel($task['project_id'], $task[$field], 'topic');
                 $task['workflow_label_id'] = $this->firstKindLabel($task['project_id'], $task[$field], 'workflow');
             } else {
-                $task[$field] = 'custom_fields' === $field ? $this->validateCustomFields($task['project_id'], $body[$field]) : $body[$field];
+                $task[$field] = 'custom_fields' === $field ? $this->validateCustomFields($task['project_id'], $body[$field], $before['custom_fields'] ?? []) : $body[$field];
             }
         }
         $this->assertBoardChangeAllowed($task, $before);
@@ -1137,6 +1140,8 @@ final class WorkHandler implements AttentionLabelReader
                 }
             }
             $current['criteria'] = $this->normalizeRestoredCriteria($current['criteria']);
+            $liveFields = $before['custom_fields'] ?? [];
+            $current['custom_fields'] = CustomFieldHistory::publicFields($current['custom_fields'] ?? []) + array_diff_key($liveFields, CustomFieldHistory::publicFields($liveFields));
             $labels = $this->validateLabelIds($current['project_id'], $current['label_ids']);
             $current['label_ids'] = array_column($labels, 'id');
             $current['primary_topic_label_id'] = $this->firstKindLabel($current['project_id'], $current['label_ids'], 'topic');
@@ -1198,6 +1203,9 @@ final class WorkHandler implements AttentionLabelReader
     /** @param array<string, mixed> $revision @return array<string, mixed> */
     private function presentRevision(array $revision): array
     {
+        if ('task' === ($revision['resource']['resource_type'] ?? null)) {
+            $revision['custom_field_values'] ??= CustomFieldHistory::snapshot($revision['_snapshot']['custom_fields'] ?? []);
+        }
         $note = $this->store->find('history_restore_notes', $revision['id']);
         if (null !== $note) {
             $revision['reason'] = $note['reason'];
@@ -1534,14 +1542,21 @@ final class WorkHandler implements AttentionLabelReader
     }
 
     /** @param array<string, mixed> $values @return array<string, mixed> */
-    private function validateCustomFields(string $projectId, array $values): array
+    private function validateCustomFields(string $projectId, array $values, array $existing = []): array
     {
         $definitions = $this->store->all('custom_fields', $projectId);
         $byKey = [];
         foreach ($definitions as $definition) {
-            if (!empty($definition['active'])) {
+            if (!empty($definition['active']) && (!isset($definition['plugin_id']) || $this->plugins->enabled($definition['plugin_id']))) {
                 $byKey[$definition['key']] = $definition;
             }
+        }
+        $archived = array_diff_key($existing, $byKey);
+        foreach ($archived as $key => $value) {
+            if (array_key_exists($key, $values) && $values[$key] != $value) {
+                throw new Problem(409, 'custom_field_inactive', 'Ein archiviertes Zusatzfeld bleibt schreibgeschützt.');
+            }
+            unset($values[$key]);
         }
         foreach ($values as $key => $typedValue) {
             $definition = $byKey[$key] ?? null;
@@ -1568,7 +1583,7 @@ final class WorkHandler implements AttentionLabelReader
             }
         }
 
-        return $values;
+        return $values + $archived;
     }
 
     /** @param array<string, mixed> $project */

@@ -28,6 +28,8 @@ export default function PluginsView() {
   const [newPluginId, setNewPluginId] = useState('')
   const [newVersion, setNewVersion] = useState('')
   const [installSource, setInstallSource] = useState<'registry' | 'local_build'>('local_build')
+  const [planOperation, setPlanOperation] = useState<'install' | 'remove'>('install')
+  const [removalPluginId, setRemovalPluginId] = useState('')
   const plugins = pluginsQuery.data?.items ?? []
   const plugin = plugins.find((item) => item.id === selectedId) ?? plugins[0]
   const configurationQuery = useQuery({
@@ -84,11 +86,24 @@ export default function PluginsView() {
   const createPlan = useMutation({
     mutationFn: () => request(api.POST('/plugin-install-plans', {
       params: mutationParams(),
-      body: { plugin_id: newPluginId.trim(), target_version: newVersion.trim(), source: installSource },
+      body: planOperation === 'install'
+        ? { operation: 'install', plugin_id: newPluginId.trim(), target_version: newVersion.trim(), source: installSource }
+        : { operation: 'remove', plugin_id: removalPluginId },
     })),
-    onSuccess: async () => { setNewPluginId(''); setNewVersion(''); await refresh(); toast.success('Installationsplan erstellt') },
+    onSuccess: async () => { setNewPluginId(''); setNewVersion(''); setRemovalPluginId(''); await refresh(); toast.success(planOperation === 'install' ? 'Installationsplan erstellt' : 'Entfernungsplan erstellt') },
     onError: (error) => toast.error(formatError(error)),
   })
+  const exportPlan = async (planId: string) => {
+    const plan = await request(api.GET('/plugin-install-plans/{plan_id}', { params: { path: { plan_id: planId } } }))
+    const blobUrl = URL.createObjectURL(new Blob([`${JSON.stringify(plan, null, 2)}\n`], { type: 'application/json' }))
+    const anchor = document.createElement('a')
+    anchor.href = blobUrl
+    anchor.download = `${plan.operation}-${plan.plugin_id}-plan.json`
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0)
+  }
 
   if (pluginsQuery.isPending) return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
   if (pluginsQuery.isError) {
@@ -98,6 +113,7 @@ export default function PluginsView() {
 
   const dependents = plugins.filter((item) => ['enabled', 'draining'].includes(item.state) && item.dependencies.some((dependency) => dependency.plugin_id === plugin?.id))
   const installedPlans = plansQuery.data?.items ?? []
+  const removablePlugins = plugins.filter((item) => ['installed_disabled', 'disabled'].includes(item.state))
   const anyMutationPending = activate.isPending || drain.isPending || deactivate.isPending || saveConfiguration.isPending
   const actionAllowed = (action: string) => plugin?.allowed_actions.some((item) => item.action === action && item.enabled) ?? false
 
@@ -142,16 +158,19 @@ export default function PluginsView() {
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
-        <Card><CardHeader><CardTitle className="flex items-center gap-2"><Download className="size-4 text-muted-foreground" />Installationsplan prüfen</CardTitle></CardHeader><CardContent className="space-y-4">
-          <div className="space-y-1.5"><Label htmlFor="install-plugin-id">Paket-ID</Label><Input id="install-plugin-id" value={newPluginId} onChange={(event) => setNewPluginId(event.target.value)} placeholder="vendor.plugin-name" /></div>
-          <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label htmlFor="install-version">Zielversion</Label><Input id="install-version" value={newVersion} onChange={(event) => setNewVersion(event.target.value)} placeholder="1.0.0" /></div><div className="space-y-1.5"><Label>Quelle</Label><Select value={installSource} onValueChange={(value) => setInstallSource(value as typeof installSource)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="local_build">Lokaler Build</SelectItem><SelectItem value="registry">Registry</SelectItem></SelectContent></Select></div></div>
-          <p className="text-xs text-muted-foreground">Der Plan dokumentiert die nötigen Schritte. Er installiert kein Paket und führt keine Shell- oder Containeraktion aus.</p>
-          <Button variant="outline" disabled={!newPluginId.trim() || !newVersion.trim() || createPlan.isPending} onClick={() => createPlan.mutate()}>Plan erstellen</Button>
+        <Card><CardHeader><CardTitle className="flex items-center gap-2"><Download className="size-4 text-muted-foreground" />Paketänderung planen</CardTitle></CardHeader><CardContent className="space-y-4">
+          <div className="space-y-1.5"><Label>Vorgang</Label><Select value={planOperation} onValueChange={(value) => setPlanOperation(value as typeof planOperation)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="install">Installation</SelectItem><SelectItem value="remove">Entfernung</SelectItem></SelectContent></Select></div>
+          {planOperation === 'install' ? <>
+            <div className="space-y-1.5"><Label htmlFor="install-plugin-id">Paket-ID</Label><Input id="install-plugin-id" value={newPluginId} onChange={(event) => setNewPluginId(event.target.value)} placeholder="vendor.plugin-name" /></div>
+            <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label htmlFor="install-version">Zielversion</Label><Input id="install-version" value={newVersion} onChange={(event) => setNewVersion(event.target.value)} placeholder="1.0.0" /></div><div className="space-y-1.5"><Label>Quelle</Label><Select value={installSource} onValueChange={(value) => setInstallSource(value as typeof installSource)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="local_build">Lokaler Build</SelectItem><SelectItem value="registry">Registry</SelectItem></SelectContent></Select></div></div>
+          </> : <div className="space-y-1.5"><Label>Deaktiviertes Plugin</Label><Select value={removalPluginId} onValueChange={setRemovalPluginId}><SelectTrigger><SelectValue placeholder="Plugin auswählen" /></SelectTrigger><SelectContent>{removablePlugins.map((item) => <SelectItem key={item.id} value={item.id}>{item.name} · {item.id}</SelectItem>)}</SelectContent></Select>{removablePlugins.length === 0 && <p className="text-xs text-muted-foreground">Es gibt kein deaktiviertes Plugin für einen Entfernungsplan.</p>}</div>}
+          <p className="text-xs text-muted-foreground">Der Plan ist nur eine Betreiber-Checkliste. Er führt keine Composer-, Shell- oder Containeraktion aus und ändert weder Paket noch Pluginstatus oder lokale Daten.</p>
+          <Button variant="outline" disabled={createPlan.isPending || (planOperation === 'install' ? !newPluginId.trim() || !newVersion.trim() : !removalPluginId)} onClick={() => createPlan.mutate()}>{planOperation === 'install' ? 'Installationsplan erstellen' : 'Entfernungsplan erstellen'}</Button>
         </CardContent></Card>
 
-        <Card><CardHeader><CardTitle>Geplante Installationen</CardTitle></CardHeader><CardContent className="space-y-3">
-          {installedPlans.map((plan) => <article key={plan.id} className="rounded-lg border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{plan.plugin_id} · {plan.target_version}</p><Badge variant="outline">{plan.status === 'prepared' ? 'Zur Prüfung bereit' : 'Blockiert'}</Badge></div><ol className="mt-3 space-y-1.5">{plan.steps.map((step, index) => <li key={`${plan.id}-${step.kind}`} className="flex gap-2 text-sm"><span className="text-muted-foreground">{index + 1}.</span><span>{step.description}</span></li>)}</ol>{plan.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-muted-foreground">{warning}</p>)}</article>)}
-          {installedPlans.length === 0 && <p className="py-3 text-sm text-muted-foreground">Es wurden noch keine Installationspläne erstellt.</p>}
+        <Card><CardHeader><CardTitle>Geplante Paketänderungen</CardTitle></CardHeader><CardContent className="space-y-3">
+          {installedPlans.map((plan) => <article key={plan.id} className="rounded-lg border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{plan.plugin_id}</p><p className="text-xs text-muted-foreground">{plan.operation === 'remove' ? `Entfernung · Version ${plan.target_version}` : `Installation · Version ${plan.target_version} · ${plan.source === 'registry' ? 'Registry' : 'lokaler Build'}`}</p></div><div className="flex items-center gap-2"><Badge variant="outline">{plan.status === 'prepared' ? 'Zur Prüfung bereit' : 'Blockiert'}</Badge><Button type="button" variant="outline" size="sm" onClick={() => { void exportPlan(plan.id).catch((error) => toast.error(formatError(error))) }}>JSON exportieren</Button></div></div><ol className="mt-3 space-y-1.5">{plan.steps.map((step, index) => <li key={`${plan.id}-${step.kind}`} className="flex gap-2 text-sm"><span className="text-muted-foreground">{index + 1}.</span><span>{step.description}</span></li>)}</ol>{plan.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-muted-foreground">{warning}</p>)}</article>)}
+          {installedPlans.length === 0 && <p className="py-3 text-sm text-muted-foreground">Es wurden noch keine Paketänderungspläne erstellt.</p>}
         </CardContent></Card>
       </section>
     </main>

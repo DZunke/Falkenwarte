@@ -264,8 +264,8 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
   const endedRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'cancelled', 'Der T3-Abbruch darf erst nach externer Beobachtung als beendet gelten.');
   expect(endedRun.snapshot.bridge_plugin_id).toBe(T3_BRIDGE);
   const cancelJournal = await qaMocks.t3Journal();
-  const cancelToolIndex = cancelJournal.requests.findIndex((entry) => entry.tool === 't3_thread_interrupt');
-  const observationToolIndex = cancelJournal.requests.findIndex((entry, index) => index > cancelToolIndex && entry.tool === 't3_thread_read');
+  const cancelToolIndex = cancelJournal.journal.findIndex((entry) => entry.tool === 't3_thread_interrupt');
+  const observationToolIndex = cancelJournal.journal.findIndex((entry, index) => index > cancelToolIndex && entry.tool === 't3_thread_read');
   expect(cancelToolIndex).toBeGreaterThanOrEqual(0);
   expect(observationToolIndex).toBeGreaterThan(cancelToolIndex);
 

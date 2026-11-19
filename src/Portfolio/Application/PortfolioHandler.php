@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Portfolio\Application;
 
+use App\Extensions\Application\PluginAvailability;
 use App\Portfolio\Domain\CustomFieldPolicy;
 use App\Portfolio\Domain\ProjectSlug;
 use App\Shared\Application\Actor;
@@ -21,7 +22,7 @@ final class PortfolioHandler
         ['name' => 'Abgebrochen', 'category' => 'cancelled', 'color' => '#64748B', 'is_default' => false],
     ];
 
-    public function __construct(public Store $store, private readonly CustomFieldPolicy $customFieldPolicy)
+    public function __construct(public Store $store, private readonly CustomFieldPolicy $customFieldPolicy, private readonly PluginAvailability $plugins)
     {
     }
 
@@ -149,6 +150,12 @@ final class PortfolioHandler
     {
         $actor->requireProject($projectId);
         $fields = $this->store->all('custom_fields', $projectId);
+        foreach ($fields as &$field) {
+            if (isset($field['plugin_id']) && !$this->plugins->enabled($field['plugin_id'])) {
+                $field['active'] = false;
+            }
+        }
+        unset($field);
         usort($fields, static fn (array $a, array $b): int => strcasecmp($a['label'], $b['label']));
 
         return $this->store->page($fields, $p);
@@ -158,6 +165,13 @@ final class PortfolioHandler
     private function createCustomField(string $projectId, array $body, Actor $actor): array
     {
         $actor->requireProject($projectId);
+        $pluginId = $body['plugin_id'] ?? null;
+        if (null !== $pluginId) {
+            $actor->requireOwner();
+            if (!$this->plugins->enabled($pluginId) || !str_starts_with($body['key'], $pluginId.'.')) {
+                throw new Problem(422, 'validation_failed', 'Ein Pluginfeld benötigt eine aktive Erweiterung und einen Schlüssel in deren Namensraum.');
+            }
+        }
         foreach ($this->store->all('custom_fields', $projectId) as $definition) {
             if ($definition['key'] === $body['key']) {
                 throw new Problem(409, 'custom_field_key_conflict', 'Dieser Zusatzfeldschlüssel ist bereits vergeben.');
@@ -171,7 +185,7 @@ final class PortfolioHandler
             'value_type' => $body['value_type'],
             'required' => (bool) $body['required'],
             'choices' => $body['choices'] ?? [],
-            'plugin_id' => null,
+            'plugin_id' => $pluginId,
             'active' => (bool) $body['active'],
         ], 'custom_field.created');
     }

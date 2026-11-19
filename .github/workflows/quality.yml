@@ -92,8 +92,12 @@ jobs:
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
       - name: Build the Linux release image
         run: |
-          docker build --file docker/Dockerfile --target app --build-arg VCS_REF="$FALKENWARTE_TEST_COMMIT" --build-arg APP_VERSION="$(cat version.txt)" --tag "$FALKENWARTE_IMAGE" .
+          docker build --file docker/Dockerfile --target app --build-arg VCS_REF="$FALKENWARTE_TEST_COMMIT" --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" --build-arg APP_VERSION="$(cat version.txt)" --tag "$FALKENWARTE_IMAGE" .
           docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}' > image.id
+          bash scripts/export-image-audit.sh "$FALKENWARTE_IMAGE" image-inventory
+          jq -e --arg sha "$FALKENWARTE_TEST_COMMIT" --arg version "$(cat version.txt)" '.application.revision == $sha and .application.version == $version' image-inventory/runtime-evidence.json
+          test -s image-inventory/THIRD-PARTY-NOTICES.txt
+          tar -czf software-inventory.tar.gz -C image-inventory .
           docker save "$FALKENWARTE_IMAGE" | gzip -1 > app-image.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -101,6 +105,7 @@ jobs:
           path: |
             app-image.tar.gz
             image.id
+            software-inventory.tar.gz
           retention-days: 3
           compression-level: 0
           if-no-files-found: error

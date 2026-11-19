@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { ChevronDown, CirclePlus, Columns3, List, Plus, Search, Settings2 } from 'lucide-react'
 import { api, formatError, mutationParams, request, type Label as ProjectLabel, type Project, type Task } from '@/lib/api'
-import { useBoardView, useBoards, useProjectLabels, useProjectStatuses } from '@/lib/queries'
+import { useBoardView, useBoards, useProjectCustomFields, useProjectLabels, useProjectStatuses } from '@/lib/queries'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -17,6 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import { CustomFieldInputs, customFieldsPayload, missingRequiredCustomFields, type CustomFieldDraft } from './custom-fields'
+import ProjectCustomFields from './ProjectCustomFields'
 import TaskSheet from './TaskSheet'
 import ProjectIcon from './ProjectIcon'
 
@@ -30,6 +32,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
   const boardsQuery = useBoards(project.id)
   const statusesQuery = useProjectStatuses(project.id)
   const labelsQuery = useProjectLabels(project.id)
+  const customFieldsQuery = useProjectCustomFields(project.id)
   const [boardId, setBoardId] = useState<string>()
   const [layout, setLayout] = useState<'board' | 'list'>('board')
   const [filter, setFilter] = useState('')
@@ -42,6 +45,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<'low' | 'normal' | 'high' | 'urgent'>('normal')
   const [criteriaText, setCriteriaText] = useState('')
+  const [customFieldDraft, setCustomFieldDraft] = useState<CustomFieldDraft>({})
   const [boardName, setBoardName] = useState('Projektboard')
   const [columnEdits, setColumnEdits] = useState<Record<string, { name: string; wipLimit: string; wipPolicy: 'warn' | 'block' }>>({})
   const [statusDrafts, setStatusDrafts] = useState<StatusInput[]>([])
@@ -58,6 +62,8 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
   const boardDefinition = viewQuery.data?.board ?? selectedBoard
   const statuses = statusesQuery.data?.items ?? []
   const labels = labelsQuery.data?.items ?? []
+  const customFields = customFieldsQuery.data?.items ?? []
+  const missingCustomFields = missingRequiredCustomFields(customFields, customFieldDraft)
   const allTasks = columns.flatMap((column) => column.items)
   const visibleTasks = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase()
@@ -81,10 +87,12 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
     mutationFn: async () => {
       const status = statuses.find((item) => item.is_default) ?? statuses[0]
       if (!status) throw new Error('Lege unter „Status bearbeiten“ einen Standardstatus an.')
+      if (customFieldsQuery.isPending || customFieldsQuery.isError) throw new Error('Die Projektfelder konnten nicht geladen werden.')
+      if (missingCustomFields.length) throw new Error(`Fülle die erforderlichen Projektfelder aus: ${missingCustomFields.join(', ')}.`)
       const criteria = criteriaText.split('\n').map((text) => text.trim()).filter(Boolean).map((text) => ({ text, is_required: true }))
       return request(api.POST('/projects/{project_id}/tasks', {
         params: { path: { project_id: project.id }, ...mutationParams() },
-        body: { title: title.trim(), description: description.trim(), priority, status_id: status.id, criteria, prefer_wait_ms: 0 },
+        body: { title: title.trim(), description: description.trim(), priority, status_id: status.id, criteria, custom_fields: customFieldsPayload(customFields, customFieldDraft), prefer_wait_ms: 0 },
       }))
     },
     onSuccess: async (receipt) => {
@@ -92,6 +100,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
       setTitle('')
       setDescription('')
       setCriteriaText('')
+      setCustomFieldDraft({})
       setPriority('normal')
       await refresh()
       setTaskId(receipt.task_id)
@@ -215,6 +224,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
           <Button variant="outline" size="sm" onClick={openStatuses}><Settings2 />Status bearbeiten</Button>
           {selectedBoard && <Button variant="outline" size="sm" onClick={openColumns}><Settings2 />Spalten bearbeiten</Button>}
           <Button variant="outline" size="sm" onClick={() => setBoardOpen(true)}><Settings2 />{boards.length ? 'Board anlegen' : 'Board einrichten'}</Button>
+          <ProjectCustomFields project={project} />
           <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!statuses.length || project.archived}><Plus />Neues Ticket</Button>
         </div>
       </div>
@@ -286,8 +296,10 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
             <div className="grid gap-2"><Label htmlFor="task-description">Beschreibung</Label><Textarea id="task-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={20000} /></div>
             <div className="grid gap-2"><Label htmlFor="task-priority">Priorität</Label><Select value={priority} onValueChange={(value) => setPriority(value as typeof priority)}><SelectTrigger id="task-priority"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Niedrig</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">Hoch</SelectItem><SelectItem value="urgent">Dringend</SelectItem></SelectContent></Select></div>
             <div className="grid gap-2"><Label htmlFor="task-criteria">Erfolgskriterien</Label><Textarea id="task-criteria" value={criteriaText} onChange={(event) => setCriteriaText(event.target.value)} placeholder="Ein Kriterium pro Zeile" rows={3} /></div>
+            {customFieldsQuery.isPending ? <p className="text-xs text-muted-foreground">Projektfelder werden geladen…</p> : customFieldsQuery.isError ? <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm"><p>Projektfelder konnten nicht geladen werden: {formatError(customFieldsQuery.error)}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => void customFieldsQuery.refetch()}>Projektfelder erneut laden</Button></div> : <CustomFieldInputs fields={customFields} value={customFieldDraft} onChange={(key, value) => setCustomFieldDraft((current) => ({ ...current, [key]: value }))} idPrefix="new-task-field" />}
+            {missingCustomFields.length > 0 && <p className="text-xs text-amber-800">Erforderlich: {missingCustomFields.join(', ')}</p>}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Abbrechen</Button><Button onClick={() => createTask.mutate()} disabled={!title.trim() || !statuses.length || project.archived || createTask.isPending}>{createTask.isPending ? 'Wird angelegt…' : 'Ticket anlegen'}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Abbrechen</Button><Button onClick={() => createTask.mutate()} disabled={!title.trim() || !statuses.length || project.archived || customFieldsQuery.isPending || customFieldsQuery.isError || missingCustomFields.length > 0 || createTask.isPending}>{createTask.isPending ? 'Wird angelegt…' : 'Ticket anlegen'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -14,6 +14,9 @@ final class CustomFieldPolicy
         if (isset($body['key']) && $body['key'] !== $field['key']) {
             throw new Problem(409, 'custom_field_key_immutable', 'Der Schlüssel eines Zusatzfelds bleibt nach der Anlage unverändert.');
         }
+        if (array_key_exists('plugin_id', $body) && $body['plugin_id'] !== ($field['plugin_id'] ?? null)) {
+            throw new Problem(409, 'custom_field_plugin_immutable', 'Die zugehörige Erweiterung bleibt nach der Anlage unverändert.');
+        }
 
         $key = $field['key'];
         $hasValues = false;

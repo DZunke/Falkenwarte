@@ -6,6 +6,7 @@ namespace App\Shared\Infrastructure;
 
 use App\Shared\Application\Actor;
 use App\Shared\Application\Clock;
+use App\Shared\Domain\CustomFieldHistory;
 use App\Shared\Domain\Problem;
 use Doctrine\DBAL\Connection;
 use Symfony\Component\Uid\Uuid;
@@ -173,6 +174,7 @@ final class DbalStore implements DbalStoreAccess
         $resource = ['resource_type' => $name, 'id' => $record['id'], 'version' => $record['version'], 'url' => '/api/v1/'.str_replace('_', '-', $type).'/'.rawurlencode($record['id'])];
         $changes = [];
         $snapshot = $this->redact($record);
+        $old = null === $old ? null : $this->redact($old);
         foreach ($snapshot as $key => $value) {
             if (in_array($key, ['created_at', 'updated_at', 'allowed_actions'], true) || (null !== $old && ($old[$key] ?? null) === $value)) {
                 continue;
@@ -181,6 +183,10 @@ final class DbalStore implements DbalStoreAccess
         }
         if (isset(self::PUBLIC_TYPES[$type])) {
             $revision = ['id' => $this->id(), 'resource' => $resource, 'project_id' => $project, 'actor' => $this->actor->ref(), 'action_id' => $this->action, 'correlation_id' => $this->action, 'recorded_at' => $now, 'schema_version' => 1, 'summary' => $event, 'changes' => $changes, 'restorable' => 'tasks' === $type && 'removed' !== $change, 'allowed_actions' => [], '_snapshot' => $snapshot];
+            if ('tasks' === $type && !empty($snapshot['custom_fields'])) {
+                $labels = array_column($this->all('custom_fields', $project), 'label', 'key');
+                $revision['custom_field_values'] = CustomFieldHistory::snapshot($snapshot['custom_fields'], $labels);
+            }
             $this->connection->insert('revisions', ['id' => $revision['id'], 'project_id' => $project, 'data' => json_encode($revision, JSON_THROW_ON_ERROR)]);
         }
         $envelope = ['event_id' => $this->id(), 'kind' => 'actions' === $type ? 'action' : 'domain', 'event_type' => strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $event)), 'schema_version' => 1, 'occurred_at' => $now, 'project_id' => $project, 'actor' => $this->actor->ref(), 'correlation_id' => $this->action, 'causation_id' => null, 'action_id' => $this->action, 'aggregate' => ['type' => $name, 'id' => $record['id'], 'version' => $record['version']], 'aggregate_sequence' => $record['version'], 'data' => ['change' => $change]];
@@ -216,7 +222,7 @@ final class DbalStore implements DbalStoreAccess
             if (is_string($key) && (str_starts_with($key, '_') || in_array($key, ['password', 'token', 'secret', 'access_token', 'refresh_token', 'csrf_token', 'code_verifier'], true))) {
                 unset($object[$key]);
             } elseif (is_array($value)) {
-                $object[$key] = $this->redact($value);
+                $object[$key] = $this->redact('custom_fields' === $key ? CustomFieldHistory::publicFields($value) : $value);
             }
         }
 

@@ -253,7 +253,7 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     await expect(knownCard.getByText('Geklärt')).toBeVisible();
 
     const lateCard = ownerPage.getByRole('article', { name: 'Nachträglich registrierter T3-Auftrag' });
-    await expect(lateCard.getByText('In T3 beendet')).toBeVisible();
+    await expect(lateCard.getByText('In T3 beendet', { exact: true }).first()).toBeVisible();
     await lateCard.locator(`#recovery-reason-${lateEntry.id}`).fill('Der nachträglich bekannte T3-Run wurde erneut gelesen und als failed beobachtet.');
     await lateCard.getByRole('button', { name: 'Eintrag als geklärt markieren' }).click();
     await expect(lateCard.getByText('Geklärt')).toBeVisible();

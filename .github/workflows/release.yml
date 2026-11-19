@@ -70,14 +70,15 @@ jobs:
           docker load -i app-image.tar.gz
           test "$(cat image.id)" = "$(docker image inspect falkenwarte:qa --format '{{.Id}}')"
           test "$(docker image inspect falkenwarte:qa --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$VERIFIED_SHA"
+          test "$(docker image inspect falkenwarte:qa --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "${TAG#v}"
           jq -e --arg sha "$VERIFIED_SHA" --arg image "$(cat image.id)" '.commit == $sha and .image == $image and .overall_status == "passed"' acceptance/acceptance.json >/dev/null
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker tag falkenwarte:qa "$image:$TAG"
           docker push "$image:$TAG"
-          digest="$(docker inspect "$image:$TAG" --format '{{index .RepoDigests 0}}')"
+          digest="$(docker inspect "$image:$TAG" --format '{{json .RepoDigests}}' | jq -er --arg prefix "$image@sha256:" 'map(select(startswith($prefix))) | unique | if length == 1 then .[0] else error("unique GHCR digest required") end')"
           jq -n --arg revision "$VERIFIED_SHA" --arg tag "$TAG" --arg image "$digest" --arg id "$(cat image.id)" '{revision:$revision,tag:$tag,image:$image,image_id:$id}' > image-manifest.json
           jq -e --arg prefix "$image@sha256:" '.image | startswith($prefix)' image-manifest.json >/dev/null
           tar -czf browser-acceptance.tar.gz -C acceptance .
-          gh release upload "$TAG" image-manifest.json browser-acceptance.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" image-manifest.json browser-acceptance.tar.gz software-inventory.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
           cat image-manifest.json >> "$GITHUB_STEP_SUMMARY"

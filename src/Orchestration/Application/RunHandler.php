@@ -416,6 +416,13 @@ final class RunHandler
                 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $routing['routing_rules_version'] ?? $task['routing_rules_version'] ?? null,
             ];
+            $source = $parentRun;
+            if (null === $source && isset($workflowInstance['_stage_source_run_id'])) {
+                $source = $this->record('runs', $workflowInstance['_stage_source_run_id']);
+            }
+            if (null !== $source) {
+                $snapshot += $this->freezeHandoff($source, $task);
+            }
             $attempt = [
                 'attempt_no' => $attemptNo,
                 'dispatch_id' => $dispatchId,
@@ -444,6 +451,7 @@ final class RunHandler
                 'attempts' => [$attempt],
                 'parent_run_id' => $parentRun['id'] ?? null,
                 '_requested_by' => $actor->ref(),
+                '_prompt_template' => (string) ($profile['prompt_template'] ?? ''),
                 'workflow_instance_id' => $workflowInstance['id'] ?? null,
                 'pending_input' => null,
                 'result_digest' => null,
@@ -454,6 +462,7 @@ final class RunHandler
                 '_dispatch_request' => null,
             ], 'run.queued');
             if (null !== $workflowInstance) {
+                unset($workflowInstance['_stage_source_run_id']);
                 $workflowInstance['run_ids'][] = $run['id'];
                 $this->store->save('workflow_instances', $workflowInstance, 'workflow.run_attached');
             }
@@ -1104,8 +1113,8 @@ final class RunHandler
         $binding = $this->agentCatalog->binding((string) $run['snapshot']['project_binding_id']);
         $payload = $run['_dispatch_request'] ?? null;
         if (!is_array($payload)) {
-            $profile = $this->agentCatalog->profile((string) $run['snapshot']['agent_profile_id']);
-            $message = $this->dispatchMessage($task, $profile, $run);
+            $template = $run['_prompt_template'] ?? $this->agentCatalog->profile((string) $run['snapshot']['agent_profile_id'])['prompt_template'] ?? '';
+            $message = $this->dispatchMessage($run['snapshot'], (string) $template, $run);
             $payload = [
                 'projectId' => (string) $binding['external_project_id'],
                 'title' => 'Falkenwarte '.$task['key'].' · Versuch '.$attempt['attempt_no'],
@@ -1800,6 +1809,11 @@ final class RunHandler
         }
         $latest = [] === $runs ? null : $runs[array_key_last($runs)];
         $stage = $this->stage($workflow, (string) $instance['current_stage_id']);
+        if (null !== $latest && ($instance['_stage_source_run_id'] ?? null) === $latest['id']) {
+            $this->queueWorkflowStageRun($instance, $task, $workflow, $stage, $latest);
+
+            return;
+        }
         if (null === $latest) {
             $this->assertConditions($stage['entry_conditions'] ?? [], $task, $instance);
             if (null === $stage['agent_profile_id']) {
@@ -1825,8 +1839,7 @@ final class RunHandler
             return;
         }
         if ('needs_changes' === $outcome) {
-            ++$instance['repair_round'];
-            if ($instance['repair_round'] > (int) $workflow['limits']['max_repair_rounds']) {
+            if ($instance['repair_round'] >= (int) $workflow['limits']['max_repair_rounds']) {
                 $this->pauseWorkflow($instance, 'Die konfigurierte Zahl der Reparaturrunden ist erreicht.');
                 $this->openAttention($task['id'], $task['project_id'], 'workflow_repair_limit', 'owner');
 
@@ -1868,15 +1881,19 @@ final class RunHandler
 
             return;
         }
+        if ('needs_changes' === $outcome) {
+            ++$instance['repair_round'];
+        }
+        $instance['_stage_source_run_id'] = $latest['id'];
         $instance['current_stage_id'] = $nextStage['id'];
         $instance['pause_reason'] = null;
         $instance = $this->store->save('workflow_instances', $instance, 'workflow.stage_advanced');
-        $this->queueWorkflowStageRun($instance, $task, $workflow, $nextStage);
         $this->resolveAttention($task['id'], 'workflow_transition_required');
         $this->resolveAttention($task['id'], 'workflow_entry_condition_unmet');
+        $this->queueWorkflowStageRun($instance, $task, $workflow, $nextStage, $latest);
     }
 
-    private function queueWorkflowStageRun(array $instance, array $task, array $workflow, array $stage): void
+    private function queueWorkflowStageRun(array $instance, array $task, array $workflow, array $stage, ?array $source = null): void
     {
         if ($this->maintenanceMode()) {
             $instance['_paused_for_maintenance'] = true;
@@ -1884,7 +1901,7 @@ final class RunHandler
 
             return;
         }
-        if (!empty($task['human_attention']['required']) || null !== $this->activeRecoveryGate()) {
+        if ($this->hasOpenOwnerAttention((string) $task['id'], (string) $task['project_id']) || null !== $this->activeRecoveryGate()) {
             $this->pauseWorkflow($instance, null !== $this->activeRecoveryGate()
                 ? 'Nach der Wiederherstellung muss die externe T3-Inventur abgeschlossen werden.'
                 : 'Für diese Aufgabe ist noch eine menschliche Entscheidung offen.');
@@ -1941,7 +1958,7 @@ final class RunHandler
                 'delegation_depth' => 0,
                 'classification_id' => $task['classification_id'] ?? null, 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $task['routing_rules_version'] ?? null,
-            ],
+            ] + (null === $source ? [] : $this->freezeHandoff($source, $task)),
             'attempt_no' => 1, 'attempts' => [[
                 'attempt_no' => 1, 'dispatch_id' => $dispatchId, 'connection_id' => $connection['id'],
                 'auth_epoch' => max(1, (int) $connection['auth_epoch']), 'external_thread_id' => null,
@@ -1951,11 +1968,54 @@ final class RunHandler
             ]],
             'parent_run_id' => null, 'workflow_instance_id' => $instance['id'], '_requested_by' => ['kind' => 'system', 'id' => 'system'], 'pending_input' => null,
             'result_digest' => null, 'evidence_ids' => [], 'report_ids' => [], 'last_observed_at' => null,
-            'status_reason' => null, '_dispatch_request' => null,
+            'status_reason' => null, '_dispatch_request' => null, '_prompt_template' => (string) ($profile['prompt_template'] ?? ''),
         ], 'run.queued');
+        unset($instance['_stage_source_run_id']);
         $instance['run_ids'][] = $run['id'];
         $this->store->save('workflow_instances', $instance, 'workflow.run_attached');
         $this->store->enqueue('run.dispatch', ['run_id' => $run['id']]);
+    }
+
+    /** Freeze the preceding attempt before the new role can begin or the owner can edit its references. */
+    private function freezeHandoff(array $source, array $task): array
+    {
+        if ($source['task_id'] !== $task['id'] || $source['project_id'] !== $task['project_id']) {
+            throw new Problem(409, 'run_context_mismatch', 'Die Phasenübergabe gehört nicht zu dieser Aufgabe.');
+        }
+        $attempt = $this->attempt($source, (int) $source['attempt_no']);
+        $report = $this->currentReport($source, false);
+        $references = [];
+        foreach ($task['link_collection_ids'] ?? [] as $collectionId) {
+            $collection = $this->store->find('link_collections', $collectionId);
+            if (null !== $collection && $collection['task_id'] === $task['id'] && $collection['project_id'] === $task['project_id']) {
+                $references[] = array_intersect_key($collection, array_flip(['id', 'task_id', 'name', 'kind', 'links'])) + ['task_version' => $task['version']];
+            }
+        }
+        $evidenceIds = [];
+        foreach ($report['evidence_ids'] ?? [] as $evidenceId) {
+            $evidence = $this->store->find('evidence', $evidenceId);
+            if (null !== $evidence && $evidence['run_id'] === $source['id'] && 'rejected' !== $evidence['review_status']) {
+                $evidenceIds[] = $evidenceId;
+            }
+        }
+
+        return [
+            'handoff_source_run_id' => $source['id'],
+            'handoff_snapshot' => [
+                'source_report_id' => $report['id'] ?? null,
+                'source_result_digest' => $report['_digest'] ?? null,
+                'source_attempt_id' => $attempt['dispatch_id'],
+                'source_attempt_no' => $attempt['attempt_no'],
+                'task_revision_id' => $source['snapshot']['task_revision'],
+                'external_thread_id' => $attempt['external_thread_id'],
+                'summary' => $report['summary'] ?? $source['status_reason'] ?? '',
+                'outcome' => $report['outcome'] ?? $source['state'],
+                'context_summary' => mb_substr(trim($task['title']."\n\n".$task['description']), 0, 20000),
+                'open_questions' => $report['_open_questions'] ?? [],
+                'reported_evidence_ids' => $evidenceIds,
+                'link_collections' => $references,
+            ],
+        ];
     }
 
     private function pauseWorkflow(array $instance, string $reason): void
@@ -2155,9 +2215,6 @@ final class RunHandler
         if (!empty($task['blocked'])) {
             throw new Problem(409, 'task_blocked', 'Die Aufgabe ist blockiert und kann nicht gestartet werden.');
         }
-        if (!empty($task['human_attention']['required'])) {
-            throw new Problem(409, 'human_attention_required', 'Für diese Aufgabe ist zuerst eine menschliche Entscheidung nötig.');
-        }
         if (!empty($task['classification_required']) && ($task['intake_outcome'] ?? null) !== 'ready') {
             throw new Problem(409, 'intake_not_ready', 'Die erforderliche Eingangsklassifikation ist für die aktuelle Aufgabe noch nicht bereit.');
         }
@@ -2296,21 +2353,39 @@ final class RunHandler
     /** @param list<array<string, mixed>> $conditions */
     private function conditionsSatisfied(array $conditions, array $task, ?array $instance): bool
     {
+        if ([] === $conditions) {
+            return true;
+        }
+        $runs = array_filter(
+            $this->store->all('runs', (string) $task['project_id']),
+            static fn (array $run): bool => $run['task_id'] === $task['id']
+                && (int) $run['snapshot']['task_revision'] === (int) $task['version']
+                && (null === $instance || $run['workflow_instance_id'] === $instance['id']),
+        );
+        $runsById = array_column($runs, null, 'id');
+        $taskEvidence = array_filter(
+            $this->store->all('evidence', (string) $task['project_id']),
+            static fn (array $item): bool => $item['task_id'] === $task['id'] && (int) $item['task_revision'] === (int) $task['version'],
+        );
+        $approvals = array_filter($this->store->all('approvals', (string) $task['project_id']), static function (array $approval) use ($runsById): bool {
+            $run = $runsById[$approval['run_id']] ?? null;
+
+            return null !== $run && 'approved' === $approval['status'] && $approval['attempt_no'] === $run['attempt_no']
+                && $approval['task_revision'] === $run['snapshot']['task_revision']
+                && is_string($run['result_digest']) && hash_equals($run['result_digest'], $approval['result_digest']);
+        });
+        $reviewStageIds = array_column(array_filter($instance['definition_snapshot']['stages'] ?? [], static fn (array $stage): bool => 'review' === $stage['kind']), 'id');
         foreach ($conditions as $condition) {
             $type = $condition['type'];
-            $evidence = $this->store->all('evidence', (string) $task['project_id']);
-            $approvals = $this->store->all('approvals', (string) $task['project_id']);
-            $taskEvidence = array_values(array_filter($evidence, static fn (array $item): bool => $item['task_id'] === $task['id']));
-            $taskApprovals = array_values(array_filter($approvals, static fn (array $approval): bool => ($approval['run_id'] ?? null) !== null));
             $satisfied = match ($type) {
-                'all_required_criteria_human_confirmed' => array_reduce($task['criteria'] ?? [], static fn (bool $carry, array $criterion): bool => $carry && (($criterion['review_status'] ?? null) === 'human_confirmed'), true),
+                'all_required_criteria_human_confirmed' => array_reduce($task['criteria'] ?? [], static fn (bool $carry, array $criterion): bool => $carry && (empty($criterion['is_required']) || 'human_confirmed' === $criterion['state']), true),
                 'required_evidence_reported' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && 'rejected' !== $item['review_status']),
                 'required_evidence_human_confirmed' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && 'human_confirmed' === $item['review_status']),
-                'human_approval_granted' => (bool) array_filter($taskApprovals, static fn (array $approval): bool => 'approved' === $approval['status']),
-                'review_report_accepted' => (bool) array_filter($this->store->all('runs', (string) $task['project_id']), fn (array $run): bool => $run['task_id'] === $task['id'] && ($this->currentReport($run, false)['outcome'] ?? null) === 'reported_success'),
-                'run_succeeded' => (bool) array_filter($this->store->all('runs', (string) $task['project_id']), static fn (array $run): bool => $run['task_id'] === $task['id'] && 'succeeded' === $run['state']),
+                'human_approval_granted' => [] !== $approvals,
+                'review_report_accepted' => (bool) array_filter($runs, fn (array $run): bool => 'succeeded' === $run['state'] && ('review' === $run['stage'] || in_array($run['stage'], $reviewStageIds, true)) && ($this->currentReport($run, false)['outcome'] ?? null) === 'reported_success'),
+                'run_succeeded' => (bool) array_filter($runs, static fn (array $run): bool => 'succeeded' === $run['state']),
                 'intake_ready' => ($task['classification_required'] ?? false) ? ($task['intake_outcome'] ?? null) === 'ready' : true,
-                'no_human_attention' => empty($task['human_attention']['required']) && !$this->hasOpenOwnerAttention((string) $task['id'], (string) $task['project_id']),
+                'no_human_attention' => !$this->hasOpenOwnerAttention((string) $task['id'], (string) $task['project_id']),
                 default => false,
             };
             if (!$satisfied) {
@@ -2372,17 +2447,21 @@ final class RunHandler
         ];
     }
 
-    private function dispatchMessage(array $task, array $profile, array $run): string
+    private function dispatchMessage(array $task, string $template, array $run): string
     {
-        $template = (string) ($profile['prompt_template'] ?? '');
         $template = strtr($template, ['{{task.title}}' => (string) $task['title'], '{{task.description}}' => (string) $task['description']]);
-        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['description'], $task['criteria'] ?? []);
+        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'], $task['criteria'] ?? []);
         $body = "Falkenwarte-Auftrag\nRun-ID: {$run['id']}\nVersuch: {$run['attempt_no']}\nAufgabenrevision: {$run['snapshot']['task_revision']}\n\nAufgabe: {$task['title']}\n\n{$task['description']}";
         if ([] !== $criteria) {
             $body .= "\n\nAkzeptanzkriterien:\n".implode("\n", $criteria);
         }
         if ('' !== trim($template)) {
             $body .= "\n\nRollenhinweise:\n".$template;
+        }
+        if (isset($run['snapshot']['handoff_snapshot'])) {
+            $handoff = $run['snapshot']['handoff_snapshot'];
+            $body .= "\n\nÜbergabe aus Lauf ".$run['snapshot']['handoff_source_run_id']." (Agentenmeldung)\n";
+            $body .= json_encode($handoff, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         }
         $body .= "\n\nNutze die freigegebenen Falkenwarte-MCP-Werkzeuge für Rückfragen, Ergebnislinks und Ergebnisberichte. Berichte Beobachtungen als Agentmeldung. Falkenwarte prüft keinen Code und lädt keine Links herunter.";
 

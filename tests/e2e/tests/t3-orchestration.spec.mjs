@@ -32,15 +32,15 @@ async function expectDashboardAttention(ownerApi, ownerPage, expected) {
   expect(await dashboardAttentionCount(ownerApi)).toBe(expected);
   await ownerPage.goto('/#/dashboard');
   const kpi = ownerPage.locator('dl[aria-label="Arbeitsstand"]');
-  const attentionLabel = kpi.getByText('Mensch erforderlich', { exact: true });
-  const cell = kpi.locator('div').filter({ has: attentionLabel }).last();
-  await expect(cell.locator('dd')).toHaveText(String(expected));
+  const attentionValue = kpi.locator('dd').nth(1);
+  await expect(attentionValue).toHaveText(String(expected));
 }
 
 async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E') {
-  const project = await ownerApi.createProject({ name: `${name} Projekt` });
+  const uniqueName = `${name} ${randomUUID().slice(0, 6)}`;
+  const project = await ownerApi.createProject({ name: `${uniqueName} Projekt` });
   const created = await ownerApi.post('/connections', {
-    name,
+    name: uniqueName,
     bridge_id: 't3.mcp.v0_1_10',
     canonical_url: qaMocks.t3URL,
   });
@@ -49,7 +49,7 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E
 
   await ownerPage.goto('/#/agents');
   await expect(ownerPage.getByRole('heading', { name: 'T3-Verbindung' })).toBeVisible();
-  await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
+  await ownerPage.locator('main').getByRole('button', { name: new RegExp(uniqueName) }).click();
   const authorizationRequest = ownerPage.waitForRequest((request) => request.url().startsWith(`${qaMocks.t3URL}/authorize?`));
   await Promise.all([
     authorizationRequest,
@@ -58,7 +58,7 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E
   await readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.auth_status === 'valid', 'Browser-OAuth muss T3 autorisieren.');
 
   await ownerPage.reload();
-  await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
+  await ownerPage.locator('main').getByRole('button', { name: new RegExp(uniqueName) }).click();
   await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
   await expect.poll(async () => {
     const check = await ownerApi.get(`/connections/${connection.id}/check`);
@@ -636,7 +636,7 @@ test('A09 unknown T3 capability and run state remain visible failures', async ({
   try {
     await qaMocks.setT3Scenario('unknown_capability');
     await ownerPage.goto('/#/agents');
-    await ownerPage.getByRole('button', { name: new RegExp('T3 Fehler') }).click();
+    await ownerPage.locator('main').getByRole('button', { name: new RegExp('T3 Fehler') }).click();
     await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
     const failedCheck = await readUntil(ownerApi, `/connections/${connection.id}/check`, (check) => check.mcp_handshake === 'failed');
     expect(failedCheck.capabilities).toBe('not_checked');
