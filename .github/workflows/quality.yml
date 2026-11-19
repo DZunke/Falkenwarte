@@ -91,17 +91,57 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
+      - name: Set up pinned Docker Buildx and BuildKit
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        with:
+          version: v0.39.0
+          name: falkenwarte-release
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
+      - name: Record and verify image builder versions
+        run: |
+          set -euo pipefail
+          docker version | tee docker-version.txt
+          docker buildx version | tee buildx-version.txt
+          grep -Eq '^github.com/docker/buildx v0\.39\.0([[:space:]]|$)' buildx-version.txt
+          docker buildx inspect --bootstrap falkenwarte-release | tee buildx-inspect.txt
+          grep -Eq 'Driver:[[:space:]]+docker-container' buildx-inspect.txt
+          grep -Eq 'BuildKit version:[[:space:]]+v0\.35\.0([[:space:]]|$)' buildx-inspect.txt
+          grep -F 'moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb' buildx-inspect.txt
       - name: Build the Linux release image
         run: |
-          docker buildx build --file docker/Dockerfile --target app --provenance=false \
-            --build-arg VCS_REF="$FALKENWARTE_TEST_COMMIT" --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
-            --build-arg APP_VERSION="$(cat version.txt)" --output "type=docker,name=$FALKENWARTE_IMAGE,rewrite-timestamp=true" .
-          docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}' > image.id
+          set -euo pipefail
+          source_date_epoch="$(git log -1 --format=%ct)"
+          git -c tar.umask=0022 archive --format=tar "$FALKENWARTE_TEST_COMMIT" | \
+            docker buildx build --builder falkenwarte-release --file docker/Dockerfile --target app --provenance=false \
+            --build-arg VCS_REF="$FALKENWARTE_TEST_COMMIT" --build-arg SOURCE_DATE_EPOCH="$source_date_epoch" \
+            --build-arg APP_VERSION="$(cat version.txt)" --output "type=docker,name=$FALKENWARTE_IMAGE,dest=app-image.tar,rewrite-timestamp=true" -
+          docker load --input app-image.tar
+          docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}' | tee image.id
+          docker run --rm --env SOURCE_DATE_EPOCH="$source_date_epoch" --entrypoint php "$FALKENWARTE_IMAGE" -r '
+            $expected = (int) getenv("SOURCE_DATE_EPOCH");
+            $paths = ["/app/composer.lock", "/usr/share/falkenwarte/image-audit/runtime-evidence.json"];
+            foreach ($paths as $path) {
+              $actual = filemtime($path);
+              if ($actual === false || $actual !== $expected) {
+                fwrite(STDERR, sprintf("mtime assertion failed for %s: expected %d, got %s\n", $path, $expected, var_export($actual, true)));
+                exit(1);
+              }
+              printf("source_date_epoch_assertion=%s:%d\n", $path, $actual);
+            }
+            $evidence = json_decode(file_get_contents($paths[1]), true, 512, JSON_THROW_ON_ERROR);
+            if (($evidence["build"]["source_date_epoch"] ?? null) !== $expected) {
+              fwrite(STDERR, "runtime-evidence source_date_epoch does not match the image build argument\n");
+              exit(1);
+            }
+          '
+          printf 'verified_image_id=%s\n' "$(cat image.id)"
           bash scripts/export-image-audit.sh "$FALKENWARTE_IMAGE" image-inventory
           jq -e --arg sha "$FALKENWARTE_TEST_COMMIT" --arg version "$(cat version.txt)" '.application.revision == $sha and .application.version == $version' image-inventory/runtime-evidence.json
           test -s image-inventory/THIRD-PARTY-NOTICES.txt
           tar -czf software-inventory.tar.gz -C image-inventory .
-          docker save "$FALKENWARTE_IMAGE" | gzip -1 > app-image.tar.gz
+          gzip -1 app-image.tar
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: app-image
