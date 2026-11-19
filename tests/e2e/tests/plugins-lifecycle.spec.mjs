@@ -23,6 +23,68 @@ async function readUntil(ownerApi, route, matches, description, timeout = 45_000
   return current;
 }
 
+function expectInside(child, parent, description) {
+  expect(child.x, `${description}: links`).toBeGreaterThanOrEqual(parent.x - 1);
+  expect(child.y, `${description}: oben`).toBeGreaterThanOrEqual(parent.y - 1);
+  expect(child.x + child.width, `${description}: rechts`).toBeLessThanOrEqual(parent.x + parent.width + 1);
+  expect(child.y + child.height, `${description}: unten`).toBeLessThanOrEqual(parent.y + parent.height + 1);
+}
+
+async function reachPluginTabAtViewport(ownerPage, width, height) {
+  await ownerPage.setViewportSize({ width, height });
+  const sheet = ownerPage.locator('[data-slot="sheet-content"]');
+  const tablist = ownerPage.getByRole('tablist');
+  const pluginTab = tablist.getByRole('tab', { name: 'Linknotizen', exact: true });
+  await expect(sheet).toBeVisible();
+  await expect(tablist).toBeVisible();
+  await expect(pluginTab).toBeVisible();
+  await tablist.getByRole('tab', { name: 'Details', exact: true }).click();
+  await expect(pluginTab).toHaveAttribute('aria-selected', 'false');
+
+  const listBounds = await tablist.boundingBox();
+  const pointerX = listBounds.x + listBounds.width / 2;
+  const pointerY = listBounds.y + listBounds.height / 2;
+  const metrics = () => tablist.evaluate((element) => ({
+    scrollLeft: element.scrollLeft,
+    maxScroll: element.scrollWidth - element.clientWidth,
+  }));
+
+  const pageScrollBefore = await ownerPage.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+  let position = await metrics();
+  await ownerPage.mouse.move(pointerX, pointerY);
+  if (position.scrollLeft > 0) {
+    await ownerPage.mouse.wheel(-position.scrollLeft - 64, 0);
+    await expect.poll(async () => (await metrics()).scrollLeft).toBe(0);
+    position = await metrics();
+  }
+  if (width === 390) expect(position.maxScroll, 'Auf dem mobilen Viewport muss die Tablist horizontal scrollen.').toBeGreaterThan(1);
+  if (position.maxScroll > 1) {
+    await ownerPage.mouse.wheel(position.maxScroll - position.scrollLeft + 64, 0);
+    await expect.poll(async () => (await metrics()).scrollLeft).toBeGreaterThanOrEqual(position.maxScroll - 1);
+  }
+
+  const viewport = ownerPage.viewportSize();
+  const sheetBounds = await sheet.boundingBox();
+  const currentListBounds = await tablist.boundingBox();
+  const tabBounds = await pluginTab.boundingBox();
+  expectInside(sheetBounds, { x: 0, y: 0, ...viewport }, 'Ticket-Sheet im Browser-Viewport');
+  expectInside(tabBounds, sheetBounds, 'Linknotizen im Ticket-Sheet');
+  expectInside(tabBounds, currentListBounds, 'Linknotizen im eigenen Tablist-Viewport');
+  expectInside(currentListBounds, sheetBounds, 'Tablist im Ticket-Sheet');
+  expectInside(tabBounds, { x: 0, y: 0, ...viewport }, 'Linknotizen im Browser-Viewport');
+  const x = tabBounds.x + tabBounds.width / 2;
+  const y = tabBounds.y + tabBounds.height / 2;
+  const hitId = await ownerPage.evaluate(({ x: pointX, y: pointY }) => document.elementFromPoint(pointX, pointY)?.closest('[role="tab"]')?.id ?? null, { x, y });
+  expect(hitId).toBe(await pluginTab.getAttribute('id'));
+  await ownerPage.mouse.click(x, y);
+  await expect(pluginTab).toHaveAttribute('aria-selected', 'true');
+  const notesPanel = ownerPage.getByRole('tabpanel', { name: 'Linknotizen' });
+  await expect(notesPanel).toBeVisible();
+  await expect(notesPanel.getByRole('heading', { name: 'Linknotizen' })).toBeVisible();
+  const pageScrollAfter = await ownerPage.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+  expect(pageScrollAfter).toEqual(pageScrollBefore);
+}
+
 async function openPlugin(ownerPage, pluginId) {
   await ownerPage.goto('/#/plugins');
   await expect(ownerPage.getByRole('heading', { name: 'Erweiterungen' })).toBeVisible();
@@ -65,7 +127,9 @@ test('A17 Linknotizen bleiben über Browser, API und MCP verfügbar und behalten
 
   await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}`);
   await expect(ownerPage.getByRole('heading', { name: task.title })).toBeVisible();
-  await ownerPage.getByRole('tab', { name: 'Linknotizen' }).click();
+  await reachPluginTabAtViewport(ownerPage, 1440, 960);
+  await reachPluginTabAtViewport(ownerPage, 390, 844);
+  await ownerPage.setViewportSize({ width: 1440, height: 960 });
   const notesPanel = ownerPage.getByRole('tabpanel', { name: 'Linknotizen' });
   await notesPanel.getByLabel('Ticketlink').click();
   await ownerPage.getByRole('option', { name: 'Abnahmekonzept', exact: true }).click();
