@@ -6,7 +6,9 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 const resultsDirectory = process.env.FALKENWARTE_QA_RESULTS_DIR ?? path.join(directory, 'results');
 
 export default defineConfig({
-  testDir: path.join(directory, process.env.FALKENWARTE_PRODUCTION_SMOKE === '1' ? 'production' : 'tests'),
+  testDir: path.join(directory, process.env.FALKENWARTE_PRODUCTION_SMOKE === '1'
+    ? 'production'
+    : process.env.FALKENWARTE_PLUGIN_IMAGE_UPGRADE === '1' ? 'plugin-upgrade' : 'tests'),
   outputDir: path.join(resultsDirectory, 'artifacts'),
   fullyParallel: false,
   workers: 1,

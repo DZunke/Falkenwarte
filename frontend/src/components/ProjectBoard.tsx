@@ -216,7 +216,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
             <ProjectIcon iconKey={project.icon_key} />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-2xl font-semibold tracking-tight">{project.name}</h1>
+            <h1 className="break-words text-2xl font-semibold tracking-tight sm:truncate">{project.name}</h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{project.description || 'Tickets und Bearbeitungsstand dieses Projekts.'}</p>
           </div>
         </div>
@@ -233,7 +233,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
         <div className="flex flex-wrap items-center gap-2">
           {boards.map((board) => <Button key={board.id} variant={board.id === boardDefinition?.id ? 'secondary' : 'ghost'} size="sm" onClick={() => setBoardId(board.id)}>{board.name}</Button>)}
           <Separator orientation="vertical" className="mx-1 h-6" />
-          <div className="relative min-w-48 flex-1 sm:max-w-xs">
+          <div className="relative min-w-0 basis-full sm:min-w-48 sm:max-w-xs sm:flex-1">
             <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
             <Input aria-label="Tickets filtern" placeholder="Tickets filtern…" value={filter} onChange={(event) => setFilter(event.target.value)} className="h-9 pl-9" />
           </div>

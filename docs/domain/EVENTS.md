@@ -34,6 +34,7 @@ Commandnamen und Beispiele sind Projektverträge, keine Symfony-Bordmittel. Symf
 | RunFinished | Orchestration | Phasenpolicy hat einen nachvollziehbaren Endzustand ergeben. |
 | WorkflowPhaseAdvanced | Automation | Eine konkrete Workflowinstanz hat unter ihren Guards die Phase gewechselt. |
 | PluginActivationChanged | Extensions | Beiträge wurden freigeschaltet oder gesperrt; aktive Arbeit folgt ihrer Drainpolicy. |
+| PluginRemovalCompleted / PluginRemovalPlanCompleted | Extensions | Ein Betreiberimage ohne Pluginmanifest wurde erkannt; Pluginzustand, Revision, Domain-Event und abgeschlossener Entfernungsplan sind gespeichert. |
 
 Die Tabelle ist der fachliche Katalog. Die endgültigen serialisierten Typnamen werden im jeweiligen Schema fixiert. Öffentlich verwendete Namen werden nicht durch Refactoring einer PHP-Klasse geändert. Das Beispiel `contracts/schemas/task-moved.schema.json` zeigt einen konkreten versionierten Vertrag.
 

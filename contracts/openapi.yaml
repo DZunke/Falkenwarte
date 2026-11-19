@@ -10004,6 +10004,13 @@ components:
         created_at:
           type: string
           format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          description: Zeitpunkt, zu dem der Betreiber den Imagewechsel ohne Pluginmanifest beim Start bestätigt hat.
+        cancelled_at:
+          type: string
+          format: date-time
       required:
       - id
       - operation

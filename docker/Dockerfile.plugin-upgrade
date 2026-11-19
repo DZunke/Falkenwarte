@@ -1,0 +1,6 @@
+ARG FALKENWARTE_IMAGE
+FROM ${FALKENWARTE_IMAGE} AS plugin-upgrade-qa
+
+USER root
+COPY --chown=www-data:www-data tests/Fixtures/Plugins/ /app/tests/Fixtures/Plugins/
+USER www-data

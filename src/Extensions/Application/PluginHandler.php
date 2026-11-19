@@ -115,6 +115,59 @@ final class PluginHandler
         }
     }
 
+    /** Persist removals after a new image no longer registers the package. */
+    public function completePendingRemovals(): void
+    {
+        foreach ($this->store->all('plugins') as $candidate) {
+            $pluginId = $candidate['id'] ?? null;
+            if (!is_string($pluginId) || $this->registry->has($pluginId) || 'uninstall_pending' !== ($candidate['state'] ?? null)) {
+                continue;
+            }
+
+            $planId = $candidate['removal_plan_id'] ?? null;
+            if (!is_string($planId)) {
+                continue;
+            }
+            $this->store->context(new Actor('system', false), $planId);
+            $this->store->atomic(function () use ($pluginId, $planId): void {
+                $plugin = $this->store->find('plugins', $pluginId);
+                $plan = $this->store->find('plugin_install_plans', $planId);
+                if (null === $plugin || null === $plan
+                    || 'uninstall_pending' !== ($plugin['state'] ?? null)
+                    || ($plugin['removal_plan_id'] ?? null) !== $planId
+                    || 'remove' !== ($plan['operation'] ?? null)
+                    || 'prepared' !== ($plan['status'] ?? null)
+                    || $pluginId !== ($plan['plugin_id'] ?? null)
+                    || $this->registry->has($pluginId)) {
+                    return;
+                }
+
+                $activeWork = $this->activeWorkCounts($pluginId);
+                if (0 !== $activeWork['runs'] || 0 !== $activeWork['jobs'] || 0 !== $activeWork['external']) {
+                    return;
+                }
+                foreach ($this->registry->manifests() as $manifest) {
+                    $dependentId = (string) $manifest['id'];
+                    if (!in_array($this->registry->state($dependentId), ['enabled', 'draining'], true)) {
+                        continue;
+                    }
+                    foreach ($this->registry->dependencies($dependentId) as $dependency) {
+                        if ($dependency['plugin_id'] === $pluginId) {
+                            return;
+                        }
+                    }
+                }
+
+                $plugin['state'] = 'removed';
+                $this->store->save('plugins', $plugin, 'PluginRemovalCompleted');
+
+                $plan['status'] = 'completed';
+                $plan['completed_at'] = $this->store->now();
+                $this->store->save('plugin_install_plans', $plan, 'PluginRemovalPlanCompleted');
+            });
+        }
+    }
+
     private function list(array $p, Actor $actor): array
     {
         $actor->requireOwner();
@@ -124,7 +177,7 @@ final class PluginHandler
         }
         foreach ($this->store->all('plugins') as $stored) {
             $pluginId = $stored['id'] ?? null;
-            if (!is_string($pluginId) || $this->registry->has($pluginId) || !$this->hasPreparedRemoval($pluginId, $stored)) {
+            if (!is_string($pluginId) || $this->registry->has($pluginId) || !$this->hasRemovalRecord($pluginId, $stored)) {
                 continue;
             }
             $plugins[] = $this->removedPlugin($pluginId, $stored);
@@ -142,7 +195,7 @@ final class PluginHandler
         }
 
         $stored = $this->store->find('plugins', $pluginId);
-        if (null !== $stored && $this->hasPreparedRemoval($pluginId, $stored)) {
+        if (null !== $stored && $this->hasRemovalRecord($pluginId, $stored)) {
             return $this->removedPlugin($pluginId, $stored);
         }
 
@@ -452,6 +505,7 @@ final class PluginHandler
             $this->store->save('plugins', $plugin, 'PluginRemovalPlanCancelled');
 
             $plan['status'] = 'cancelled';
+            $plan['cancelled_at'] = $this->store->now();
 
             return $this->planView($this->store->save('plugin_install_plans', $plan, 'PluginRemovalPlanCancelled'));
         });
@@ -591,13 +645,13 @@ final class PluginHandler
     {
         $view = array_intersect_key($plan, array_flip([
             'id', 'operation', 'plugin_id', 'target_version', 'source', 'manifest_sha256', 'status',
-            'requires_build', 'requires_restart', 'requires_migration', 'steps', 'warnings', 'created_at',
+            'requires_build', 'requires_restart', 'requires_migration', 'steps', 'warnings', 'created_at', 'completed_at', 'cancelled_at',
         ]));
         $view['operation'] ??= 'install';
         if ('remove' === $view['operation'] && 'prepared' === ($view['status'] ?? null)) {
             $pluginId = (string) ($view['plugin_id'] ?? '');
             $stored = '' !== $pluginId ? $this->store->find('plugins', $pluginId) : null;
-            if (!$this->registry->has($pluginId) && null !== $stored && $this->hasPreparedRemoval($pluginId, $stored)) {
+            if (!$this->registry->has($pluginId) && null !== $stored && $this->hasRemovalRecord($pluginId, $stored)) {
                 $view['status'] = 'completed';
             }
         }
@@ -688,18 +742,20 @@ final class PluginHandler
     }
 
     /** @param array<string, mixed> $stored */
-    private function hasPreparedRemoval(string $pluginId, array $stored): bool
+    private function hasRemovalRecord(string $pluginId, array $stored): bool
     {
         $planId = $stored['removal_plan_id'] ?? null;
-        if ('uninstall_pending' !== ($stored['state'] ?? null) || !is_string($planId)) {
+        $state = $stored['state'] ?? null;
+        if (!is_string($planId) || !in_array($state, ['uninstall_pending', 'removed'], true)) {
             return false;
         }
 
         $plan = $this->store->find('plugin_install_plans', $planId);
+        $expectedStatus = 'removed' === $state ? 'completed' : 'prepared';
 
         return null !== $plan
             && 'remove' === ($plan['operation'] ?? null)
-            && 'prepared' === ($plan['status'] ?? null)
+            && $expectedStatus === ($plan['status'] ?? null)
             && $pluginId === ($plan['plugin_id'] ?? null);
     }
 

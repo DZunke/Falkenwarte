@@ -167,10 +167,11 @@ Historische Ereignisse und Objektrevisionen enthalten Schema- und Plugin-Version
 | enabling -> enabled | Migrationen und Registrierungsprüfung erfolgreich |
 | enabled -> draining | Keine neuen Aufträge; vorhandene Ausführungen bleiben beobachtbar |
 | draining -> disabled | Keine von der Fähigkeit abhängige aktive oder ungeklärte Arbeit |
-| disabled -> uninstall_pending | Deinstallationsplan enthält Daten-/Abhängigkeitsprüfung |
-| uninstall_pending -> removed | Neues Image ohne Paket aktiv; erforderliche Daten weiterhin lesbar |
+| disabled -> uninstall_pending | Eigentümer erstellt einen Entfernungsplan; aktive Arbeit und aktivierte Abhängigkeiten sind ausgeschlossen, neue Nutzung wird gesperrt |
+| uninstall_pending -> removed | Maintenance bestätigt nach einem Imagewechsel ohne Paketmanifest die Entfernung und speichert Zustandsrevision, Domain-Event und abgeschlossenen Plan |
+| removed -> removed | Das Tombstone und die Pluginhistorie bleiben bei weiteren Images ohne Paket erhalten |
 
-Die beiden Entfernungsschritte beschreiben den Zielzustand des Fachvertrags. Ein erstellter Entfernungsplan setzt derzeit noch keinen Pluginstatus `uninstall_pending`; die vorhandene Image-Umstellung bleibt ein Betreiberprozess.
+Der Entfernungsplan löscht weder Plugin-Daten noch Konfiguration. Vor dem Imagewechsel kann der Eigentümer ihn zurücknehmen; der vorherige sichere deaktivierte Zustand wird wiederhergestellt.
 
 Drain ist selbst eine asynchrone Action. Die UI zeigt aktive Runs, abhängige Plugins und den Grund einer Blockade.
 
@@ -180,9 +181,13 @@ Eine ausdrücklich erzwungene lokale Deaktivierung darf nicht gleichzeitig behau
 
 Die Plugin-Ansicht kann Installationspläne für `registry` und `local_build` sowie Entfernungspläne für installierte, deaktivierte Plugins erstellen. Ältere Installationsaufrufe ohne `operation` bleiben gültig und gelten weiter als Installation.
 
-Ein Entfernungsplan wird abgewiesen, solange das Plugin aktiv ist, noch Runs oder ungeklärte externe Arbeit besitzt oder ein aktiviertes beziehungsweise drainendes Plugin davon abhängt. Der Plan ändert weder Runtime-Status noch lokale Daten oder Historie; er ist eine exportierbare Betreiber-Checkliste und kein Installations-/Uninstall-Executor.
+Ein Entfernungsplan wird abgewiesen, solange das Plugin aktiv ist, noch Runs oder ungeklärte externe Arbeit besitzt oder ein aktiviertes beziehungsweise drainendes Plugin davon abhängt. Die Erstellung setzt Plugin und Plan atomar auf `uninstall_pending` und `prepared`; damit sind die Fähigkeit und Konfigurationsänderungen gesperrt, während das Paket im aktuellen Image und die lokalen Daten erhalten bleiben.
 
-Der Export lädt den gespeicherten Plan über `GET /plugin-install-plans/{plan_id}` und speichert die API-Ressource als JSON-Datei. Das geprüfte Image und dessen Neustart setzt der Betreiber nach eigener Prüfung um.
+Vor dem Imagewechsel kann der Eigentümer einen vorbereiteten Entfernungsplan zurücknehmen. Ist das Paket im laufenden Image vorhanden und stimmt der Plan noch mit dem Pluginzustand überein, setzt die Anwendung den vorherigen sicheren deaktivierten Zustand wieder her und markiert den Plan als `cancelled`.
+
+Nach einem Imagewechsel ohne Manifest erkennt der laufende Maintenance-Command den vorbereiteten Entfernungsplan. Er persistiert `removed` und `completed` atomar, schreibt eine Pluginrevision und ein Domain-Event und bewahrt die gespeicherte Konfiguration sowie vorhandene Historie. Das API-Tombstone zeigt nur an, ob Konfiguration vorhanden ist; deren Werte sind ohne das Pluginmanifest nicht lesbar. Spätere Images ohne Paket erhalten diesen Abschlusszustand.
+
+Der Export lädt den gespeicherten Plan über `GET /plugin-install-plans/{plan_id}` und speichert die API-Ressource als JSON-Datei. Das geprüfte Image und dessen Neustart setzt der Betreiber nach eigener Prüfung um; die Webanwendung führt keine Composer-, Shell- oder Containeraktion aus.
 
 Der tatsächliche Composer-/Frontend-Build erfolgt im Projekt-/CI-Prozess. Das neue Image enthält eine vollständige, überprüfte Pluginmenge. Der lokale Betreiber startet den einen App-Container mit diesem Image neu.
 

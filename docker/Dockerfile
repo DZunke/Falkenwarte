@@ -15,10 +15,13 @@ COPY frontend/ frontend/
 COPY contracts/ contracts/
 RUN npm --prefix frontend run generate:api && npm --prefix frontend run build
 RUN npm --prefix frontend sbom --sbom-format=cyclonedx --sbom-type=application --omit=dev --package-lock-only > /tmp/falkenwarte-frontend-sbom.cdx.json
+RUN node --input-type=commonjs -e 'const fs = require("node:fs"); const path = "/tmp/falkenwarte-frontend-sbom.cdx.json"; const bom = JSON.parse(fs.readFileSync(path, "utf8")); if (bom.bomFormat !== "CycloneDX" || !Array.isArray(bom.components)) process.exit(1); fs.writeFileSync(path, JSON.stringify({bomFormat: bom.bomFormat, components: bom.components}) + "\n");'
 
 FROM ${COMPOSER_IMAGE} AS composer
 
 FROM ${FRANKENPHP_IMAGE} AS app
+ARG FRANKENPHP_IMAGE
+ARG SOURCE_DATE_EPOCH
 ARG SQLITE_VERSION=3510300
 ARG SQLITE_SHA256=81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a
 
@@ -37,7 +40,8 @@ RUN set -eux; \
     grep -Fq "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" "$source_file"; \
     grep -Fq "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}" "$source_file"; \
     install-php-extensions intl pcntl zip; \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* /var/log/apt; \
+    rm -f /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache
 RUN setcap -r /usr/local/bin/frankenphp \
     && test -z "$(getcap /usr/local/bin/frankenphp)"
 
@@ -52,6 +56,7 @@ RUN set -eux; \
     make -j2; \
     make install; \
     ldconfig; \
+    rm -f /var/cache/ldconfig/aux-cache; \
     rm -rf /tmp/sqlite-source "$archive"; \
     php -r '$version = SQLite3::version(); if ($version["versionNumber"] < 3051003) { fwrite(STDERR, "SQLite 3.51.3 or newer is required.\n"); exit(1); } $pdo = new PDO("sqlite::memory:"); if (version_compare($pdo->query("SELECT sqlite_version()")->fetchColumn(), "3.51.3", "<")) { exit(1); } echo "SQLite3 and PDO SQLite ".$version["versionString"]."\n";'
 
@@ -69,13 +74,11 @@ ENV APP_ENV=prod \
     MERCURE_INTERNAL_URL=http://127.0.0.1:8080/.well-known/mercure
 
 WORKDIR /app
-ARG FRANKENPHP_IMAGE
 ARG VCS_REF=unknown
 # x-release-please-start-version
 ARG APP_VERSION=0.1.0
 # x-release-please-end
 ARG DEBIAN_SNAPSHOT=20261104T212339Z
-ARG SOURCE_DATE_EPOCH
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 COPY composer.json composer.lock version.txt ./
 COPY packages/link-notes/ packages/link-notes/
@@ -96,8 +99,10 @@ COPY --from=frontend /tmp/falkenwarte-frontend-sbom.cdx.json /tmp/falkenwarte-fr
 RUN composer dump-autoload --no-dev --classmap-authoritative --no-scripts \
     && php scripts/build-docs.php \
     && APP_ENV=prod APP_SECRET=falkenwarte-image-build-validation-secret-not-used-at-runtime php bin/console lint:container --no-interaction \
+    && rm -rf var/cache/* \
     && mkdir -p /usr/share/falkenwarte/image-audit \
     && FALKENWARTE_BUILD_REVISION="$VCS_REF" FALKENWARTE_APP_VERSION="$APP_VERSION" FALKENWARTE_DEBIAN_SNAPSHOT="$DEBIAN_SNAPSHOT" FALKENWARTE_SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" FALKENWARTE_FRANKENPHP_IMAGE="$FRANKENPHP_IMAGE" php scripts/build-image-inventory.php /usr/share/falkenwarte/image-audit \
+    && rm -f /tmp/falkenwarte-frontend-sbom.cdx.json \
     && rm -f /usr/local/bin/composer \
     && mkdir -p /data /certs /app/var/cache /app/var/log \
     && chown -R www-data:www-data /app /data /certs

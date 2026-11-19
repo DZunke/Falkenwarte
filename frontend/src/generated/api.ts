@@ -3616,6 +3616,13 @@ export interface components {
             warnings: string[];
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: date-time
+             * @description Zeitpunkt, zu dem der Betreiber den Imagewechsel ohne Pluginmanifest beim Start bestätigt hat.
+             */
+            completed_at?: string;
+            /** Format: date-time */
+            cancelled_at?: string;
         };
         InstallPlanPage: {
             items: components["schemas"]["InstallPlan"][];

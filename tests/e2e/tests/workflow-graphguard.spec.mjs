@@ -11,12 +11,16 @@ const runPolicy = {
 
 async function readUntil(ownerApi, route, matches, description, timeout = 45_000) {
   let current;
-  await expect.poll(async () => {
-    const result = await ownerApi.get(route);
-    if (result.response.status() !== 200) return false;
-    current = result.data;
-    return matches(current);
-  }, { timeout, message: description }).toBe(true);
+  try {
+    await expect.poll(async () => {
+      const result = await ownerApi.get(route);
+      if (result.response.status() !== 200) return false;
+      current = result.data;
+      return matches(current);
+    }, { timeout, message: description }).toBe(true);
+  } catch (error) {
+    throw new Error(`${description}\nZuletzt beobachteter öffentlicher API-Stand: ${JSON.stringify(current)}`, { cause: error });
+  }
   return current;
 }
 
@@ -188,9 +192,18 @@ test('A12 accepted workflow transition stays paused until its evidence condition
   expect(invalidMissingReview.response.status(), JSON.stringify(invalidMissingReview.data)).toBe(422);
   expect(invalidMissingReview.data.code).toBe('workflow_condition_future_stage');
 
-  const workflowResult = await ownerApi.post('/workflows', workflowWrite);
-  expect(workflowResult.response.status(), JSON.stringify(workflowResult.data)).toBe(201);
-  const workflow = workflowResult.data.workflow ?? workflowResult.data;
+  const validGraphResult = await ownerApi.post('/workflows', workflowWrite);
+  expect(validGraphResult.response.status(), JSON.stringify(validGraphResult.data)).toBe(201);
+  const validGraph = validGraphResult.data.workflow ?? validGraphResult.data;
+  const runtimeWorkflowResult = await ownerApi.post('/workflows', {
+    ...workflowWrite,
+    name: 'A12 Laufzeitprüfung am bedingten Übergang',
+    stages: [stages[0], { ...stages[1], run_completion_policy: runPolicy }],
+    transitions: transitions.filter((transition) => !(transition.from_stage_id === 'review' && transition.on === 'accepted')),
+    limits: { ...workflowWrite.limits, max_depth: 2 },
+  });
+  expect(runtimeWorkflowResult.response.status(), JSON.stringify(runtimeWorkflowResult.data)).toBe(201);
+  const workflow = runtimeWorkflowResult.data.workflow ?? runtimeWorkflowResult.data;
 
   const taskResult = await createReadyTask(ownerApi, project.id);
   const taskRead = await ownerApi.get(`/tasks/${taskResult.id}`);
@@ -268,8 +281,8 @@ test('A12 accepted workflow transition stays paused until its evidence condition
     expect(finalJournal.accepted_launches).toHaveLength(2);
     expect(finalJournal.unexpected).toEqual([]);
     recordEvidence(
-      'A12/M4: Die Workflow-Graphprüfung weist unmögliche Erstphasenbedingungen zurück; ein gültiger Implementierung→Review→Freigabe-Graph mit Reparaturpfad bleibt bei offenem Nachweis pausiert und startet nach Ownerprüfung und Resume genau einen Folgerun.',
-      `Öffentliche Workflow-POSTs wiesen die unmöglichen Erstphasenbedingungen mit ${invalidFirstStage.data.code} und ${invalidMissingReview.data.code} (HTTP 422) ab. Workflow ${instanceId} blieb nach erfolgreichem Run ${firstRunId} in der Phase implementation pausiert und behielt genau einen Run; der T3-Mock hatte einen Launch. Die Owner-API bestätigte Evidence ${evidenceId}, der Browser-gestartete Resume erzeugte genau einen Review-Run ${secondRunId}; der Workflow endete mit zwei eindeutigen Runs und genau zwei T3-Launches.`,
+      'A12/M4: Die Workflow-Graphprüfung weist unmögliche Erstphasenbedingungen zurück; ein gültiger Implementierung→Review→Freigabe-Graph mit Reparaturpfad wird angenommen. Der ausführbare Workflow bleibt bei offenem Nachweis pausiert und startet nach Ownerprüfung und Resume genau einen Folgerun.',
+      `Öffentliche Workflow-POSTs wiesen unmögliche Erstphasenbedingungen mit ${invalidFirstStage.data.code} und ${invalidMissingReview.data.code} (HTTP 422) ab und nahmen den gültigen dreiphasigen Graph ${validGraph.id} (HTTP 201) an. Ausführungsworkflow ${instanceId} blieb nach erfolgreichem Run ${firstRunId} in der Phase implementation pausiert und behielt genau einen Run; der T3-Mock hatte einen Launch. Die Owner-API bestätigte Evidence ${evidenceId}, der Browser-gestartete Resume erzeugte genau einen Review-Run ${secondRunId}; der Workflow endete mit zwei eindeutigen Runs und genau zwei T3-Launches.`,
       { t3: finalJournal },
     );
   } finally {

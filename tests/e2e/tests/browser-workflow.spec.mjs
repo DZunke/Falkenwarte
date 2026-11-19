@@ -20,7 +20,7 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
   const labelName = `Bedienbarkeit ${projectSuffix}`;
   await ownerPage.setViewportSize({ width: 390, height: 844 });
   await ownerPage.goto('/#/projects');
-  await ownerPage.addStyleTag({ content: ':root { font-size: 200% !important; }' });
+  const enlargedText = await ownerPage.addStyleTag({ content: ':root { font-size: 200% !important; }' });
   expect(await ownerPage.locator('html').evaluate((element) => getComputedStyle(element).fontSize)).toBe('32px');
   await expect(ownerPage.locator('#main-content').getByRole('heading', { name: 'Projekte' })).toBeVisible();
   const createProjectButton = ownerPage.getByRole('button', { name: 'Projekt anlegen' }).first();
@@ -151,6 +151,11 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
   const publicResults = process.env.FALKENWARTE_QA_RESULTS_DIR ?? path.resolve('tests/e2e/results');
   const publicDirectory = path.join(publicResults, 'public');
   await mkdir(publicDirectory, { recursive: true });
+  await expectWithinMobileViewport(taskFilter, 'Boardfilter bei vergrößerter Schrift');
+  await enlargedText.evaluate((style) => style.remove());
+  await ownerPage.setViewportSize({ width: 1440, height: 960 });
+  await ownerPage.evaluate(() => window.scrollTo(0, 0));
+  await expect(ownerPage.getByRole('heading', { name: `Browser Bedienbarkeit ${projectSuffix}` })).toBeVisible();
   const boardScreenshot = path.join(publicDirectory, 'board.png');
   await ownerPage.screenshot({ path: boardScreenshot, fullPage: true });
 

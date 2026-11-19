@@ -26,8 +26,12 @@ async function defineField(ownerPage, definitionsDialog, field) {
 
 test('project field definitions and typed values are available across ticket forms', async ({ ownerApi, ownerPage }) => {
   test.info().annotations.push({
-    type: 'acceptance_ids',
-    description: 'A06 typed project-field definitions and values in the owner browser flow.',
+    type: 'acceptance',
+    description: 'A06',
+  });
+  test.info().annotations.push({
+    type: 'expected',
+    description: 'Der Eigentümer kann typisierte Projektfelder definieren und ihre Werte direkt im normalen Ticketformular pflegen.',
   });
   const project = await ownerApi.createProject({ name: 'Projektfelder im Ticketformular' });
   const board = await ownerApi.ensureDefaultBoard(project.id);
@@ -103,8 +107,9 @@ test('project field definitions and typed values are available across ticket for
   expect(currentTask.data.title).toBe('Ticket mit geänderten Projektangaben');
   expect(currentTask.data.custom_fields['qa.short_description']).toEqual({ type: 'text', value: 'Der aktive Wert wurde bearbeitet' });
   expect(currentTask.data.custom_fields['qa.legacy_note']).toEqual({ type: 'text', value: 'Bleibt nach Deaktivierung erhalten' });
-  await expect(taskSheet.getByText('Historische Notiz', { exact: true })).toBeVisible();
-  await expect(taskSheet.getByText('Bleibt nach Deaktivierung erhalten', { exact: true })).toBeVisible();
+  const updatedTaskSheet = ownerPage.getByRole('dialog').filter({ has: ownerPage.getByRole('heading', { name: 'Ticket mit geänderten Projektangaben', exact: true }) }).last();
+  await expect(updatedTaskSheet.getByText('Historische Notiz', { exact: true })).toBeVisible();
+  await expect(updatedTaskSheet.getByText('Bleibt nach Deaktivierung erhalten', { exact: true })).toBeVisible();
 
   recordEvidence(
     'Der Eigentümer kann typisierte Projektfelder definieren und ihre Werte direkt im normalen Ticketformular pflegen.',

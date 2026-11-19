@@ -53,6 +53,7 @@ final class MaintenanceCommand extends Command
                 try {
                     $this->pluginEvents->dispatch();
                     $this->plugins->completeCancellationDrains();
+                    $this->plugins->completePendingRemovals();
                 } catch (\Throwable $e) {
                     $nextPluginDispatch = time() + 5;
                     $output->writeln('Plugin-Ereignisse warten: '.$e->getMessage());
