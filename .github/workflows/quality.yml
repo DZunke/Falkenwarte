@@ -1,0 +1,141 @@
+name: Falkenwarte QA
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Immutable commit expected at the selected ref
+        required: true
+        type: string
+      probe:
+        description: Exercise failure handling of the required E2E gate
+        type: choice
+        default: normal
+        options: [normal, fail-e2e, skip-e2e]
+
+permissions:
+  contents: read
+
+env:
+  FALKENWARTE_TEST_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+  FALKENWARTE_IMAGE: falkenwarte:qa
+
+jobs:
+  commit-policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with: {node-version: '24'}
+      - run: npm ci --prefix qa/delivery --ignore-scripts --no-audit
+      - name: Check commit identity and Conventional Commit title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          EXPECTED: ${{ inputs.expected_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$FALKENWARTE_TEST_COMMIT"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            test "$EXPECTED" = "$FALKENWARTE_TEST_COMMIT"
+            PR_TITLE="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --json title,headRefOid --jq '.[] | select(.headRefOid == env.EXPECTED) | .title')"
+          fi
+          title="${PR_TITLE:-$(git log -1 --pretty=%s)}"
+          printf '%s\n' "$title" | npm --prefix qa/delivery run title
+
+  static-quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with: {node-version: '24'}
+      - run: composer validate --strict --no-check-publish --no-check-all && composer install --no-interaction --prefer-dist --no-progress
+      - run: php scripts/check-contracts.php && php scripts/check-architecture.php && php bin/console lint:container
+      - run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+      - run: vendor/bin/php-cs-fixer check --diff
+      - run: npm --prefix frontend ci && npm --prefix frontend run generate:api && git diff --exit-code -- frontend/src/generated && npm --prefix frontend run build
+
+  docs-quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
+      - run: composer install --no-interaction --prefer-dist --no-progress
+      - run: php scripts/check-docs.php && php scripts/build-docs.php && test -s public/docs/index.html
+
+  background-functional:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
+        with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
+      - run: composer install --no-interaction --prefer-dist --no-progress && vendor/bin/phpunit -c phpunit.dist.xml
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
+      - name: Build the Linux release image
+        run: |
+          docker build --file docker/Dockerfile --target app --build-arg VCS_REF="$FALKENWARTE_TEST_COMMIT" --build-arg APP_VERSION="$(cat version.txt)" --tag "$FALKENWARTE_IMAGE" .
+          docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}' > image.id
+          docker save "$FALKENWARTE_IMAGE" | gzip -1 > app-image.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: app-image
+          path: |
+            app-image.tar.gz
+            image.id
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
+
+  e2e:
+    needs: build
+    if: inputs.probe != 'skip-e2e'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with: {name: app-image}
+      - name: Exercise failed E2E job
+        if: inputs.probe == 'fail-e2e'
+        run: exit 1
+      - name: Test the downloaded image over its public interfaces
+        run: |
+          docker load -i app-image.tar.gz
+          test "$(cat image.id)" = "$(docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}')"
+          export FALKENWARTE_IMAGE_REF="$(cat image.id)"
+          bash scripts/ci-e2e.sh
+      - name: Upload redacted acceptance observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with: {name: acceptance, path: 'var/ci-evidence/', retention-days: 7, if-no-files-found: warn}
+
+  quality-gate:
+    name: quality-gate
+    if: always()
+    needs: [commit-policy, static-quality, docs-quality, background-functional, build, e2e]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every check to have succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -e 'length == 6 and all(.[]; .result == "success")' <<< "$RESULTS"

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-v-in-tag": true,
+  "include-component-in-tag": false,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "separate-pull-requests": false,
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "falkenwarte",
+      "version-file": "version.txt",
+      "changelog-path": "CHANGELOG.md"
+    }
+  },
+  "bootstrap-sha": "8190e91e312fbf1b5853fa2103092c2e9bd3e0fe"
+}
