@@ -4,8 +4,8 @@ const phase = process.env.FALKENWARTE_PLUGIN_UPGRADE_PHASE;
 const pluginId = 'falkenwarte.qa-bridge-dependent';
 const marker = 'qa-retained-through-image-upgrade-v1';
 
-if (!['prepare', 'verify', 'readback'].includes(phase)) {
-  throw new Error('Set FALKENWARTE_PLUGIN_UPGRADE_PHASE to prepare, verify or readback for the isolated image-upgrade scenario.');
+if (!['prepare', 'verify', 'readback', 'verify-after-readback'].includes(phase)) {
+  throw new Error('Set FALKENWARTE_PLUGIN_UPGRADE_PHASE to prepare, verify, readback or verify-after-readback for the isolated image-upgrade scenario.');
 }
 
 async function readPlugin(ownerApi, state, message) {

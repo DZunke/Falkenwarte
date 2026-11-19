@@ -28,6 +28,8 @@ docker buildx build --file docker/Dockerfile --target app --build-arg VCS_REF="$
 scripts/export-image-audit.sh falkenwarte:local var/image-audit
 ```
 
+Der dokumentierte Prüfsnapshot (`VCS_REF=515f5f248566f54604f837ca06a5ccd8fdee09bf`, `APP_VERSION=0.1.0`, Commit-Epoch `1795113705`, Context-Tar SHA-256 `898df2dc06a93a2f8fcee2888b3b1d47e39a52efd7c1a2428a85516aca2421a9`) wurde zweimal unabhängig mit `--no-cache` gebaut; beide Images hatten dieselbe ID `sha256:7ac98fcaa532378bd4d233fd9a0610fbffd2a77d6a5a5e0c15847d13cf7a9276` und dieselben 43 RootFS-Layer. Das CycloneDX-SBOM hat in beiden Images den SHA-256 `82fe9ceebf583b318567bca0cecc22516a28ef68232c466d297288f57701b388`; diese Werte dokumentieren genau diesen Prüfsnapshot.
+
 Das Verzeichnis enthält `sbom.cdx.json`, `THIRD-PARTY-NOTICES.txt`, `runtime-evidence.json` und `image-evidence.json`; das letzte bindet deren Hash an Image-ID, Commitlabel und Produktversion.
 
 ## 3. Ein öffentlicher Ursprung

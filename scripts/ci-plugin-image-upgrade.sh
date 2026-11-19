@@ -59,23 +59,47 @@ build_app_image() {
 run_phase() {
     local phase="$1"
     local environment="$2"
+    local profile="$3"
+    local spec="$4"
     local results="$control/results/$phase"
     local status=0
+    local upgrade_profile=0
+    if [[ "$profile" = plugin-upgrade ]]; then
+        upgrade_profile=1
+    fi
     mkdir -p "$results"
     export QA_RESULTS_DIR="$results"
     if [[ "$environment" = prod ]]; then
         "${compose_prod[@]}" run --rm --no-deps \
-            -e FALKENWARTE_PLUGIN_IMAGE_UPGRADE=1 \
+            -e FALKENWARTE_PLUGIN_IMAGE_UPGRADE="$upgrade_profile" \
             -e FALKENWARTE_PLUGIN_UPGRADE_PHASE="$phase" \
-            e2e bash /usr/local/bin/run-browser-qa tests/e2e/plugin-upgrade/plugin-removal-image-upgrade.spec.mjs || status=$?
+            e2e bash /usr/local/bin/run-browser-qa "$spec" || status=$?
     else
         "${compose_test[@]}" run --rm --no-deps \
-            -e FALKENWARTE_PLUGIN_IMAGE_UPGRADE=1 \
+            -e FALKENWARTE_PLUGIN_IMAGE_UPGRADE="$upgrade_profile" \
             -e FALKENWARTE_PLUGIN_UPGRADE_PHASE="$phase" \
-            e2e bash /usr/local/bin/run-browser-qa tests/e2e/plugin-upgrade/plugin-removal-image-upgrade.spec.mjs || status=$?
+            e2e bash /usr/local/bin/run-browser-qa "$spec" || status=$?
     fi
-    if [[ -s "$results/acceptance-evidence.json" ]]; then
-        python3 scripts/prepare-evidence.py "$results" "$evidence" "$results/acceptance-evidence.json" "plugin-upgrade-${phase}.json"
+    if [[ ! -s "$results/acceptance-evidence.json" ]]; then
+        if (( status == 0 )); then
+            printf 'The %s browser run passed without producing its evidence report.\n' "$phase" >&2
+            status=1
+        fi
+        return "$status"
+    fi
+
+    python3 scripts/prepare-evidence.py "$results" "$evidence" "$results/acceptance-evidence.json" "plugin-upgrade-${phase}.json"
+    if (( status == 0 )) && ! jq -e \
+        --arg commit "$FALKENWARTE_TEST_COMMIT" \
+        --arg image "$FALKENWARTE_IMAGE_REF" \
+        '.format == "falkenwarte.acceptance-evidence.v1"
+          and .overall_status == "passed"
+          and .commit == $commit
+          and .image == $image
+          and any(.cases[]; .acceptance_id == "A17" and .status == "passed" and ((.observed_outcome // []) | length > 0))' \
+        "$results/acceptance-evidence.json" >/dev/null; then
+        printf 'The %s report is not a passed A17 observation for the expected SHA and image ID.\n' "$phase" >&2
+        status=1
     fi
     return "$status"
 }
@@ -97,7 +121,8 @@ export FALKENWARTE_IMAGE_REF="$(image_id "$qa_image")"
 "${compose_test[@]}" build e2e decisions-mock t3-mock
 "${compose_test[@]}" up --detach --no-build --wait --wait-timeout 240 app decisions-mock t3-mock
 "${compose_test[@]}" exec -T app sh -ec 'test "$APP_ENV" = test; test -s /app/tests/Fixtures/Plugins/manifest.json'
-run_phase prepare test
+run_phase plans test standard tests/e2e/tests/plugin-install-plans.spec.mjs
+run_phase prepare test plugin-upgrade tests/e2e/plugin-upgrade/plugin-removal-image-upgrade.spec.mjs
 
 "${compose_test[@]}" stop --timeout 15 app decisions-mock t3-mock
 "${compose_test[@]}" rm -f app >/dev/null
@@ -105,13 +130,13 @@ export FALKENWARTE_IMAGE="$production_image"
 export FALKENWARTE_IMAGE_REF="$production_id"
 "${compose_prod[@]}" up --detach --no-build --force-recreate --wait --wait-timeout 180 app
 "${compose_prod[@]}" exec -T app sh -ec 'test "$APP_ENV" = prod; test ! -e /app/tests; test -z "$DECISIONS_API_KEY"; test -z "$T3_MOCK_URL"'
-run_phase verify prod
+run_phase verify prod plugin-upgrade tests/e2e/plugin-upgrade/plugin-removal-image-upgrade.spec.mjs
 
 export FALKENWARTE_IMAGE="$qa_image"
 export FALKENWARTE_IMAGE_REF="$(image_id "$qa_image")"
 "${compose_test[@]}" up --detach --no-build --force-recreate --wait --wait-timeout 180 app
 "${compose_test[@]}" exec -T app sh -ec 'test "$APP_ENV" = test; test -s /app/tests/Fixtures/Plugins/manifest.json'
-run_phase readback test
+run_phase readback test plugin-upgrade tests/e2e/plugin-upgrade/plugin-removal-image-upgrade.spec.mjs
 
 export FALKENWARTE_IMAGE="$production_image"
 export FALKENWARTE_IMAGE_REF="$production_id"
@@ -119,6 +144,6 @@ export FALKENWARTE_IMAGE_REF="$production_id"
 "${compose_test[@]}" rm -f app >/dev/null
 "${compose_prod[@]}" up --detach --no-build --force-recreate --wait --wait-timeout 180 app
 "${compose_prod[@]}" exec -T app sh -ec 'test "$APP_ENV" = prod; test ! -e /app/tests; test -z "$DECISIONS_API_KEY"; test -z "$T3_MOCK_URL"'
-run_phase verify-after-readback prod
+run_phase verify-after-readback prod plugin-upgrade tests/e2e/plugin-upgrade/plugin-removal-image-upgrade.spec.mjs
 
 printf 'Plugin image-upgrade reports written to %s\n' "$evidence"

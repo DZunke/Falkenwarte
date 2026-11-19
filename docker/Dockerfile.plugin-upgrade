@@ -1,4 +1,4 @@
-ARG FALKENWARTE_IMAGE
+ARG FALKENWARTE_IMAGE=falkenwarte:local
 FROM ${FALKENWARTE_IMAGE} AS plugin-upgrade-qa
 
 USER root
