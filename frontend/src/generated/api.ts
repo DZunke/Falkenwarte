@@ -1652,6 +1652,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recovery/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Nach einem Restore offene T3-Aufträge inventarisieren
+         * @description Owner-only. Die Inventur bleibt als Sperre für neue automatische Starts bestehen, bis alle bekannten Läufe und unbekannte T3-Aktivität geprüft und explizit freigegeben wurden.
+         */
+        get: operations["recovery_inventory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery/inventory/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** T3-Inventur prüfen und einzeln auflösen */
+        post: operations["recovery_inventory_decide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -2602,6 +2639,7 @@ export interface components {
             latest_run_id: components["schemas"]["Id"] | null;
             custom_fields: components["schemas"]["CustomFields"];
             latest_run: components["schemas"]["RunSummary"] | null;
+            /** @description Enthält zusätzlich systemverwaltete Attentionlabels aus offenen Gründen. Diese IDs sind lesbar, werden bei Schreibvorgängen ignoriert und aus dem aktuellen Grundbestand neu abgeleitet. */
             label_ids: components["schemas"]["Id"][];
             primary_topic_label_id: components["schemas"]["Id"] | null;
             workflow_label_id: components["schemas"]["Id"] | null;
@@ -3001,6 +3039,7 @@ export interface components {
             recorded_at: string;
             schema_version: number;
             summary: string;
+            reason?: string;
             changes: components["schemas"]["HistoryChange"][];
             restorable: boolean;
             allowed_actions: components["schemas"]["AllowedAction"][];
@@ -3052,7 +3091,7 @@ export interface components {
             capability_snapshot_id: components["schemas"]["Id"] | null;
             diagnostic: string | null;
         };
-        /** @description Produktstandard kanonisches HTTPS. Zugangstokens werden ausschließlich über den separaten Autorisierungsfluss gespeichert. */
+        /** @description Produktiv ist ausschließlich kanonisches HTTPS zulässig. APP_ENV=test erlaubt zusätzlich nur http://t3-mock mit optionalem Port, passend zur isolierten E2E-Netzfreigabe. Zugangstokens werden ausschließlich über den separaten Autorisierungsfluss gespeichert. */
         ConnectionCreate: {
             name: string;
             bridge_id: string;
@@ -3366,6 +3405,9 @@ export interface components {
             kind: "question" | "approval" | "failure" | "auth" | "reconciliation" | "plugin_drain" | "classification" | "intake_information";
             project_id: components["schemas"]["Id"] | null;
             resource: components["schemas"]["ResourceRef"];
+            task_id?: components["schemas"]["Id"] | null;
+            task_key?: string | null;
+            task_title?: string | null;
             title: string;
             detail: string;
             /** Format: date-time */
@@ -3434,6 +3476,12 @@ export interface components {
                 satisfied: boolean;
             }[];
             capabilities: string[];
+            ui_contributions: {
+                slot: string;
+                component_id: string;
+                label: string;
+                required_capability: string;
+            }[];
             active_run_count: number;
             pending_job_count: number;
             retained_data_bytes: number;
@@ -3513,6 +3561,8 @@ export interface components {
             allowed_actions: components["schemas"]["AllowedAction"][];
         };
         SettingsUpdate: {
+            /** @description Sperrt neue Runs und automatische Starts. Beobachtung und Recovery bleiben aktiv. */
+            maintenance_mode?: boolean;
             timezone?: string;
             locale?: string;
             /** @enum {string} */
@@ -3634,6 +3684,95 @@ export interface components {
         /** @description Owner-only, Wartungsmodus und angehaltene Worker. Nach Restore Reconciliation vor neuen Starts. */
         BackupRestore: {
             database_sha256: components["schemas"]["Sha256"];
+            reason: string;
+        };
+        /** @description Aktive Inventuren sperren neue Starts, bis jeder Eintrag gelöst und die gesamte T3-Projektaktivität bestätigt wurde. */
+        RecoveryInventory: {
+            /** @constant */
+            status: "clear";
+            entries: components["schemas"]["RecoveryEntry"][];
+        } | {
+            gate: components["schemas"]["RecoveryGate"];
+            entries: components["schemas"]["RecoveryEntry"][];
+        };
+        RecoveryGate: {
+            id: components["schemas"]["Id"];
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            allowed_actions: components["schemas"]["AllowedAction"][];
+            request_id: components["schemas"]["Id"];
+            backup_id: components["schemas"]["Id"] | null;
+            reason: string;
+            requested_by: string;
+            /** Format: date-time */
+            requested_at: string;
+            /** Format: date-time */
+            completed_at: string;
+            database_sha256: components["schemas"]["Sha256"] | null;
+            /** @enum {string} */
+            status: "inventory_required" | "released";
+            /** Format: date-time */
+            inventory_confirmed_at: string | null;
+            /** Format: date-time */
+            released_at: string | null;
+            resolved_by?: components["schemas"]["actor"] | null;
+            resolution_reason?: string | null;
+        };
+        /** @description Unbekannte T3-Aktivität wird erst nach manueller Prüfung des gebundenen T3-Projekts aufgelöst. */
+        RecoveryEntry: {
+            id: components["schemas"]["Id"];
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            allowed_actions: components["schemas"]["AllowedAction"][];
+            gate_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            connection_id: components["schemas"]["Id"] | null;
+            external_project_id?: string | null;
+            run_id?: components["schemas"]["Id"] | null;
+            external_thread_id?: string | null;
+            external_run_id?: string | null;
+            /** @enum {string} */
+            entry_kind: "known_run" | "unlisted_external_activity" | "registered_external_start";
+            /** @enum {string} */
+            status: "pending" | "owner_review_required" | "stopped" | "resolved";
+            /** @enum {string|null} */
+            disposition?: "confirmed_stopped_in_t3" | "confirmed_not_started" | "reviewed_no_additional_runs" | null;
+            reason?: string | null;
+            observed_status?: string | null;
+            last_error?: string | null;
+            /** Format: date-time */
+            last_observed_at?: string | null;
+            resolved_by?: components["schemas"]["actor"] | null;
+            /** Format: date-time */
+            resolved_at?: string | null;
+        };
+        RecoveryInventoryDecision: {
+            /** @constant */
+            action: "register_external_start";
+            reason: string;
+            external_start: {
+                project_id: components["schemas"]["Id"];
+                connection_id: components["schemas"]["Id"];
+                external_project_id: string;
+                thread_id: string;
+                run_id?: string | null;
+            };
+        } | {
+            /** @constant */
+            action: "resolve_entry";
+            entry_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            disposition: "confirmed_stopped_in_t3" | "confirmed_not_started" | "reviewed_no_additional_runs";
+            reason: string;
+        } | {
+            /** @constant */
+            action: "confirm_inventory";
             reason: string;
         };
         Health: {
@@ -3889,7 +4028,7 @@ export interface components {
             description?: string;
             active?: boolean;
         };
-        /** @description taxonomy_version versioniert klassifikationsrelevante Definitionen (Name, Beschreibung, Aktivität und neue Einträge). Reine Farbänderungen ändern die Labelversion, erfordern jedoch keine neue Klassifikation. Alle Snapshotversionen bleiben erhalten. */
+        /** @description taxonomy_version versioniert klassifikationsrelevante Topic- und Workflowdefinitionen (Name, Beschreibung, Aktivität und neue Einträge). Systemverwaltete Attentionlabels werden aus offenen Gründen abgeleitet und gehören nicht zur Klassifikationstaxonomie. Reine Farbänderungen ändern die Labelversion, erfordern jedoch keine neue Klassifikation. Alle Snapshotversionen bleiben erhalten. */
         LabelCollection: {
             project_id: components["schemas"]["Id"];
             taxonomy_version: number;
@@ -3912,7 +4051,7 @@ export interface components {
             /** @constant */
             on_unresolved: "needs_human_decision";
         };
-        /** @description Ownerentscheidung; Attentionlabels nicht schreibbar. Genau ein Workflowlabel bei routbarer Aufgabe. Manuell gesetzte Einordnung wird geschützt; Änderung laufender Workflowinstanzen erfolgt niemals implizit. Alte Instanz behält ihren Snapshot. */
+        /** @description Ownerentscheidung; Attentionlabels sind nicht schreibbar und werden aus offenen Gründen abgeleitet. Mitgesendete Attention-IDs werden ignoriert. Genau ein Workflowlabel bei routbarer Aufgabe. Manuell gesetzte Einordnung wird geschützt; Änderung laufender Workflowinstanzen erfolgt niemals implizit. Alte Instanz behält ihren Snapshot. */
         TaskLabelsWrite: {
             label_ids: components["schemas"]["Id"][];
             primary_topic_label_id: components["schemas"]["Id"] | null;
@@ -3920,10 +4059,10 @@ export interface components {
             /** @enum {string} */
             routing_application: "next_instance" | "current_unstarted";
         };
-        /** @description Serverseitig abgeleitet: required ist genau dann true, wenn offene an den Eigentümer gerichtete Gründe existieren. Das systemverwaltete Attentionlabel für eine Rückfrage an einen Agenten ist trotzdem erlaubt; allein deshalb bleibt HumanAttention required=false und reasons=[]. Der Code agent_question bezeichnet eine vom Agenten an den Eigentümer gerichtete Frage. Ein Agent kann HumanAttention nicht schreiben. */
+        /** @description Serverseitig abgeleitet: required ist genau dann true, wenn offene an den Eigentümer gerichtete Gründe existieren. Requestergerichtete Rückfragen wie agent_question erscheinen als systemverwaltete Attentionlabels, setzen HumanAttention aber nicht. Ein Agent kann HumanAttention nicht schreiben. */
         HumanAttention: {
             required: boolean;
-            reasons: ("routing_ambiguous" | "classification_unavailable" | "decision_refused" | "intake_escalated" | "approval_pending" | "agent_question" | "run_failed" | "auth_required" | "reconciliation_required" | "plugin_drain_blocked")[];
+            reasons: ("routing_ambiguous" | "classification_unavailable" | "decision_refused" | "intake_escalated" | "approval_pending" | "task_changed_before_dispatch" | "reference_target_invalid" | "phase_evidence_pending" | "phase_review_pending" | "phase_criteria_pending" | "workflow_duration_limit" | "workflow_repair_limit" | "workflow_transition_required" | "workflow_entry_condition_unmet" | "workflow_profile_unavailable" | "run_permission_in_t3" | "run_failed" | "auth_required" | "reconciliation_required" | "plugin_drain_blocked")[];
         } & unknown;
         /** @enum {string} */
         IntakeOutcome: "accepted" | "ready" | "needs_information" | "needs_human_decision" | "classification_unavailable";
@@ -4678,6 +4817,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["BackupJob"];
+            };
+        };
+        /** @description Owner-only Inventur aller nach einem Restore bekannten oder manuell registrierten T3-Aufträge. */
+        RecoveryInventory: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["RecoveryInventory"];
             };
         };
         /** @description Health-Darstellung. */
@@ -7454,6 +7602,41 @@ export interface operations {
             202: components["responses"]["Accepted"];
             409: components["responses"]["Conflict"];
             412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    recovery_inventory_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RecoveryInventory"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    recovery_inventory_decide: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Neue UUID pro fachlichem Command empfohlen. Derselbe Schlüssel plus unveränderter Request ergibt dieselbe Action-/Ressourcenidentität; andere Payload 409. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryInventoryDecision"];
+            };
+        };
+        responses: {
+            200: components["responses"]["RecoveryInventory"];
+            409: components["responses"]["Conflict"];
             428: components["responses"]["PreconditionRequired"];
             default: components["responses"]["Problem"];
         };

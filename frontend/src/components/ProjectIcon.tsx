@@ -1,6 +1,7 @@
-import { BookOpen, Code2, FolderKanban, Globe, Layers3, Shield, Star, Workflow, type LucideIcon } from 'lucide-react'
+import { Archive, Bird, BookOpen, Compass, Folder, Code2, FolderKanban, Globe, Layers3, Shield, Star, Workflow, type LucideIcon } from 'lucide-react'
 
 const icons: Record<string, LucideIcon> = {
+  bird: Bird, archive: Archive, book: BookOpen, folder: Folder, compass: Compass,
   'folder-kanban': FolderKanban,
   'book-open': BookOpen,
   code: Code2,

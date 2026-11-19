@@ -25,7 +25,7 @@ const categoryLabels: Record<string, string> = {
 }
 type StatusInput = components['schemas']['TaskStatusInput']
 
-export default function ProjectBoard({ project, initialTaskId, onRefreshProject }: { project: Project; initialTaskId?: string; onRefreshProject: () => void }) {
+export default function ProjectBoard({ project, initialTaskId, initialCreate, onRefreshProject }: { project: Project; initialTaskId?: string; initialCreate?: boolean; onRefreshProject: () => void }) {
   const queryClient = useQueryClient()
   const boardsQuery = useBoards(project.id)
   const statusesQuery = useProjectStatuses(project.id)
@@ -34,7 +34,7 @@ export default function ProjectBoard({ project, initialTaskId, onRefreshProject 
   const [layout, setLayout] = useState<'board' | 'list'>('board')
   const [filter, setFilter] = useState('')
   const [taskId, setTaskId] = useState<string>()
-  const [createOpen, setCreateOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(Boolean(initialCreate && !project.archived))
   const [boardOpen, setBoardOpen] = useState(false)
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [statusesOpen, setStatusesOpen] = useState(false)
@@ -79,8 +79,8 @@ export default function ProjectBoard({ project, initialTaskId, onRefreshProject 
 
   const createTask = useMutation({
     mutationFn: async () => {
-      const status = statuses.find((item) => item.category === 'ready') ?? statuses[0]
-      if (!status) throw new Error('Richte zuerst ein Board mit Statusspalten ein.')
+      const status = statuses.find((item) => item.is_default) ?? statuses[0]
+      if (!status) throw new Error('Lege unter „Status bearbeiten“ einen Standardstatus an.')
       const criteria = criteriaText.split('\n').map((text) => text.trim()).filter(Boolean).map((text) => ({ text, is_required: true }))
       return request(api.POST('/projects/{project_id}/tasks', {
         params: { path: { project_id: project.id }, ...mutationParams() },
@@ -215,7 +215,7 @@ export default function ProjectBoard({ project, initialTaskId, onRefreshProject 
           <Button variant="outline" size="sm" onClick={openStatuses}><Settings2 />Status bearbeiten</Button>
           {selectedBoard && <Button variant="outline" size="sm" onClick={openColumns}><Settings2 />Spalten bearbeiten</Button>}
           <Button variant="outline" size="sm" onClick={() => setBoardOpen(true)}><Settings2 />{boards.length ? 'Board anlegen' : 'Board einrichten'}</Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!selectedBoard}><Plus />Neues Ticket</Button>
+          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!statuses.length || project.archived}><Plus />Neues Ticket</Button>
         </div>
       </div>
 
@@ -241,7 +241,7 @@ export default function ProjectBoard({ project, initialTaskId, onRefreshProject 
           <CardContent className="flex min-h-72 flex-col items-center justify-center gap-3 p-8 text-center">
             <div className="grid size-12 place-items-center rounded-full bg-accent text-primary"><Columns3 /></div>
             <h2 className="text-lg font-semibold">Dein Projektboard einrichten</h2>
-            <p className="max-w-md text-sm text-muted-foreground">Lege Statusspalten und ein erstes Board an. Danach kannst du Tickets von Hand erstellen und bearbeiten.</p>
+            <p className="max-w-md text-sm text-muted-foreground">Wähle die Spalten für dein erstes Board. Tickets lassen sich auch direkt über die Übersicht öffnen.</p>
             <Button onClick={() => setBoardOpen(true)}><CirclePlus />Board einrichten</Button>
           </CardContent>
         </Card>
@@ -276,7 +276,7 @@ export default function ProjectBoard({ project, initialTaskId, onRefreshProject 
         </Card>
       )}
 
-      {selectedBoard && <TaskSheet taskId={taskId} project={project} statuses={statuses} onClose={() => setTaskId(undefined)} onChanged={refresh} />}
+      <TaskSheet taskId={taskId} project={project} statuses={statuses} onClose={() => setTaskId(undefined)} onChanged={refresh} />
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-xl">
@@ -287,7 +287,7 @@ export default function ProjectBoard({ project, initialTaskId, onRefreshProject 
             <div className="grid gap-2"><Label htmlFor="task-priority">Priorität</Label><Select value={priority} onValueChange={(value) => setPriority(value as typeof priority)}><SelectTrigger id="task-priority"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Niedrig</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">Hoch</SelectItem><SelectItem value="urgent">Dringend</SelectItem></SelectContent></Select></div>
             <div className="grid gap-2"><Label htmlFor="task-criteria">Erfolgskriterien</Label><Textarea id="task-criteria" value={criteriaText} onChange={(event) => setCriteriaText(event.target.value)} placeholder="Ein Kriterium pro Zeile" rows={3} /></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Abbrechen</Button><Button onClick={() => createTask.mutate()} disabled={!title.trim() || createTask.isPending}>{createTask.isPending ? 'Wird angelegt…' : 'Ticket anlegen'}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Abbrechen</Button><Button onClick={() => createTask.mutate()} disabled={!title.trim() || !statuses.length || project.archived || createTask.isPending}>{createTask.isPending ? 'Wird angelegt…' : 'Ticket anlegen'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

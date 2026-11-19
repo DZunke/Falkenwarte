@@ -3432,6 +3432,54 @@ paths:
       - browser_session: []
         csrf_token: []
       x-owner-only: true
+  /recovery/inventory:
+    get:
+      operationId: recovery_inventory_get
+      tags:
+      - operations
+      summary: Nach einem Restore offene T3-Aufträge inventarisieren
+      description: Owner-only. Die Inventur bleibt als Sperre für neue automatische Starts bestehen, bis alle bekannten Läufe und unbekannte T3-Aktivität geprüft und explizit freigegeben wurden.
+      responses:
+        '200':
+          $ref: '#/components/responses/RecoveryInventory'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: recovery_inventory_get
+      x-required-capabilities:
+      - operations.read
+      security:
+      - browser_session: []
+      x-owner-only: true
+  /recovery/inventory/decision:
+    post:
+      operationId: recovery_inventory_decide
+      tags:
+      - operations
+      summary: T3-Inventur prüfen und einzeln auflösen
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryInventoryDecision'
+      responses:
+        '200':
+          $ref: '#/components/responses/RecoveryInventory'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: recovery_inventory_decide
+      x-required-capabilities:
+      - operations.write
+      security:
+      - browser_session: []
+        csrf_token: []
+      x-owner-only: true
   /health:
     get:
       operationId: health_get
@@ -5146,6 +5194,12 @@ components:
       headers:
         ETag:
           $ref: '#/components/headers/ETag'
+    RecoveryInventory:
+      description: Owner-only Inventur aller nach einem Restore bekannten oder manuell registrierten T3-Aufträge.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RecoveryInventory'
     Health:
       description: Health-Darstellung.
       content:
@@ -6701,7 +6755,8 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           minItems: 0
-          maxItems: 80
+          maxItems: 100
+          description: Enthält zusätzlich systemverwaltete Attentionlabels aus offenen Gründen. Diese IDs sind lesbar, werden bei Schreibvorgängen ignoriert und aus dem aktuellen Grundbestand neu abgeleitet.
         primary_topic_label_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
@@ -6873,7 +6928,7 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           minItems: 0
-          maxItems: 80
+          maxItems: 100
           description: Nur der Eigentümer darf Labels direkt setzen. Technische Principals dürfen keine Aufmerksamkeit-/Routingzustände
             durch diesen Parameter ändern; 403. MCP-Eingang verwendet suggested_label_ids.
         suggested_label_ids:
@@ -8119,6 +8174,9 @@ components:
         summary:
           type: string
           maxLength: 2000
+        reason:
+          type: string
+          maxLength: 2000
         changes:
           type: array
           items:
@@ -8255,6 +8313,9 @@ components:
         bridge_id:
           type: string
           maxLength: 100
+        bridge_plugin_id:
+          type: string
+          maxLength: 100
         canonical_url:
           type: string
           format: uri
@@ -8305,6 +8366,7 @@ components:
       - allowed_actions
       - name
       - bridge_id
+      - bridge_plugin_id
       - canonical_url
       - health
       - auth_status
@@ -8481,6 +8543,9 @@ components:
           maxLength: 100
         connection_id:
           $ref: '#/components/schemas/Id'
+        bridge_plugin_id:
+          type: string
+          maxLength: 100
         allowed_project_ids:
           type: array
           items:
@@ -8525,6 +8590,7 @@ components:
       - icon_key
       - role
       - connection_id
+      - bridge_plugin_id
       - allowed_project_ids
       - max_parallel_runs
       - prompt_template
@@ -9294,6 +9360,14 @@ components:
           - type: 'null'
         resource:
           $ref: '#/components/schemas/ResourceRef'
+        task_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        task_key:
+          type: [string, 'null']
+        task_title:
+          type: [string, 'null']
         title:
           type: string
           maxLength: 300
@@ -9535,10 +9609,37 @@ components:
             type: string
             maxLength: 150
           maxItems: 200
+        ui_contributions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              slot:
+                type: string
+                maxLength: 100
+              component_id:
+                type: string
+                maxLength: 150
+              label:
+                type: string
+                maxLength: 140
+              required_capability:
+                type: string
+                maxLength: 150
+            required:
+            - slot
+            - component_id
+            - label
+            - required_capability
+          maxItems: 100
         active_run_count:
           type: integer
           minimum: 0
         pending_job_count:
+          type: integer
+          minimum: 0
+        unresolved_external_activity_count:
           type: integer
           minimum: 0
         retained_data_bytes:
@@ -9571,8 +9672,10 @@ components:
       - description
       - dependencies
       - capabilities
+      - ui_contributions
       - active_run_count
       - pending_job_count
+      - unresolved_external_activity_count
       - retained_data_bytes
       - configuration_schema_id
       - restart_required
@@ -9793,6 +9896,9 @@ components:
       type: object
       additionalProperties: false
       properties:
+        maintenance_mode:
+          type: boolean
+          description: Sperrt neue Runs und automatische Starts. Beobachtung und Recovery bleiben aktiv.
         timezone:
           type: string
           maxLength: 80
@@ -10192,6 +10298,302 @@ components:
       - database_sha256
       - reason
       description: Owner-only, Wartungsmodus und angehaltene Worker. Nach Restore Reconciliation vor neuen Starts.
+    RecoveryInventory:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        properties:
+          status:
+            const: clear
+          entries:
+            type: array
+            maxItems: 1000
+            items:
+              $ref: '#/components/schemas/RecoveryEntry'
+        required:
+        - status
+        - entries
+      - type: object
+        additionalProperties: false
+        properties:
+          gate:
+            $ref: '#/components/schemas/RecoveryGate'
+          entries:
+            type: array
+            maxItems: 1000
+            items:
+              $ref: '#/components/schemas/RecoveryEntry'
+        required:
+        - gate
+        - entries
+      description: Aktive Inventuren sperren neue Starts, bis jeder Eintrag gelöst und die gesamte T3-Projektaktivität bestätigt wurde.
+    RecoveryGate:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        allowed_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllowedAction'
+          maxItems: 20
+        request_id:
+          $ref: '#/components/schemas/Id'
+        backup_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        reason:
+          type: string
+          maxLength: 2000
+        requested_by:
+          type: string
+          maxLength: 200
+        requested_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        database_sha256:
+          anyOf:
+          - $ref: '#/components/schemas/Sha256'
+          - type: 'null'
+        status:
+          type: string
+          enum:
+          - inventory_required
+          - released
+        inventory_confirmed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        released_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        resolved_by:
+          anyOf:
+          - $ref: '#/components/schemas/ActorRef'
+          - type: 'null'
+        resolution_reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+      required:
+      - id
+      - version
+      - created_at
+      - updated_at
+      - allowed_actions
+      - request_id
+      - backup_id
+      - reason
+      - requested_by
+      - requested_at
+      - completed_at
+      - database_sha256
+      - status
+      - inventory_confirmed_at
+      - released_at
+    RecoveryEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        allowed_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllowedAction'
+          maxItems: 20
+        gate_id:
+          $ref: '#/components/schemas/Id'
+        project_id:
+          $ref: '#/components/schemas/Id'
+        connection_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        external_project_id:
+          type:
+          - string
+          - 'null'
+          maxLength: 500
+        run_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        external_thread_id:
+          type:
+          - string
+          - 'null'
+          maxLength: 500
+        external_run_id:
+          type:
+          - string
+          - 'null'
+          maxLength: 500
+        entry_kind:
+          type: string
+          enum:
+          - known_run
+          - unlisted_external_activity
+          - registered_external_start
+        status:
+          type: string
+          enum:
+          - pending
+          - owner_review_required
+          - stopped
+          - resolved
+        disposition:
+          type:
+          - string
+          - 'null'
+          enum:
+          - confirmed_stopped_in_t3
+          - confirmed_not_started
+          - reviewed_no_additional_runs
+          - null
+        reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+        observed_status:
+          type:
+          - string
+          - 'null'
+          maxLength: 100
+        last_error:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+        last_observed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        resolved_by:
+          anyOf:
+          - $ref: '#/components/schemas/ActorRef'
+          - type: 'null'
+        resolved_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      required:
+      - id
+      - version
+      - created_at
+      - updated_at
+      - allowed_actions
+      - gate_id
+      - project_id
+      - connection_id
+      - entry_kind
+      - status
+      description: Unbekannte T3-Aktivität wird erst nach manueller Prüfung des gebundenen T3-Projekts aufgelöst.
+    RecoveryInventoryDecision:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        properties:
+          action:
+            const: register_external_start
+          reason:
+            type: string
+            minLength: 1
+            maxLength: 2000
+          external_start:
+            type: object
+            additionalProperties: false
+            properties:
+              project_id:
+                $ref: '#/components/schemas/Id'
+              connection_id:
+                $ref: '#/components/schemas/Id'
+              external_project_id:
+                type: string
+                minLength: 1
+                maxLength: 500
+              thread_id:
+                type: string
+                minLength: 1
+                maxLength: 500
+              run_id:
+                type:
+                - string
+                - 'null'
+                maxLength: 500
+            required:
+            - project_id
+            - connection_id
+            - external_project_id
+            - thread_id
+        required:
+        - action
+        - reason
+        - external_start
+      - type: object
+        additionalProperties: false
+        properties:
+          action:
+            const: resolve_entry
+          entry_id:
+            $ref: '#/components/schemas/Id'
+          disposition:
+            type: string
+            enum:
+            - confirmed_stopped_in_t3
+            - confirmed_not_started
+            - reviewed_no_additional_runs
+          reason:
+            type: string
+            minLength: 1
+            maxLength: 2000
+        required:
+        - action
+        - entry_id
+        - disposition
+        - reason
+      - type: object
+        additionalProperties: false
+        properties:
+          action:
+            const: confirm_inventory
+          reason:
+            type: string
+            minLength: 1
+            maxLength: 2000
+        required:
+        - action
+        - reason
     Health:
       type: object
       additionalProperties: false
@@ -11038,8 +11440,7 @@ components:
       - project_id
       - taxonomy_version
       - items
-      description: taxonomy_version versioniert klassifikationsrelevante Definitionen (Name, Beschreibung, Aktivität und neue Einträge).
-        Reine Farbänderungen ändern die Labelversion, erfordern jedoch keine neue Klassifikation. Alle Snapshotversionen bleiben erhalten.
+      description: taxonomy_version versioniert klassifikationsrelevante Topic- und Workflowdefinitionen (Name, Beschreibung, Aktivität und neue Einträge). Systemverwaltete Attentionlabels werden aus offenen Gründen abgeleitet und gehören nicht zur Klassifikationstaxonomie. Reine Farbänderungen ändern die Labelversion, erfordern jedoch keine neue Klassifikation. Alle Snapshotversionen bleiben erhalten.
     WorkflowRoutingRule:
       type: object
       additionalProperties: false
@@ -11101,7 +11502,7 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           minItems: 0
-          maxItems: 80
+          maxItems: 100
         primary_topic_label_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
@@ -11120,8 +11521,7 @@ components:
       - primary_topic_label_id
       - reason
       - routing_application
-      description: Ownerentscheidung; Attentionlabels nicht schreibbar. Genau ein Workflowlabel bei routbarer Aufgabe. Manuell gesetzte
-        Einordnung wird geschützt; Änderung laufender Workflowinstanzen erfolgt niemals implizit. Alte Instanz behält ihren Snapshot.
+      description: Ownerentscheidung; Attentionlabels sind nicht schreibbar und werden aus offenen Gründen abgeleitet. Mitgesendete Attention-IDs werden ignoriert. Genau ein Workflowlabel bei routbarer Aufgabe. Manuell gesetzte Einordnung wird geschützt; Änderung laufender Workflowinstanzen erfolgt niemals implizit. Alte Instanz behält ihren Snapshot.
     HumanAttention:
       type: object
       additionalProperties: false
@@ -11138,7 +11538,17 @@ components:
             - decision_refused
             - intake_escalated
             - approval_pending
-            - agent_question
+            - task_changed_before_dispatch
+            - reference_target_invalid
+            - phase_evidence_pending
+            - phase_review_pending
+            - phase_criteria_pending
+            - workflow_duration_limit
+            - workflow_repair_limit
+            - workflow_transition_required
+            - workflow_entry_condition_unmet
+            - workflow_profile_unavailable
+            - run_permission_in_t3
             - run_failed
             - auth_required
             - reconciliation_required
@@ -11150,9 +11560,8 @@ components:
       - required
       - reasons
       description: 'Serverseitig abgeleitet: required ist genau dann true, wenn offene an den Eigentümer gerichtete Gründe existieren.
-        Das systemverwaltete Attentionlabel für eine Rückfrage an einen Agenten ist trotzdem erlaubt; allein deshalb bleibt HumanAttention
-        required=false und reasons=[]. Der Code agent_question bezeichnet eine vom Agenten an den Eigentümer gerichtete Frage. Ein Agent
-        kann HumanAttention nicht schreiben.'
+        Requestergerichtete Rückfragen wie agent_question erscheinen als systemverwaltete Attentionlabels, setzen HumanAttention aber nicht.
+        Ein Agent kann HumanAttention nicht schreiben.'
       allOf:
       - if:
           properties:

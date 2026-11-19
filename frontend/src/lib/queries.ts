@@ -1,10 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, request } from './api'
+import type { Project } from './api'
 
 export function useProjects() {
   return useQuery({
     queryKey: ['projects'],
-    queryFn: () => request(api.GET('/projects', { params: { query: { limit: 100 } } })),
+    queryFn: async () => {
+      const items: Project[] = []
+      let cursor: string | undefined
+      do {
+        const page = await request(api.GET('/projects', { params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } } }))
+        items.push(...page.items)
+        cursor = page.next_cursor ?? undefined
+      } while (cursor)
+      return { items }
+    },
   })
 }
 

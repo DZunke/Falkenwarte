@@ -30,11 +30,14 @@ const MetricsView = lazy(() => import('@/features/metrics'))
 const LabelsView = lazy(() => import('@/features/labels'))
 const DocsView = lazy(() => import('@/features/docs'))
 
-type Route = { page: string; projectId?: string; taskId?: string; docPath?: string }
+type Route = { page: string; projectId?: string; taskId?: string; createTask?: boolean; docPath?: string }
 
 function readRoute(): Route {
   const parts = window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
-  if (parts[0] === 'project' && parts[1]) return { page: 'project', projectId: parts[1], taskId: new URLSearchParams(parts[2]?.split('?')[1] ?? '').get('task') ?? undefined }
+  if (parts[0] === 'project' && parts[1]) {
+    const query = new URLSearchParams(parts[2]?.split('?')[1] ?? '')
+    return { page: 'project', projectId: parts[1], taskId: query.get('task') ?? undefined, createTask: query.get('new') === '1' }
+  }
   if (parts[0] === 'docs') return { page: 'docs', docPath: parts.slice(1).join('/') }
   return { page: parts[0] || 'dashboard' }
 }
@@ -138,7 +141,7 @@ export default function App() {
         {mobileMenu && <div className="fixed inset-x-0 top-16 z-20 max-h-[calc(100vh-4rem)] overflow-y-auto border-b bg-sidebar px-3 py-4 shadow-lg md:hidden"><Navigation route={route} projects={projects} onNavigate={() => setMobileMenu(false)} /><div className="mt-3 border-t pt-3"><button className="nav-link" onClick={() => { go('docs'); setMobileMenu(false) }}><BookOpen />Dokumentation</button><button className="nav-link" onClick={() => { go('settings'); setMobileMenu(false) }}><Settings />Einstellungen</button></div></div>}
 
         <main id="main-content" className="mx-auto min-h-[calc(100vh-4rem)] max-w-[1560px] px-4 py-6 md:px-8 md:py-8">
-          {route.page === 'project' && activeProject ? <ProjectBoard project={activeProject} initialTaskId={route.taskId} onRefreshProject={() => { void queryClient.invalidateQueries({ queryKey: ['projects'] }) }} /> : null}
+          {route.page === 'project' && activeProject ? <ProjectBoard key={activeProject.id} project={activeProject} initialTaskId={route.taskId} initialCreate={route.createTask} onRefreshProject={() => { void queryClient.invalidateQueries({ queryKey: ['projects'] }) }} /> : null}
           {route.page === 'project' && !activeProject && <ProjectMissing projects={projects} onCreate={() => go('projects')} />}
           {route.page === 'projects' && <ProjectsPage projects={projects} loading={projectsQuery.isPending} error={projectsQuery.error} />}
           {route.page === 'dashboard' && <Suspense fallback={<PageSkeleton />}><DashboardView /></Suspense>}
@@ -159,7 +162,7 @@ export default function App() {
 }
 
 function Brand() {
-  return <div className="mb-6 flex items-center gap-2.5 px-2"><span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground"><Layers3 className="size-5" /></span><span className="text-lg font-semibold tracking-tight">Falkenwarte</span></div>
+  return <div className="mb-6 flex items-center gap-2.5 px-2"><span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground"><svg aria-hidden="true" className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m3 5 8 4 10-3-7 8-2 7-3-8-6-8Z"/><path d="m11 9 3 5m-5-1 5 1M15 8l3 1"/></svg></span><span className="text-lg font-semibold tracking-tight">Falkenwarte</span></div>
 }
 
 function Navigation({ route, projects, onNavigate }: { route: Route; projects: Project[]; onNavigate?: () => void }) {
