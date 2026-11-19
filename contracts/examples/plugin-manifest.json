@@ -1,0 +1,63 @@
+{
+  "id": "falkenwarte.link-notes",
+  "name": "Linknotizen",
+  "description": "Ergänzt eine deklarative Notizdarstellung zu registrierten Ticketlinks; kein externer Zugriff.",
+  "version": "1.0.0",
+  "contract_version": "1.0",
+  "api_compatibility": {
+    "backend": "^1.0",
+    "frontend": "^1.0"
+  },
+  "backend": {
+    "composer_package": "falkenwarte/link-notes",
+    "definition_service": "Falkenwarte\\LinkNotes\\PluginDefinition"
+  },
+  "dependencies": [],
+  "capabilities": [
+    {
+      "name": "links.notes",
+      "implementation_id": "link_notes.panel",
+      "settings_scope": "project"
+    }
+  ],
+  "subscriptions": [
+    {
+      "event_type": "work.link_registered",
+      "schema_version": 1,
+      "consumer": "link_notes.projection",
+      "replay_policy": "catch_up_bounded",
+      "external_side_effects": false
+    }
+  ],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "enabled_labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "migrations": {
+    "namespace": "Falkenwarte\\LinkNotes\\Migrations",
+    "table_prefix": "plg_link_notes_",
+    "data_version": 1
+  },
+  "ui": [
+    {
+      "slot": "task.tabs",
+      "component_id": "link-notes.tab",
+      "label": "Linknotizen",
+      "required_capability": "links.notes"
+    }
+  ],
+  "data_retention": {
+    "on_disable": "preserve",
+    "on_uninstall": "retain_by_default",
+    "export_supported": true
+  }
+}

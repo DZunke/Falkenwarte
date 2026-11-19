@@ -1,0 +1,247 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "ready",
+        "needs_information",
+        "needs_human_decision",
+        "classification_unavailable"
+      ]
+    },
+    "task_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "intake_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "action_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "task_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "missing_fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "field_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1
+          },
+          "reason_code": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "insufficient",
+              "contradictory"
+            ]
+          },
+          "addressed_to": {
+            "type": "string",
+            "enum": [
+              "requester",
+              "owner"
+            ]
+          }
+        },
+        "required": [
+          "field_key",
+          "question",
+          "reason_code",
+          "addressed_to"
+        ],
+        "description": "Fragetext aus versionierter Anforderungsvorlage; keine erfundene freitextliche Decisions-Antwort."
+      },
+      "minItems": 0,
+      "maxItems": 40
+    },
+    "human_attention": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "routing_ambiguous",
+              "classification_unavailable",
+              "decision_refused",
+              "intake_escalated",
+              "approval_pending",
+              "agent_question",
+              "run_failed",
+              "auth_required",
+              "reconciliation_required",
+              "plugin_drain_blocked"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 20,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "required",
+        "reasons"
+      ],
+      "description": "Serverseitig abgeleitet: required ist genau dann true, wenn offene an den Eigentümer gerichtete Gründe existieren. Das systemverwaltete Attentionlabel für eine Rückfrage an einen Agenten ist trotzdem erlaubt; allein deshalb bleibt HumanAttention required=false und reasons=[]. Der Code agent_question bezeichnet eine vom Agenten an den Eigentümer gerichtete Frage. Ein Agent kann HumanAttention nicht schreiben.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "required": {
+                "const": true
+              }
+            },
+            "required": [
+              "required"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reasons": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reasons": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "classification_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "poll_after_ms": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 250,
+          "maximum": 30000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "outcome",
+    "task_id",
+    "intake_id",
+    "action_id",
+    "task_version",
+    "missing_fields",
+    "human_attention",
+    "classification_id",
+    "poll_after_ms"
+  ],
+  "description": "MCP-Business-Ergebnis: accepted, needs_information und needs_human_decision sind kein JSON-RPC-/Toolfehler. Ticket bleibt dauerhaft gespeichert. Nur manualer Owner-Pfad darf intake_id=null liefern.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "needs_information"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "missing_fields": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "needs_human_decision"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "human_attention": {
+            "properties": {
+              "required": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "accepted"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "poll_after_ms": {
+            "type": "integer",
+            "minimum": 250
+          }
+        }
+      }
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://falkenwarte.local/schemas/ticket-receipt-v1",
+  "title": "TicketReceipt v1"
+}

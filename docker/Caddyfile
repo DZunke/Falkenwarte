@@ -1,0 +1,44 @@
+{
+	admin 127.0.0.1:2019
+	storage file_system /data/caddy
+	persist_config off
+	skip_install_trust
+}
+
+{$SERVER_NAME:localhost:8443}, {$SERVER_NAME_ALIAS:127.0.0.1:8443} {
+	tls internal
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host 127.0.0.1
+		header_up X-Forwarded-Host {http.request.host}
+		header_up X-Forwarded-Proto {http.request.scheme}
+		header_up X-Forwarded-Port {http.request.port}
+	}
+}
+
+http://127.0.0.1:8080 {
+	root * /app/public
+	encode zstd gzip
+
+	@handbookIndex path /docs /docs/
+	rewrite @handbookIndex /docs/index.html
+
+	mercure {
+		transport bolt {
+			path /data/caddy/mercure.db
+			size 20000
+			cleanup_frequency 0.3
+		}
+		issuer {$MERCURE_ISSUER:https://localhost:8443} {
+			publisher {
+				jwt {env.MERCURE_PUBLISHER_SECRET}
+			}
+			subscriber {
+				jwt {env.MERCURE_SUBSCRIBER_SECRET}
+			}
+		}
+		resource_identifier {$MERCURE_RESOURCE_IDENTIFIER:https://localhost:8443/.well-known/mercure}
+		cookie_name __Secure-mercure_access_token
+	}
+
+	php_server
+}

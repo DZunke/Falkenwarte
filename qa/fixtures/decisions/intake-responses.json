@@ -1,0 +1,474 @@
+{
+  "format": "falkenwarte.qa.http-variants.v1",
+  "status": "implementation-template",
+  "request_fixture": "intake-request.json",
+  "source": "https://developers.openai.com/api/reference/resources/decisions/methods/create",
+  "variants": [
+    {
+      "id": "decisions_missing_information",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "gpt-6-luna",
+          "answers": [
+            {
+              "type": "choice",
+              "name": "primary_topic",
+              "choice": "00000301-1111-4111-8111-111111111111",
+              "confidence": 0.98,
+              "probabilities": [
+                {
+                  "value": "00000301-1111-4111-8111-111111111111",
+                  "probability": 0.98
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.02
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "tag.00000301-1111-4111-8111-111111111111",
+              "probability": 0.97
+            },
+            {
+              "type": "choice",
+              "name": "workflow",
+              "choice": "00000302-1111-4111-8111-111111111111",
+              "confidence": 0.95,
+              "probabilities": [
+                {
+                  "value": "00000302-1111-4111-8111-111111111111",
+                  "probability": 0.95
+                },
+                {
+                  "value": "00000303-1111-4111-8111-111111111111",
+                  "probability": 0.02
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.03
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "missing.expected_behavior",
+              "probability": 0.99
+            }
+          ],
+          "usage": {
+            "input_tokens": 420,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 420
+          }
+        }
+      },
+      "expected_domain_outcome": "needs_information",
+      "request_condition": "Beschreibung ohne erwartetes Verhalten; konkrete Frage stammt aus Falkenwartes Fachvorlage."
+    },
+    {
+      "id": "decisions_ready",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "gpt-6-luna",
+          "answers": [
+            {
+              "type": "choice",
+              "name": "primary_topic",
+              "choice": "00000301-1111-4111-8111-111111111111",
+              "confidence": 0.98,
+              "probabilities": [
+                {
+                  "value": "00000301-1111-4111-8111-111111111111",
+                  "probability": 0.98
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.02
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "tag.00000301-1111-4111-8111-111111111111",
+              "probability": 0.97
+            },
+            {
+              "type": "choice",
+              "name": "workflow",
+              "choice": "00000302-1111-4111-8111-111111111111",
+              "confidence": 0.95,
+              "probabilities": [
+                {
+                  "value": "00000302-1111-4111-8111-111111111111",
+                  "probability": 0.95
+                },
+                {
+                  "value": "00000303-1111-4111-8111-111111111111",
+                  "probability": 0.02
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.03
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "missing.expected_behavior",
+              "probability": 0.01
+            }
+          ],
+          "usage": {
+            "input_tokens": 420,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 420
+          }
+        }
+      },
+      "expected_domain_outcome": "ready",
+      "request_condition": "Erwartetes Verhalten wurde ergänzt; native Requestform bleibt gleich."
+    },
+    {
+      "id": "decisions_ambiguous",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "gpt-6-luna",
+          "answers": [
+            {
+              "type": "choice",
+              "name": "primary_topic",
+              "choice": "00000301-1111-4111-8111-111111111111",
+              "confidence": 0.98,
+              "probabilities": [
+                {
+                  "value": "00000301-1111-4111-8111-111111111111",
+                  "probability": 0.98
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.02
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "tag.00000301-1111-4111-8111-111111111111",
+              "probability": 0.97
+            },
+            {
+              "type": "choice",
+              "name": "workflow",
+              "choice": "00000302-1111-4111-8111-111111111111",
+              "confidence": 0.46,
+              "probabilities": [
+                {
+                  "value": "00000302-1111-4111-8111-111111111111",
+                  "probability": 0.46
+                },
+                {
+                  "value": "00000303-1111-4111-8111-111111111111",
+                  "probability": 0.45
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.09
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "missing.expected_behavior",
+              "probability": 0.01
+            }
+          ],
+          "usage": {
+            "input_tokens": 420,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 420
+          }
+        }
+      },
+      "expected_domain_outcome": "needs_human_decision",
+      "request_condition": "Inhaltlich mehrdeutiger Eingang; Differenz unterschreitet die versionierte Workflowentscheidungsschwelle."
+    },
+    {
+      "id": "decisions_refusal",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "gpt-6-luna",
+          "answers": [
+            {
+              "type": "choice",
+              "name": "primary_topic",
+              "choice": "00000301-1111-4111-8111-111111111111",
+              "confidence": 0.98,
+              "probabilities": [
+                {
+                  "value": "00000301-1111-4111-8111-111111111111",
+                  "probability": 0.98
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.02
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "tag.00000301-1111-4111-8111-111111111111",
+              "probability": 0.97
+            },
+            {
+              "type": "refusal",
+              "name": "workflow"
+            },
+            {
+              "type": "predicate",
+              "name": "missing.expected_behavior",
+              "probability": 0.01
+            }
+          ],
+          "usage": {
+            "input_tokens": 420,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 420
+          }
+        }
+      },
+      "expected_domain_outcome": "needs_human_decision",
+      "precondition": "Ein typisierter Refusal-Mapper erhält die native Antwortart; keine Exceptiontext-Heuristik."
+    },
+    {
+      "id": "decisions_429_then_success",
+      "sequence": [
+        {
+          "status": 429,
+          "headers": {
+            "Content-Type": "application/json",
+            "Retry-After": "1"
+          },
+          "body": {
+            "error": {
+              "message": "Fixture rate limit",
+              "type": "rate_limit_error",
+              "param": null,
+              "code": "rate_limit_exceeded"
+            }
+          }
+        },
+        {
+          "status": 200,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "model": "gpt-6-luna",
+            "answers": [
+              {
+                "type": "choice",
+                "name": "primary_topic",
+                "choice": "00000301-1111-4111-8111-111111111111",
+                "confidence": 0.98,
+                "probabilities": [
+                  {
+                    "value": "00000301-1111-4111-8111-111111111111",
+                    "probability": 0.98
+                  },
+                  {
+                    "value": "unknown",
+                    "probability": 0.02
+                  }
+                ]
+              },
+              {
+                "type": "predicate",
+                "name": "tag.00000301-1111-4111-8111-111111111111",
+                "probability": 0.97
+              },
+              {
+                "type": "choice",
+                "name": "workflow",
+                "choice": "00000302-1111-4111-8111-111111111111",
+                "confidence": 0.95,
+                "probabilities": [
+                  {
+                    "value": "00000302-1111-4111-8111-111111111111",
+                    "probability": 0.95
+                  },
+                  {
+                    "value": "00000303-1111-4111-8111-111111111111",
+                    "probability": 0.02
+                  },
+                  {
+                    "value": "unknown",
+                    "probability": 0.03
+                  }
+                ]
+              },
+              {
+                "type": "predicate",
+                "name": "missing.expected_behavior",
+                "probability": 0.01
+              }
+            ],
+            "usage": {
+              "input_tokens": 420,
+              "input_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 0
+              },
+              "output_tokens": 0,
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              },
+              "total_tokens": 420
+            }
+          }
+        }
+      ],
+      "expected_domain_outcome": "ready",
+      "max_expected_attempts": 2
+    },
+    {
+      "id": "decisions_transport_exhausted",
+      "transport": "timeout_before_response",
+      "repeat_until": "configured_retry_or_time_budget_exhausted",
+      "expected_domain_outcome": "classification_unavailable"
+    },
+    {
+      "id": "decisions_delayed",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "gpt-6-luna",
+          "answers": [
+            {
+              "type": "choice",
+              "name": "primary_topic",
+              "choice": "00000301-1111-4111-8111-111111111111",
+              "confidence": 0.98,
+              "probabilities": [
+                {
+                  "value": "00000301-1111-4111-8111-111111111111",
+                  "probability": 0.98
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.02
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "tag.00000301-1111-4111-8111-111111111111",
+              "probability": 0.97
+            },
+            {
+              "type": "choice",
+              "name": "workflow",
+              "choice": "00000302-1111-4111-8111-111111111111",
+              "confidence": 0.95,
+              "probabilities": [
+                {
+                  "value": "00000302-1111-4111-8111-111111111111",
+                  "probability": 0.95
+                },
+                {
+                  "value": "00000303-1111-4111-8111-111111111111",
+                  "probability": 0.02
+                },
+                {
+                  "value": "unknown",
+                  "probability": 0.03
+                }
+              ]
+            },
+            {
+              "type": "predicate",
+              "name": "missing.expected_behavior",
+              "probability": 0.01
+            }
+          ],
+          "usage": {
+            "input_tokens": 420,
+            "input_tokens_details": {
+              "cached_tokens": 0,
+              "cache_write_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 420
+          }
+        }
+      },
+      "release_barrier": "after_owner_or_taxonomy_change",
+      "expected_domain_outcome": "stale_result_not_applied"
+    },
+    {
+      "id": "decisions_invalid_answer_type",
+      "malformed_answers": "invalid_type",
+      "expected_domain_outcome": "classification_unavailable"
+    },
+    {
+      "id": "decisions_partial_answers",
+      "malformed_answers": "partial",
+      "expected_domain_outcome": "classification_unavailable"
+    },
+    {
+      "id": "decisions_unknown_answer",
+      "malformed_answers": "unknown_name",
+      "expected_domain_outcome": "classification_unavailable"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Presentation;
+
+use App\Access\Presentation\Access;
+use App\Extensions\Application\PluginRegistry;
+use Mcp\Schema\Enum\ProtocolVersion;
+use Mcp\Schema\Tool;
+use Mcp\Server;
+use Mcp\Server\Session\FileSessionLock;
+use Mcp\Server\Session\FileSessionStore;
+use Mcp\Server\Transport\Http\Middleware\PassthroughMiddleware;
+use Mcp\Server\Transport\StreamableHttpTransport;
+use Nyholm\Psr7\ServerRequest;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+
+final readonly class McpEndpoint
+{
+    public function __construct(private Access $access, private Gateway $gateway, private Contract $contract, private PluginRegistry $plugins, private string $appVersion)
+    {
+    }
+
+    public function handle(Request $r): Response
+    {
+        $actor = $this->access->authenticate($r, true);
+        $dir = dirname(getenv('FALKENWARTE_DB') ?: dirname(__DIR__, 2).'/var/falkenwarte.sqlite').'/mcp/'.hash('sha256', $actor->id);
+        $builder = Server::builder()->setServerInfo('Falkenwarte', $this->appVersion)->setProtocolVersion(ProtocolVersion::V2025_06_18)->withoutModernEra()->setSession(new FileSessionStore($dir))->setSessionLock(new FileSessionLock($dir));
+        foreach ($this->contract->tools($this->plugins) as $spec) {
+            $required = $spec['required_capabilities'] ?? [];
+            // Optional tools require an explicit grant on this technical token.
+            if ((!($spec['default_enabled'] ?? true) && [] === $required)
+                || array_diff($required, $actor->capabilities)
+                || (isset($spec['required_plugin']) && !$this->plugins->enabled($spec['required_plugin']))) {
+                continue;
+            }
+            $builder->add(Tool::fromArray($spec), new McpTool($spec, $actor, $this->gateway, $this->contract, $this->plugins));
+        }
+        $request = new ServerRequest($r->getMethod(), $r->getUri(), $r->headers->all(), $r->getContent());
+        $result = $builder->build()->run(new StreamableHttpTransport($request, middleware: [new PassthroughMiddleware()]));
+
+        return new Response((string) $result->getBody(), $result->getStatusCode(), $result->getHeaders());
+    }
+}

@@ -1,0 +1,87 @@
+{
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resource_type": {
+      "enum": [
+        "project",
+        "task",
+        "board",
+        "run",
+        "evidence",
+        "approval",
+        "connection",
+        "agent_profile",
+        "plugin",
+        "metric",
+        "action",
+        "label",
+        "intake",
+        "classification",
+        "link_collection",
+        "decision_policy"
+      ]
+    },
+    "resource_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "action_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "change": {
+      "enum": [
+        "created",
+        "updated",
+        "archived",
+        "removed",
+        "projection_updated"
+      ]
+    }
+  },
+  "required": [
+    "event_id",
+    "occurred_at",
+    "resource_type",
+    "resource_id",
+    "project_id",
+    "version",
+    "action_id",
+    "change"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://falkenwarte.local/schemas/ui-change-v1",
+  "title": "Private Mercure UI invalidation payload",
+  "description": "Application-defined payload. Mercure event ID is a separate transport identifier. Refetch authoritative JSON resources."
+}

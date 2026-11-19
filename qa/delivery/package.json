@@ -1,0 +1,7 @@
+{
+  "name": "@falkenwarte/delivery",
+  "private": true,
+  "type": "module",
+  "scripts": {"title": "commitlint --config commitlint.config.mjs"},
+  "devDependencies": {"@commitlint/cli": "^20.0.0", "@commitlint/config-conventional": "^20.0.0"}
+}

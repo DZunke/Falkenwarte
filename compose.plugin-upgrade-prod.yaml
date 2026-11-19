@@ -1,0 +1,22 @@
+services:
+  app:
+    environment:
+      APP_ENV: prod
+      APP_DEBUG: "0"
+      APP_SETUP_TOKEN_FILE: ""
+      FALKENWARTE_TEST_CLOCK_FILE: ""
+      MERCURE_SUBSCRIBER_TTL: "600"
+      DECISIONS_API_KEY: ""
+      DECISIONS_API_KEY_FILE: ""
+      DECISIONS_TEST_ENDPOINT: ""
+      DECISIONS_MOCK_BEARER: ""
+      T3_MOCK_URL: ""
+      T3_MOCK_BEARER: ""
+    volumes: !override
+      - falkenwarte-test-data:/data
+      - falkenwarte-test-certs:/certs
+      - falkenwarte-test-secrets:/run/secrets:ro
+    networks:
+      app:
+        aliases:
+          - falkenwarte.test

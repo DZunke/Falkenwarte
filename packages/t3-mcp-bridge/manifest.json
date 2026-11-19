@@ -1,0 +1,26 @@
+{
+  "id": "falkenwarte.t3-mcp-bridge",
+  "name": "T3 MCP Bridge",
+  "description": "Stellt die festgelegte T3-MCP-Bridge für Agentenläufe bereit.",
+  "version": "1.0.0",
+  "contract_version": "1.0",
+  "api_compatibility": {"backend": "^1.0", "frontend": "^1.0"},
+  "default_state": "enabled",
+  "backend": {
+    "composer_package": "falkenwarte/app",
+    "definition_service": "App\\Orchestration\\Plugins\\T3BridgePluginDefinition"
+  },
+  "dependencies": [],
+  "capabilities": [
+    {"name": "execution.bridge", "implementation_id": "t3.mcp.v0_1_10", "settings_scope": "system"}
+  ],
+  "bridge_providers": [
+    {"bridge_id": "t3.mcp.v0_1_10", "required_capability": "execution.bridge"}
+  ],
+  "subscriptions": [],
+  "settings_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+  "migrations": {"namespace": "App\\Orchestration\\Migrations", "table_prefix": "plg_t3_mcp_bridge_", "data_version": 0},
+  "ui": [],
+  "mcp_tools": [],
+  "data_retention": {"on_disable": "preserve", "on_uninstall": "retain_by_default", "export_supported": true}
+}

@@ -7,4 +7,16 @@
 **/node_modules/
 **/test-results/
 **/playwright-report/
+tests/e2e/results/
 .env.local
+.env
+.env.*
+!.env.example
+secrets/*
+!secrets/README.md
+qa/results/
+
+# Machine-generated per-run evidence and local QA caches
+/qa/results.json
+/.php-cs-fixer.cache
+/config/reference.php

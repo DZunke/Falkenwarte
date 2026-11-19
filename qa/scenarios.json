@@ -1,0 +1,397 @@
+{
+  "format": "falkenwarte.qa.scenario-catalog.v1",
+  "status": "active",
+  "seed": "fixtures/fixture-seed.json",
+  "runtime_runner": "playwright",
+  "assertions_via": [
+    "browser",
+    "public_json_api",
+    "public_mcp",
+    "sanitized_external_mock_journal"
+  ],
+  "scenarios": [
+    {
+      "id": "E01",
+      "name": "Manueller Ticketablauf mit Board und Historie",
+      "milestone": "M1",
+      "acceptance_ids": [
+        "A01",
+        "A04",
+        "A06",
+        "A07",
+        "A08",
+        "A14",
+        "A21"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Owner legt Ticket an, ändert es im Board und betrachtet den Verlauf.",
+        "Gleichzeitige Änderung meldet einen Konflikt."
+      ]
+    },
+    {
+      "id": "E02",
+      "name": "Projektgrenzen mit technischen Principals",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A02",
+        "A13"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Owner legt in Projekt B ein technisches Intake und Link-Collections an; ein technischer Principal bleibt auf Projekt A begrenzt.",
+        "Task, Intake-Antwort und Link-Collections aus B werden über JSON und MCP verweigert, ohne Version, Antworten oder Links zu verändern.",
+        "Ungefilterte Task-/Historylisten, Live-Topics und Cursor-Recovery geben B für Agent A nicht aus; direkte B-Filter werden verweigert.",
+        "Owner liest Task, Intake, Links und History in B über öffentliche API und Browser und widerruft das technische Token."
+      ]
+    },
+    {
+      "id": "E03",
+      "name": "Nicht manueller Intake wird vollständig klassifiziert",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A22",
+        "A24"
+      ],
+      "fault_ids": [
+        "decisions_ready"
+      ],
+      "expected_flow": [
+        "MCP-Eingang erzeugt ein dauerhaftes Ticket und klassifizierte zulässige Labels."
+      ]
+    },
+    {
+      "id": "E04",
+      "name": "Rückfrage und Ergänzung am selben Ticket",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A25"
+      ],
+      "fault_ids": [
+        "decisions_missing_information"
+      ],
+      "expected_flow": [
+        "accepted wird über tasks_intake_get nachverfolgt.",
+        "needs_information bleibt fachliches Ergebnis; Ergänzung erhält task_id."
+      ]
+    },
+    {
+      "id": "E05",
+      "name": "Mehrdeutige Workflowwahl",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A26"
+      ],
+      "fault_ids": [
+        "decisions_ambiguous"
+      ],
+      "expected_flow": [
+        "Keine automatische Route; menschliche Entscheidung sichtbar."
+      ]
+    },
+    {
+      "id": "E06",
+      "name": "Decisions Refusal",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A26"
+      ],
+      "fault_ids": [
+        "decisions_refusal"
+      ],
+      "expected_flow": [
+        "Keine erfundene Klassifikation; bestehende Angaben bleiben erhalten."
+      ]
+    },
+    {
+      "id": "E07",
+      "name": "Decisions 429 und ausgeschöpftes Retrybudget",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A26"
+      ],
+      "fault_ids": [
+        "decisions_429_then_success",
+        "decisions_transport_exhausted"
+      ],
+      "expected_flow": [
+        "Begrenzte Wiederholung; bei dauerhaftem Fehler classification_unavailable."
+      ]
+    },
+    {
+      "id": "E08",
+      "name": "Veraltete Klassifikation",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A33"
+      ],
+      "fault_ids": [
+        "decisions_delayed"
+      ],
+      "expected_flow": [
+        "Owner ändert Ticket oder Taxonomie vor Freigabe der Antwort.",
+        "Alte Antwort überschreibt keine neue Entscheidung."
+      ]
+    },
+    {
+      "id": "E09",
+      "name": "T3 Launch und Beobachtung",
+      "milestone": "M3",
+      "acceptance_ids": [
+        "A09",
+        "A12",
+        "A29"
+      ],
+      "fault_ids": [
+        "reference_missing_model"
+      ],
+      "expected_flow": [
+        "Echter MCP-Client initialisiert und startet mit nativen Argumenten.",
+        "T3-Abschluss ist noch keine menschliche Ticketabnahme.",
+        "Fehlende T3-Referenzdaten invalidieren das Ausführungsziel ohne stillen Wechsel."
+      ]
+    },
+    {
+      "id": "E10",
+      "name": "Launch-Antwort nach externer Annahme verloren",
+      "milestone": "M3",
+      "acceptance_ids": [
+        "A05",
+        "A10"
+      ],
+      "fault_ids": [
+        "lost_reply_after_accept"
+      ],
+      "expected_flow": [
+        "Falkenwarte-Worker und Mock neu starten, Mockzustand erhalten.",
+        "Unveränderte Dispatch-Identität liefert dieselben externen IDs; genau eine Wirkung."
+      ]
+    },
+    {
+      "id": "E11",
+      "name": "Neue MCP-Session bei gleichem Auth-Namespace",
+      "milestone": "M3",
+      "acceptance_ids": [
+        "A10",
+        "A30"
+      ],
+      "fault_ids": [
+        "new_mcp_session_same_namespace",
+        "session_expired"
+      ],
+      "expected_flow": [
+        "Neuer Transport-Handshake erzeugt keine neue fachliche Idempotenzidentität."
+      ]
+    },
+    {
+      "id": "E12",
+      "name": "Neue OAuth-Autorisierung bei ungeklärtem Auftrag",
+      "milestone": "M3",
+      "acceptance_ids": [
+        "A11"
+      ],
+      "fault_ids": [
+        "new_auth_namespace"
+      ],
+      "expected_flow": [
+        "Geänderter Namespace führt zu Abgleich/Menschhinweis statt blindem Neustart."
+      ]
+    },
+    {
+      "id": "E13",
+      "name": "Agentbericht vor Launch-Antwort",
+      "milestone": "M3",
+      "acceptance_ids": [
+        "A05",
+        "A12",
+        "A30"
+      ],
+      "fault_ids": [
+        "report_before_launch_reply"
+      ],
+      "expected_flow": [
+        "Run ist bereits lokal korrelierbar.",
+        "Wiederholter Bericht erzeugt keine zweite Meldung."
+      ]
+    },
+    {
+      "id": "E14",
+      "name": "Fehlerformen an der MCP-Grenze",
+      "milestone": "M3",
+      "acceptance_ids": [
+        "A09",
+        "A30"
+      ],
+      "fault_ids": [
+        "http_401",
+        "protocol_error",
+        "tool_error",
+        "mismatched_structured_content",
+        "unsupported_protocol"
+      ],
+      "expected_flow": [
+        "UI und Aktionsverlauf zeigen unterscheidbare Fehler; kein grüner Auftrag."
+      ]
+    },
+    {
+      "id": "E15",
+      "name": "Verzögerte Beobachtung",
+      "milestone": "M3",
+      "acceptance_ids": [
+        "A12",
+        "A30"
+      ],
+      "fault_ids": [
+        "delayed_launch_reply",
+        "wait_timeout"
+      ],
+      "expected_flow": [
+        "Keine automatische Erledigung und keine Endlosschleife."
+      ]
+    },
+    {
+      "id": "E16",
+      "name": "Agentenlink und menschliche Abnahme",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A12",
+        "A27",
+        "A28"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Link-Collections bleiben rein deklarierte Quellen/Ergebnisse.",
+        "Ein offener Attention-Grund lässt sich nicht durch Labelentfernung verbergen."
+      ]
+    },
+    {
+      "id": "E17",
+      "name": "Konfigurierbare Taxonomie und Route",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A24",
+        "A33"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Name/Farbe/Beschreibung ändern, bestehende Label-ID bleibt.",
+        "Labels aktivieren nur explizit erlaubte Workflowregeln."
+      ]
+    },
+    {
+      "id": "E18",
+      "name": "Mercure und Wiederverbindung",
+      "milestone": "M6",
+      "acceptance_ids": [
+        "A15"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Zweiter Browser sieht Änderungen live; unberechtigter Subscriber nicht.",
+        "Nach Unterbrechung wird der autoritative Zustand erneut geladen."
+      ]
+    },
+    {
+      "id": "E19",
+      "name": "Plugin-Lebenszyklus mit laufender Arbeit",
+      "milestone": "M5",
+      "acceptance_ids": [
+        "A17",
+        "A18"
+      ],
+      "fault_ids": [
+        "run_pending"
+      ],
+      "expected_flow": [
+        "Owner aktiviert Linknotizen über die Oberfläche; UI-Beitrag und MCP-Werkzeuge erscheinen gemeinsam.",
+        "Notizen werden über Browser und MCP gelesen und geändert; Historie bleibt nach Deaktivierung lesbar und ist nach Reaktivierung wieder nutzbar.",
+        "Eine T3-Bridge im Drain verweigert neue Runs, lässt aktive Ausführung beobachtbar und bleibt bei aktiven Abhängigkeiten oder ungeklärter externer Arbeit im Drain."
+      ]
+    },
+    {
+      "id": "E20",
+      "name": "Kennzahlen aus gespeicherten Fakten",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A16"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Wartezeit und Durchlaufzeit anhand fester Zeiten prüfen.",
+        "Nicht gemeldete Kosten erscheinen unbekannt, nicht als 0."
+      ]
+    },
+    {
+      "id": "E21",
+      "name": "Neustart und Restore",
+      "milestone": "M6",
+      "acceptance_ids": [
+        "A19",
+        "A20"
+      ],
+      "fault_ids": [
+        "lost_reply_after_accept",
+        "run_pending"
+      ],
+      "expected_flow": [
+        "Echter Linux-Runtime-Neustart mit vorhandenem Volume.",
+        "Restore startet ungeklärte externe Arbeit nicht erneut."
+      ]
+    },
+    {
+      "id": "E22",
+      "name": "JSON und MCP führen zum gleichen Fachzustand",
+      "milestone": "M2",
+      "acceptance_ids": [
+        "A13",
+        "A22",
+        "A25",
+        "A28"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Dieselben erlaubten Aktionen über beide öffentlichen Kanäle durchführen.",
+        "Technischer JSON-Principal kann manuelle Herkunft nicht behaupten."
+      ]
+    },
+    {
+      "id": "E23",
+      "name": "Bedingungsgebundener Workflowübergang",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A12"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Ein konfigurierter akzeptierter Übergang bleibt pausiert, solange sein erforderlicher Nachweis nur gemeldet ist.",
+        "Owner bestätigt den Nachweis über die öffentliche API und setzt den Workflow fort; genau ein Folgerun wird gestartet."
+      ]
+    },
+    {
+      "id": "E24",
+      "name": "Übergabe von Umsetzung zu Review und menschlicher Ticketabschluss",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A12"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Die zweite Rolle erhält den Bericht, die offenen Fragen und die Referenzen aus dem ersten Lauf.",
+        "Der Eigentümer bestätigt Nachweise und Kriterien und schließt das Ticket im Browser ab."
+      ]
+    },
+    {
+      "id": "E25",
+      "name": "Begrenzte Reparaturrunde",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A12"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Die Agentenmeldung verlangt eine Überarbeitung. Die konfigurierte Reparaturrunde übernimmt den vorherigen Bericht.",
+        "Eine weitere Änderungsanforderung pausiert den Workflow am Limit. Der T3-Mock verzeichnet keinen zusätzlichen Start."
+      ]
+    }
+  ]
+}

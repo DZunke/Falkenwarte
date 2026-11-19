@@ -1,0 +1,139 @@
+services:
+  app:
+    profiles: [test]
+    environment:
+      APP_ENV: test
+      APP_DEBUG: "0"
+      APP_SECRET: falkenwarte-e2e-app-secret-do-not-use-in-production
+      APP_SECRET_FILE: ""
+      APP_SETUP_TOKEN: test-setup-token-ONLY-for-isolated-qa
+      APP_SETUP_TOKEN_FILE: ""
+      FALKENWARTE_TEST_CLOCK_FILE: /qa-clock/business-time.json
+      SERVER_NAME: localhost:8443
+      SERVER_NAME_ALIAS: falkenwarte.test:8443
+      FALKENWARTE_PUBLIC_ORIGIN: https://falkenwarte.test:8443
+      MERCURE_ISSUER: https://falkenwarte.test:8443
+      MERCURE_RESOURCE_IDENTIFIER: https://falkenwarte.test:8443/.well-known/mercure
+      MERCURE_PUBLIC_URL: https://falkenwarte.test:8443/.well-known/mercure
+      MERCURE_PUBLISHER_SECRET: falkenwarte-e2e-publisher-secret-do-not-use-in-production
+      MERCURE_PUBLISHER_SECRET_FILE: ""
+      MERCURE_SUBSCRIBER_SECRET: falkenwarte-e2e-subscriber-secret-do-not-use-in-production
+      MERCURE_SUBSCRIBER_SECRET_FILE: ""
+      MERCURE_SUBSCRIBER_TTL: "60"
+      DECISIONS_API_KEY: ""
+      DECISIONS_API_KEY_FILE: ""
+      DECISIONS_TEST_ENDPOINT: http://decisions-mock:4310
+      T3_MOCK_URL: http://t3-mock:4311
+      DECISIONS_MOCK_BEARER: qa-decisions-token
+      T3_MOCK_BEARER: qa-t3-token-A
+    volumes:
+      - falkenwarte-test-data:/data
+      - falkenwarte-test-certs:/certs
+      - falkenwarte-test-secrets:/run/secrets:ro
+      - falkenwarte-test-clock:/qa-clock:ro
+      - ./tests/Fixtures/Plugins:/app/tests/Fixtures/Plugins:ro
+    networks:
+      app:
+        aliases:
+          - falkenwarte.test
+
+  decisions-mock:
+    image: ${FALKENWARTE_MOCKS_IMAGE:-falkenwarte-mocks:local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: qa-mocks
+    profiles: [test]
+    command: ["node", "qa/mocks/decisions.mjs"]
+    environment:
+      PORT: "4310"
+      DECISIONS_MOCK_BEARER: qa-decisions-token
+    networks:
+      - app
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - --input-type=module
+        - -e
+        - fetch('http://127.0.0.1:4310/__qa/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  t3-mock:
+    image: ${FALKENWARTE_MOCKS_IMAGE:-falkenwarte-mocks:local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: qa-mocks
+    profiles: [test]
+    command: ["node", "qa/mocks/t3.mjs"]
+    environment:
+      PORT: "4311"
+      T3_MOCK_BEARER: qa-t3-token-A
+      NODE_EXTRA_CA_CERTS: /certificates/root.crt
+    depends_on:
+      app:
+        condition: service_healthy
+    volumes:
+      - falkenwarte-test-certs:/certificates:ro
+    networks:
+      - app
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - --input-type=module
+        - -e
+        - fetch('http://127.0.0.1:4311/__qa/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  e2e:
+    image: ${FALKENWARTE_E2E_IMAGE:-falkenwarte-e2e:local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: e2e-runner
+    profiles: [test]
+    depends_on:
+      app:
+        condition: service_healthy
+      decisions-mock:
+        condition: service_healthy
+      t3-mock:
+        condition: service_healthy
+    environment:
+      FALKENWARTE_BASE_URL: https://falkenwarte.test:8443
+      FALKENWARTE_API_PREFIX: /api/v1
+      FALKENWARTE_SETUP_TOKEN: test-setup-token-ONLY-for-isolated-qa
+      FALKENWARTE_QA_OWNER_PASSWORD: Falkenwarte-Test-Owner-Password-2026!
+      FALKENWARTE_TEST_COMMIT: ${FALKENWARTE_TEST_COMMIT:-unknown}
+      FALKENWARTE_IMAGE_REF: ${FALKENWARTE_IMAGE_REF:-${FALKENWARTE_IMAGE:-falkenwarte:local}}
+      NODE_EXTRA_CA_CERTS: /certificates/root.crt
+      FALKENWARTE_QA_RESULTS_DIR: /qa-results
+      FALKENWARTE_PRIVATE_DIR: /run/falkenwarte-private
+      FALKENWARTE_TEST_CLOCK_FILE: /qa-clock/business-time.json
+      QA_DECISIONS_MOCK_URL: http://decisions-mock:4310
+      QA_T3_MOCK_URL: http://t3-mock:4311
+    volumes:
+      - ${QA_RESULTS_DIR:-./qa/results}:/qa-results
+      - falkenwarte-test-certs:/certificates:ro
+      - falkenwarte-test-clock:/qa-clock
+    tmpfs:
+      - /run/falkenwarte-private:rw,noexec,nosuid,nodev,size=1m,mode=0700
+    networks:
+      - app
+    command: ["bash", "/usr/local/bin/run-browser-qa"]
+
+volumes:
+  falkenwarte-test-data:
+  falkenwarte-test-certs:
+  falkenwarte-test-secrets:
+  falkenwarte-test-clock:
+
+networks:
+  app:
+    internal: true
