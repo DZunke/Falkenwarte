@@ -1,0 +1,293 @@
+{
+  "format": "falkenwarte.qa.http-transcript.v1",
+  "status": "implementation-template",
+  "protocol_version": "2025-06-18",
+  "native_reference": "pingdotgg/t3code v0.1.10",
+  "scope": "Minimales bestätigtes Teilprofil; kein vollständiger Export des T3-Toolkatalogs.",
+  "secrets": "Alle Bearer in dieser Datei sind nicht produktive Fixturewerte.",
+  "steps": [
+    {
+      "name": "initialize",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-t3-token-A"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "initialize",
+          "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {
+              "name": "falkenwarte-e2e",
+              "version": "1.0.0"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Mcp-Session-Id": "qa-mcp-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {
+              "tools": {
+                "listChanged": false
+              }
+            },
+            "serverInfo": {
+              "name": "falkenwarte-t3-traffic-fixture",
+              "version": "1.0.0"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "initialized",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-t3-token-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-mcp-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "notifications/initialized"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": null
+      }
+    },
+    {
+      "name": "tools_list",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-t3-token-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-mcp-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 2,
+          "method": "tools/list",
+          "params": {}
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 2,
+          "result": {
+            "tools": [
+              {
+                "name": "t3_thread_launch",
+                "description": "Minimales Fixture-Teilprofil des nativen Launch-Tools.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "clientRequestId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ]
+                }
+              },
+              {
+                "name": "t3_thread_wait",
+                "description": "Minimales Fixture-Teilprofil des nativen Wait-Tools.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "timeoutMs": {
+                      "type": "number"
+                    },
+                    "untilDelegatedWorkSettled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "threadId"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "launch",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-t3-token-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-mcp-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 3,
+          "method": "tools/call",
+          "params": {
+            "name": "t3_thread_launch",
+            "arguments": {
+              "projectId": "qa-t3-project-1",
+              "title": "Board-Filter verständlich benennen",
+              "message": "Falkenwarte-Auftrag. Fachliche Rückmeldung über den freigegebenen Falkenwarte-MCP-Zugang geben.",
+              "clientRequestId": "qa-dispatch-001"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 3,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"threadId\":\"qa-t3-thread-1\",\"projectId\":\"qa-t3-project-1\",\"modelSelection\":{\"instanceId\":\"qa-inherited-provider\",\"model\":\"qa-inherited-model\"},\"runId\":\"qa-t3-run-1\",\"status\":\"queued\"}"
+              }
+            ],
+            "structuredContent": {
+              "threadId": "qa-t3-thread-1",
+              "projectId": "qa-t3-project-1",
+              "modelSelection": {
+                "instanceId": "qa-inherited-provider",
+                "model": "qa-inherited-model"
+              },
+              "runId": "qa-t3-run-1",
+              "status": "queued"
+            },
+            "isError": false
+          }
+        }
+      }
+    },
+    {
+      "name": "wait",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-t3-token-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-mcp-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 4,
+          "method": "tools/call",
+          "params": {
+            "name": "t3_thread_wait",
+            "arguments": {
+              "threadId": "qa-t3-thread-1",
+              "runId": "qa-t3-run-1",
+              "timeoutMs": 1000
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 4,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"threadId\":\"qa-t3-thread-1\",\"runId\":\"qa-t3-run-1\",\"status\":\"completed\",\"timedOut\":false}"
+              }
+            ],
+            "structuredContent": {
+              "threadId": "qa-t3-thread-1",
+              "runId": "qa-t3-run-1",
+              "status": "completed",
+              "timedOut": false
+            },
+            "isError": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_session",
+      "request": {
+        "method": "DELETE",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-t3-token-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-mcp-session-1"
+        }
+      },
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@falkenwarte/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test --config playwright.config.mjs",
+    "test:ui": "playwright test --config playwright.config.mjs --ui",
+    "report": "playwright show-report results/html"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1"
+  }
+}

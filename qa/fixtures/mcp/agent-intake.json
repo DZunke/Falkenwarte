@@ -1,0 +1,243 @@
+{
+  "format": "falkenwarte.qa.agent-flow.v1",
+  "status": "implementation-template",
+  "target": "real-falkenwarte-/mcp",
+  "protocol_version": "2025-06-18",
+  "setup": "Agent-Simulator führt zuerst einen echten initialize-/initialized-Handshake und tools/list auf Falkenwarte aus.",
+  "response_policy": "response_example ist ein fachliches Anschauungsbeispiel, niemals eine Browser- oder Backend-Stubantwort. Der echte Server liefert sämtliche Antworten.",
+  "calls": [
+    {
+      "name": "create",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-agent-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-falkenwarte-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "method": "tools/call",
+          "params": {
+            "name": "tasks_create",
+            "arguments": {
+              "client_request_id": "qa-intake-001",
+              "project_id": "00000101-1111-4111-8111-111111111111",
+              "title": "Filter bleibt nach Projektwechsel aktiv",
+              "description": "Nach einem Projektwechsel erscheint weiterhin der alte Filter.",
+              "task_type": "bug",
+              "prefer_wait_ms": 0,
+              "link_collections": [
+                {
+                  "name": "Quelle",
+                  "kind": "source",
+                  "links": [
+                    {
+                      "title": "Ursprüngliches Issue",
+                      "url": "https://github.com/example/falkenwarte/issues/42",
+                      "kind": "source_issue",
+                      "relation": "source"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "response_example": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"outcome\":\"accepted\",\"task_id\":\"00000001-1111-4111-8111-111111111111\",\"intake_id\":\"00000002-1111-4111-8111-111111111111\",\"action_id\":\"00000003-1111-4111-8111-111111111111\",\"task_version\":1,\"missing_fields\":[],\"human_attention\":{\"required\":false,\"reasons\":[]},\"classification_id\":null,\"poll_after_ms\":500}"
+              }
+            ],
+            "structuredContent": {
+              "outcome": "accepted",
+              "task_id": "00000001-1111-4111-8111-111111111111",
+              "intake_id": "00000002-1111-4111-8111-111111111111",
+              "action_id": "00000003-1111-4111-8111-111111111111",
+              "task_version": 1,
+              "missing_fields": [],
+              "human_attention": {
+                "required": false,
+                "reasons": []
+              },
+              "classification_id": null,
+              "poll_after_ms": 500
+            },
+            "isError": false
+          }
+        }
+      },
+      "capture": [
+        "task_id",
+        "task_version",
+        "intake_id",
+        "action_id"
+      ]
+    },
+    {
+      "name": "poll_intake",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-agent-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-falkenwarte-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 11,
+          "method": "tools/call",
+          "params": {
+            "name": "tasks_intake_get",
+            "arguments": {
+              "task_id": "00000001-1111-4111-8111-111111111111"
+            }
+          }
+        }
+      },
+      "response_example": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 11,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"outcome\":\"needs_information\",\"task_id\":\"00000001-1111-4111-8111-111111111111\",\"intake_id\":\"00000002-1111-4111-8111-111111111111\",\"action_id\":\"00000003-1111-4111-8111-111111111111\",\"task_version\":1,\"missing_fields\":[{\"field_key\":\"expected_behavior\",\"question\":\"Welches Verhalten wird stattdessen erwartet?\",\"reason_code\":\"missing\",\"addressed_to\":\"requester\"}],\"human_attention\":{\"required\":false,\"reasons\":[]},\"classification_id\":\"00000004-1111-4111-8111-111111111111\",\"poll_after_ms\":null,\"assessment_status\":\"completed\",\"assessed_task_revision\":1,\"waiting_for\":\"requester\",\"taxonomy_version\":3,\"routing_rules_version\":1,\"clarification_round\":1}"
+              }
+            ],
+            "structuredContent": {
+              "outcome": "needs_information",
+              "task_id": "00000001-1111-4111-8111-111111111111",
+              "intake_id": "00000002-1111-4111-8111-111111111111",
+              "action_id": "00000003-1111-4111-8111-111111111111",
+              "task_version": 1,
+              "missing_fields": [
+                {
+                  "field_key": "expected_behavior",
+                  "question": "Welches Verhalten wird stattdessen erwartet?",
+                  "reason_code": "missing",
+                  "addressed_to": "requester"
+                }
+              ],
+              "human_attention": {
+                "required": false,
+                "reasons": []
+              },
+              "classification_id": "00000004-1111-4111-8111-111111111111",
+              "poll_after_ms": null,
+              "assessment_status": "completed",
+              "assessed_task_revision": 1,
+              "waiting_for": "requester",
+              "taxonomy_version": 3,
+              "routing_rules_version": 1,
+              "clarification_round": 1
+            },
+            "isError": false
+          }
+        }
+      },
+      "replace_before_send": {
+        "params.arguments.task_id": "capture.create.task_id"
+      }
+    },
+    {
+      "name": "supply_information",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-agent-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-falkenwarte-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 12,
+          "method": "tools/call",
+          "params": {
+            "name": "tasks_supply_information",
+            "arguments": {
+              "task_id": "00000001-1111-4111-8111-111111111111",
+              "expected_version": 1,
+              "client_request_id": "qa-intake-info-001",
+              "answers": [
+                {
+                  "field_key": "expected_behavior",
+                  "value": "Beim Wechsel soll der projektspezifische Filter zurückgesetzt werden."
+                }
+              ],
+              "prefer_wait_ms": 0
+            }
+          }
+        }
+      },
+      "replace_before_send": {
+        "params.arguments.task_id": "capture.create.task_id",
+        "params.arguments.expected_version": "capture.latest.task_version"
+      }
+    },
+    {
+      "name": "register_result_link",
+      "request": {
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {
+          "Accept": "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          "Authorization": "Bearer qa-agent-A",
+          "MCP-Protocol-Version": "2025-06-18",
+          "Mcp-Session-Id": "qa-falkenwarte-session-1"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 13,
+          "method": "tools/call",
+          "params": {
+            "name": "tasks_link_register",
+            "arguments": {
+              "task_id": "00000001-1111-4111-8111-111111111111",
+              "collection_id": "00000601-1111-4111-8111-111111111111",
+              "expected_version": 3,
+              "client_request_id": "qa-link-001",
+              "title": "Gemeldeter Pull Request",
+              "url": "https://github.com/example/falkenwarte/pull/43",
+              "kind": "pull_request",
+              "relation": "delivers"
+            }
+          }
+        }
+      },
+      "precondition": "Collection zuvor über tasks_link_collection_create auf demselben Ticket anlegen.",
+      "replace_before_send": {
+        "params.arguments.task_id": "capture.create.task_id",
+        "params.arguments.collection_id": "capture.collection.id",
+        "params.arguments.expected_version": "capture.latest.task_version"
+      }
+    }
+  ]
+}

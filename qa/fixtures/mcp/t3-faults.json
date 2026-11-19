@@ -1,0 +1,176 @@
+{
+  "format": "falkenwarte.qa.stateful-faults.v1",
+  "status": "implementation-template",
+  "base_fixture": "t3-legacy-session.json",
+  "persistence": {
+    "store": [
+      "accepted_launches",
+      "current_run_states",
+      "request_journal",
+      "auth_namespace"
+    ],
+    "survives": [
+      "falkenwarte_worker_restart",
+      "mock_process_restart"
+    ],
+    "session_state_separate": true
+  },
+  "identity": {
+    "key_fields": [
+      "auth_namespace",
+      "tool_name",
+      "clientRequestId"
+    ],
+    "request_payload_hash_checked_by": "Falkenwarte; Mockjournal macht abweichende Payload sichtbar."
+  },
+  "faults": [
+    {
+      "id": "lost_reply_after_accept",
+      "match": {
+        "tool": "t3_thread_launch",
+        "clientRequestId": "qa-dispatch-001"
+      },
+      "first_call": [
+        "persist_effect_identity_and_initial_run_state",
+        "append_journal",
+        "drop_connection_before_http_response"
+      ],
+      "repeat_call": "return_persisted_thread_and_run_identity_with_current_run_status_and_current_jsonrpc_id",
+      "expected_distinct_launch_effects": 1,
+      "replay_status_policy": "Identität bleibt stabil; der Status darf seit der ersten Annahme fortgeschritten sein und wird beim Replay neu gelesen."
+    },
+    {
+      "id": "new_mcp_session_same_namespace",
+      "change": "Neue Mcp-Session-Id, unveränderter Bearer/Auth-Namespace",
+      "expected": "Identische clientRequestId liefert dieselben Thread-/Run-IDs."
+    },
+    {
+      "id": "new_auth_namespace",
+      "change": "qa-t3-token-B gehört oauth-client-B statt oauth-client-A",
+      "expected": "Der Mock besitzt eine andere externe Idempotenzgrenze; Falkenwarte startet den ungeklärten alten Auftrag nicht automatisch erneut."
+    },
+    {
+      "id": "delayed_launch_reply",
+      "match": {
+        "tool": "t3_thread_launch"
+      },
+      "steps": [
+        "persist_effect_and_response",
+        "wait_for_harness_barrier",
+        "send_response"
+      ],
+      "timeout_policy": "Harness arbeitet mit einer Freigabebarriere, nicht mit zufälligen Sleeps."
+    },
+    {
+      "id": "report_before_launch_reply",
+      "steps": [
+        "persist_effect_and_response",
+        "hold_launch_response",
+        "agent_simulator_calls_real_falkenwarte_mcp",
+        "release_launch_response"
+      ],
+      "report_tool": "runs_report_result",
+      "expected": "Bereits angelegter lokaler Run korreliert die Meldung einmalig; spätere Launch-Antwort erzeugt keinen zweiten Run.",
+      "not_a_t3_webhook": true
+    },
+    {
+      "id": "http_401",
+      "response": {
+        "status": 401,
+        "headers": {
+          "WWW-Authenticate": "Bearer realm=\"falkenwarte-qa\""
+        },
+        "body": null
+      },
+      "expected": "Verbindung verlangt neue Autorisierung; keine Endlosschleife."
+    },
+    {
+      "id": "session_expired",
+      "response": {
+        "status": 404,
+        "body": null
+      },
+      "expected": "Nur eine neue MCP-Session; Auth-Namespace und Dispatch-Identität bleiben erhalten."
+    },
+    {
+      "id": "protocol_error",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 3,
+          "error": {
+            "code": -32602,
+            "message": "Invalid params"
+          }
+        }
+      },
+      "expected": "Protokollfehler ist kein fachlicher Erfolg."
+    },
+    {
+      "id": "tool_error",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 3,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Fixture: provider unavailable"
+              }
+            ],
+            "isError": true
+          }
+        }
+      },
+      "expected": "MCP-Toolfehler ist von HTTP-/JSON-RPC-Fehlern unterscheidbar; kein erfundener Erfolg."
+    },
+    {
+      "id": "wait_timeout",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "jsonrpc": "2.0",
+          "id": 4,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"threadId\":\"qa-t3-thread-1\",\"runId\":\"qa-t3-run-1\",\"status\":\"running\",\"timedOut\":true}"
+              }
+            ],
+            "structuredContent": {
+              "threadId": "qa-t3-thread-1",
+              "runId": "qa-t3-run-1",
+              "status": "running",
+              "timedOut": true
+            },
+            "isError": false
+          }
+        }
+      },
+      "expected": "Beobachtung bleibt laufend/ungeklärt und beendet nicht das fachliche Ticket."
+    },
+    {
+      "id": "mismatched_structured_content",
+      "mutation": "Nur structuredContent.threadId ändern; content.text unverändert lassen.",
+      "expected": "Adapter meldet widersprüchliche externe Antwort und verwendet keinen beliebigen Wert."
+    },
+    {
+      "id": "unsupported_protocol",
+      "change": "Server handelt einen nicht implementierten Dialekt aus.",
+      "expected": "Capabilities/Kompatibilität sichtbar blockiert, kein stiller Fallback."
+    }
+  ]
+}

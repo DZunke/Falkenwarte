@@ -1,0 +1,169 @@
+{
+  "format": "falkenwarte.qa.seed.v1",
+  "status": "implementation-template",
+  "clock": "2026-11-19T10:00:00Z",
+  "timezone": "UTC",
+  "id_policy": "Seed-IDs sind fest. Neu erzeugte IDs werden im E2E-Ablauf aus öffentlichen Antworten übernommen.",
+  "projects": [
+    {
+      "id": "00000101-1111-4111-8111-111111111111",
+      "name": "Falkenwarte",
+      "icon": "bird",
+      "color": "#B8914C",
+      "archived": false
+    },
+    {
+      "id": "00000102-1111-4111-8111-111111111111",
+      "name": "Hausarchiv",
+      "icon": "archive",
+      "color": "#7C97B6",
+      "archived": false
+    }
+  ],
+  "principals": [
+    {
+      "key": "owner",
+      "kind": "human",
+      "projects": [
+        "00000101-1111-4111-8111-111111111111",
+        "00000102-1111-4111-8111-111111111111"
+      ],
+      "secret_reference": "QA_OWNER_SECRET"
+    },
+    {
+      "key": "agent_falkenwarte",
+      "kind": "technical",
+      "projects": [
+        "00000101-1111-4111-8111-111111111111"
+      ],
+      "secret_reference": "QA_AGENT_A_TOKEN"
+    },
+    {
+      "key": "agent_hausarchiv",
+      "kind": "technical",
+      "projects": [
+        "00000102-1111-4111-8111-111111111111"
+      ],
+      "secret_reference": "QA_AGENT_B_TOKEN"
+    }
+  ],
+  "status_definitions": [
+    {
+      "id": "00000201-1111-4111-8111-111111111111",
+      "key": "inbox",
+      "name": "Eingang",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "00000202-1111-4111-8111-111111111111",
+      "key": "ready",
+      "name": "Bereit",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "00000203-1111-4111-8111-111111111111",
+      "key": "in_progress",
+      "name": "In Arbeit",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "00000204-1111-4111-8111-111111111111",
+      "key": "review",
+      "name": "Abnahme",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "00000205-1111-4111-8111-111111111111",
+      "key": "done",
+      "name": "Erledigt",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    }
+  ],
+  "taxonomy_version": 3,
+  "labels": [
+    {
+      "id": "00000301-1111-4111-8111-111111111111",
+      "key": "topic.ui",
+      "name": "Oberfläche",
+      "color": "#7C97B6",
+      "description": "Änderungen an Bedienung und Darstellung.",
+      "kind": "topic",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "00000302-1111-4111-8111-111111111111",
+      "key": "workflow.bugfix",
+      "name": "Fehlerbehebung",
+      "color": "#C89562",
+      "description": "Festgelegter Ablauf für ein nachvollziehbares Fehlverhalten.",
+      "kind": "workflow",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "00000303-1111-4111-8111-111111111111",
+      "key": "workflow.documentation",
+      "name": "Dokumentation",
+      "color": "#8FA78E",
+      "description": "Festgelegter Ablauf für fachliche Dokumentation.",
+      "kind": "workflow",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "00000304-1111-4111-8111-111111111111",
+      "key": "attention.owner",
+      "name": "Mensch benötigt",
+      "color": "#C17778",
+      "description": "Sichtbare Projektion eines offenen fachlichen Attention-Grunds.",
+      "kind": "attention",
+      "project_id": "00000101-1111-4111-8111-111111111111"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "00000401-1111-4111-8111-111111111111",
+      "project_id": "00000101-1111-4111-8111-111111111111",
+      "title": "Board-Filter verständlich benennen",
+      "description": "Das aktive Projekt soll im Filter sichtbar sein.",
+      "status_id": "00000202-1111-4111-8111-111111111111",
+      "label_ids": [
+        "00000301-1111-4111-8111-111111111111"
+      ],
+      "version": 1,
+      "origin": "manual"
+    },
+    {
+      "id": "00000402-1111-4111-8111-111111111111",
+      "project_id": "00000102-1111-4111-8111-111111111111",
+      "title": "Archivordnung beschreiben",
+      "description": "Private Unterlagen fachlich ordnen.",
+      "version": 1,
+      "origin": "manual"
+    }
+  ],
+  "t3_binding": {
+    "connection_key": "t3_mock",
+    "project_id": "00000101-1111-4111-8111-111111111111",
+    "external_project_id": "qa-t3-project-1",
+    "provider_configuration_owner": "t3code"
+  },
+  "outbound_auth_namespaces": [
+    {
+      "key": "oauth-client-A",
+      "bearer_secret_reference": "QA_T3_TOKEN_A"
+    },
+    {
+      "key": "oauth-client-B",
+      "bearer_secret_reference": "QA_T3_TOKEN_B"
+    }
+  ],
+  "network_policy": {
+    "allow": [
+      "falkenwarte",
+      "t3-mock",
+      "decisions-mock",
+      "mercure"
+    ],
+    "deny_all_other_outbound": true
+  },
+  "production_allowed": false
+}
