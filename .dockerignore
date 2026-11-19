@@ -15,3 +15,4 @@ qa/results
 *.sqlite
 *.sqlite-*
 *.log
+config/reference.php

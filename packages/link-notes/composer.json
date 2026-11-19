@@ -1,0 +1,16 @@
+{
+  "name": "falkenwarte/link-notes",
+  "description": "Local notes attached to registered Falkenwarte task links.",
+  "type": "library",
+  "license": "proprietary",
+  "require": {
+    "php": "~8.5.0",
+    "doctrine/dbal": "^4.6",
+    "doctrine/migrations": "^3.9"
+  },
+  "autoload": {
+    "psr-4": {
+      "Falkenwarte\\LinkNotes\\": "src/"
+    }
+  }
+}

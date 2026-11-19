@@ -19,7 +19,7 @@ final readonly class DbalExtensionPersistence implements ExtensionPersistence
         foreach ($this->connection->fetchAllAssociative("SELECT kind,payload FROM commands WHERE complete=0 AND kind LIKE 'plugin.%' AND kind<>'plugin.drain'") as $command) {
             $payload = json_decode((string) $command['payload'], true);
             if (is_array($payload) && ($payload['plugin_id'] ?? null) === $pluginId) {
-                $count++;
+                ++$count;
             }
         }
 

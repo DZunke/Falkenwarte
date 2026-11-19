@@ -13,7 +13,7 @@ interface AgentExecutionBridge
     public function projects(array $connection, string $token, ?string $cursor = null, int $limit = 50): array;
 
     /** @param array<string, mixed> $connection @return array<string, mixed> */
-    public function readThread(array $connection, string $token, string $threadId): array;
+    public function readThread(array $connection, string $token, string $threadId, ?string $runId = null): array;
 
     /** @param array<string, mixed> $connection @param array<string, mixed> $payload @return array<string, mixed> */
     public function launch(array $connection, string $token, array $payload): array;

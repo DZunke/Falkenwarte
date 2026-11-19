@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "8469bdf9549b53a2fa344779818ab6a5",
+    "content-hash": "50b0ebdd198433d222f0f0852d31a37a",
     "packages": [
         {
             "name": "dflydev/dot-access-data",
@@ -791,6 +791,34 @@
                 "source": "https://github.com/doctrine/sql-formatter/tree/1.5.4"
             },
             "time": "2026-02-08T16:21:46+00:00"
+        },
+        {
+            "name": "falkenwarte/link-notes",
+            "version": "0.1.0",
+            "dist": {
+                "type": "path",
+                "url": "packages/link-notes",
+                "reference": "af155908120672da7c9c204f16497404ad8842a7"
+            },
+            "require": {
+                "doctrine/dbal": "^4.6",
+                "doctrine/migrations": "^3.9",
+                "php": "~8.5.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Falkenwarte\\LinkNotes\\": "src/"
+                }
+            },
+            "license": [
+                "proprietary"
+            ],
+            "description": "Local notes attached to registered Falkenwarte task links.",
+            "transport-options": {
+                "symlink": false,
+                "relative": true
+            }
         },
         {
             "name": "lcobucci/jwt",

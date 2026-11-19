@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Orchestration\Infrastructure;
 
-use App\Orchestration\Application\T3OAuthClient;
+use App\AgentCatalog\Application\AgentCatalogOAuthClient;
 use App\Orchestration\Application\T3BridgeException;
+use App\Orchestration\Application\T3OAuthClient;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
-use Throwable;
 
-final class T3OAuthAuthenticator implements T3OAuthClient
+final class T3OAuthAuthenticator implements T3OAuthClient, AgentCatalogOAuthClient
 {
     public function __construct(private readonly HttpClientInterface $http)
     {
@@ -32,7 +32,7 @@ final class T3OAuthAuthenticator implements T3OAuthClient
             'response_types' => ['code'], 'token_endpoint_auth_method' => 'none',
         ]);
         $clientId = $registration['client_id'] ?? null;
-        if (!is_string($clientId) || $clientId === '') {
+        if (!is_string($clientId) || '' === $clientId) {
             throw new T3BridgeException('T3 hat keine gültige öffentliche OAuth-Client-ID registriert.');
         }
         $query = http_build_query([
@@ -60,7 +60,7 @@ final class T3OAuthAuthenticator implements T3OAuthClient
             ]);
             $status = $response->getStatusCode();
             $content = $response->getContent(false);
-        } catch (Throwable $exception) {
+        } catch (\Throwable $exception) {
             throw new T3BridgeException('Der T3-Autorisierungscode konnte nicht ausgetauscht werden.', false, $exception);
         }
         if ($status < 200 || $status >= 300) {
@@ -81,7 +81,7 @@ final class T3OAuthAuthenticator implements T3OAuthClient
             $response = $this->http->request('GET', $url, ['headers' => ['Accept' => 'application/json'], 'timeout' => 10]);
             $status = $response->getStatusCode();
             $content = $response->getContent(false);
-        } catch (Throwable $exception) {
+        } catch (\Throwable $exception) {
             throw new T3BridgeException('T3-OAuth-Metadaten sind nicht erreichbar.', false, $exception);
         }
         if ($status < 200 || $status >= 300) {
@@ -102,7 +102,7 @@ final class T3OAuthAuthenticator implements T3OAuthClient
             $response = $this->http->request($method, $url, ['headers' => ['Accept' => 'application/json'], 'json' => $body, 'timeout' => 10]);
             $status = $response->getStatusCode();
             $content = $response->getContent(false);
-        } catch (Throwable $exception) {
+        } catch (\Throwable $exception) {
             throw new T3BridgeException('T3 konnte keinen öffentlichen OAuth-Client registrieren.', false, $exception);
         }
         if ($status < 200 || $status >= 300) {
@@ -118,14 +118,15 @@ final class T3OAuthAuthenticator implements T3OAuthClient
 
     private function metadataUrl(string $base, string $endpoint): string
     {
-        if ($endpoint === '') {
+        if ('' === $endpoint) {
             throw new T3BridgeException('T3-OAuth-Metadaten enthalten einen erforderlichen Endpunkt nicht.');
         }
-        if (parse_url($endpoint, PHP_URL_SCHEME) !== null) {
+        if (null !== parse_url($endpoint, PHP_URL_SCHEME)) {
             return $endpoint;
         }
         if (str_starts_with($endpoint, '/')) {
             $parts = parse_url($base);
+
             return ($parts['scheme'] ?? 'https').'://'.($parts['host'] ?? '').(isset($parts['port']) ? ':'.$parts['port'] : '').$endpoint;
         }
 

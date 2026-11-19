@@ -23,13 +23,13 @@ if (str_contains($storePort, 'Doctrine\\DBAL') || preg_match('/function\s+db\s*\
 
 $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root.'/src', FilesystemIterator::SKIP_DOTS));
 foreach ($iterator as $file) {
-    if (!$file->isFile() || $file->getExtension() !== 'php') {
+    if (!$file->isFile() || 'php' !== $file->getExtension()) {
         continue;
     }
 
     $relative = substr($file->getPathname(), strlen($root) + 1);
     $source = file_get_contents($file->getPathname());
-    if ($source === false) {
+    if (false === $source) {
         $errors[] = sprintf('Could not inspect %s.', $relative);
         continue;
     }
@@ -55,12 +55,12 @@ foreach ($iterator as $file) {
         }
 
         $segments = explode('\\', $import);
-        if ($isApplication && ($segments[0] ?? '') === 'App' && !in_array($segments[1] ?? '', [$module, 'Shared'], true)) {
+        if ($isApplication && 'App' === $segments[0] && !in_array($segments[1] ?? '', [$module, 'Shared'], true)) {
             $otherContext = $segments[1] ?? '';
             $outerLayer = $segments[2] ?? '';
             $targetPath = $root.'/src/'.$otherContext.'/'.implode('/', array_slice($segments, 2)).'.php';
             $targetSource = is_file($targetPath) ? (string) file_get_contents($targetPath) : '';
-            $isPublishedPort = $outerLayer === 'Application' && preg_match('/\binterface\s+'.preg_quote((string) end($segments), '/').'\b/', $targetSource) === 1;
+            $isPublishedPort = 'Application' === $outerLayer && 1 === preg_match('/\binterface\s+'.preg_quote((string) end($segments), '/').'\b/', $targetSource);
             if (!$isPublishedPort) {
                 $errors[] = sprintf('%s depends on %s outside Shared or a published Application port.', $relative, $import);
             }
@@ -82,7 +82,7 @@ foreach ($contexts as $context) {
     }
 }
 
-if ($errors !== []) {
+if ([] !== $errors) {
     fwrite(STDERR, implode("\n", array_map(static fn (string $error): string => 'ERROR: '.$error, array_unique($errors)))."\n");
     exit(1);
 }

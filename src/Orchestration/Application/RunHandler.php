@@ -4,32 +4,34 @@ declare(strict_types=1);
 
 namespace App\Orchestration\Application;
 
+use App\AgentCatalog\Application\AgentCatalogReader;
+use App\Automation\Application\WorkflowPolicy;
+use App\Orchestration\Domain\RunCompletionEvaluator;
+use App\Orchestration\Domain\RunDelegationPolicy;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
-use DateTimeImmutable;
-use DateTimeZone;
-use Throwable;
 
 final class RunHandler
 {
-    private const T3_BRIDGE_ID = 't3.mcp.v0_1_10';
     private const ACTIVE_RUN_STATES = ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'cancel_requested', 'result_reported', 'verifying'];
 
     private readonly AgentExecutionBridge $bridge;
 
-    public function __construct(public Store $store, AgentExecutionBridge $bridge, private readonly T3OAuthClient $oauth)
-    {
+    public function __construct(
+        public Store $store,
+        AgentExecutionBridge $bridge,
+        private readonly AgentCatalogReader $agentCatalog,
+        private readonly WorkflowPolicy $workflowPolicy,
+        private readonly RunCompletionEvaluator $completionEvaluator,
+        private readonly RunDelegationPolicy $delegationPolicy,
+    ) {
         $this->bridge = $bridge;
     }
 
     public function handles(string $op): bool
     {
         return in_array($op, [
-            'project_binding_get', 'project_binding_set',
-            'connections_list', 'connections_create', 'connections_get', 'connections_update', 'connections_check', 'connection_check_get',
-            'connection_capabilities_get', 'connection_projects_list', 'connection_oauth_start', 'connection_oauth_callback', 'connection_credentials_remove',
-            'agent_profiles_list', 'agent_profiles_create', 'agent_profiles_get', 'agent_profiles_replace',
             'runs_list', 'runs_get', 'runs_request', 'runs_cancel', 'runs_input', 'runs_reconcile', 'runs_abandon', 'runs_report_result', 'run_result_report_get',
             'approvals_list', 'approvals_request', 'approvals_get', 'approvals_decide', 'task_handoff_get',
             'workflows_list', 'workflows_create', 'workflows_get', 'workflows_replace', 'workflow_version_get',
@@ -43,23 +45,6 @@ final class RunHandler
     public function handle(string $op, array $p, array $body, Actor $actor): array
     {
         return match ($op) {
-            'project_binding_get' => $this->getBinding($this->pathId($p, 'project_id'), $actor),
-            'project_binding_set' => $this->setBinding($this->pathId($p, 'project_id'), $body, $actor),
-            'connections_list' => $this->listConnections($p, $actor),
-            'connections_create' => $this->createConnection($body, $actor),
-            'connections_get' => $this->getConnection($this->pathId($p, 'connection_id'), $actor),
-            'connections_update' => $this->updateConnection($this->pathId($p, 'connection_id'), $body, $actor),
-            'connections_check' => $this->checkConnection($this->pathId($p, 'connection_id'), $body, $actor),
-            'connection_check_get' => $this->getConnectionCheck($this->pathId($p, 'connection_id'), $actor),
-            'connection_capabilities_get' => $this->getCapabilities($this->pathId($p, 'connection_id'), $actor),
-            'connection_projects_list' => $this->listRemoteProjects($this->pathId($p, 'connection_id'), $p, $actor),
-            'connection_oauth_start' => $this->startOAuth($this->pathId($p, 'connection_id'), $body, $actor),
-            'connection_oauth_callback' => $this->finishOAuth($p),
-            'connection_credentials_remove' => $this->removeCredentials($this->pathId($p, 'connection_id'), $actor),
-            'agent_profiles_list' => $this->listProfiles($p, $actor),
-            'agent_profiles_create' => $this->writeProfile(null, $body, $actor),
-            'agent_profiles_get' => $this->getProfile($this->pathId($p, 'profile_id'), $actor),
-            'agent_profiles_replace' => $this->writeProfile($this->pathId($p, 'profile_id'), $body, $actor),
             'runs_list' => $this->listRuns($p, $actor),
             'runs_get' => $this->getRun($this->pathId($p, 'run_id'), $actor),
             'runs_request' => $this->requestRun($this->pathId($p, 'task_id'), $body, $actor),
@@ -100,9 +85,8 @@ final class RunHandler
             'run.observe', 'run.reconcile' => $this->observe($this->jobId($payload, 'run_id')),
             'run.cancel' => $this->performCancel($this->jobId($payload, 'run_id')),
             'run.input' => $this->performInput($this->jobId($payload, 'run_id'), $this->jobId($payload, 'input_id')),
-            'workflow.advance' => $this->advanceWorkflow($this->jobId($payload, 'instance_id')),
-            'workflow.trigger' => $this->fireTrigger($this->jobId($payload, 'trigger_id'), $payload),
-            'connection.check' => $this->performConnectionCheck($this->jobId($payload, 'check_id')),
+            'workflow.advance' => $this->store->atomic(fn () => $this->advanceWorkflow($this->jobId($payload, 'instance_id'))),
+            'workflow.trigger' => $this->store->atomic(fn () => $this->fireTrigger($this->jobId($payload, 'trigger_id'), $payload)),
             'run.restore_inventory' => $this->restoreInventory($payload),
             'recovery.entry.observe' => $this->observeRecoveryEntry($this->jobId($payload, 'entry_id')),
             default => throw new Problem(422, 'unsupported_job', 'Unbekannter Orchestrierungsauftrag.'),
@@ -113,63 +97,92 @@ final class RunHandler
     {
         $now = $this->store->now();
         $this->store->atomic(function () use ($now): void {
-            if ($this->activeRecoveryGate() === null) {
-            foreach ($this->store->all('triggers') as $trigger) {
-                if (!$trigger['enabled'] || $trigger['spec']['type'] !== 'schedule' || $trigger['next_due_at'] === null || $trigger['next_due_at'] > $now) {
-                    continue;
-                }
-                $trigger['next_due_at'] = $this->nextDue($trigger['spec']['schedule'], new DateTimeImmutable($now));
-                $trigger['last_fired_at'] = $now;
-                $this->store->save('triggers', $trigger, 'workflow.trigger_due');
-                $this->store->enqueue('workflow.trigger', ['trigger_id' => $trigger['id'], 'scheduled_at' => $now]);
-            }
-            $allEvents = $this->store->all('events');
-            foreach ($this->store->all('triggers') as $trigger) {
-                if (!$trigger['enabled'] || ($trigger['spec']['type'] ?? null) !== 'domain_event') {
-                    continue;
-                }
-                $events = $allEvents;
-                $cursor = $trigger['last_event_id'] ?? null;
-                if ($cursor !== null) {
-                    $cursorIndex = null;
-                    foreach ($events as $index => $event) {
-                        if (($event['event_id'] ?? $event['id'] ?? null) === $cursor) {
-                            $cursorIndex = $index;
-                            break;
-                        }
-                    }
-                    $events = $cursorIndex === null ? [] : array_slice($events, $cursorIndex + 1);
-                }
-                foreach ($events as $event) {
-                    $eventId = (string) ($event['event_id'] ?? $event['id'] ?? '');
-                    if ($eventId === '') {
+            if (null === $this->activeRecoveryGate() && !$this->maintenanceMode()) {
+                foreach ($this->store->all('triggers') as $trigger) {
+                    if (!$trigger['enabled'] || 'schedule' !== $trigger['spec']['type'] || null === $trigger['next_due_at'] || $trigger['next_due_at'] > $now) {
                         continue;
                     }
-                    if (($event['project_id'] ?? null) !== $trigger['project_id'] || $event['event_type'] !== $trigger['spec']['event_type']) {
-                        $trigger['last_event_id'] = $eventId;
-                        $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
-                        continue;
-                    }
-                    $taskId = $event['data']['task_id'] ?? $event['aggregate']['id'] ?? null;
-                    $task = is_string($taskId) ? $this->store->find('tasks', $taskId) : null;
-                    if ($task === null || $task['project_id'] !== $trigger['project_id']) {
-                        $trigger['last_event_id'] = $eventId;
-                        $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
-                        continue;
-                    }
-                    $statusId = $trigger['spec']['task_status_id'] ?? null;
-                    if ($statusId !== null && $task['status_id'] !== $statusId) {
-                        $trigger['last_event_id'] = $eventId;
-                        $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
-                        continue;
-                    }
-                    $this->store->enqueue('workflow.trigger', [
-                        'trigger_id' => $trigger['id'], 'event_id' => $eventId,
-                        'event_type' => $event['event_type'], 'task_id' => $task['id'],
-                    ]);
-                    $trigger['last_event_id'] = $eventId;
+                    $trigger['next_due_at'] = $this->nextDue($trigger['spec']['schedule'], new \DateTimeImmutable($now));
                     $trigger['last_fired_at'] = $now;
-                    $this->store->save('triggers', $trigger, 'workflow.domain_event_triggered');
+                    $this->store->save('triggers', $trigger, 'workflow.trigger_due');
+                    $this->store->enqueue('workflow.trigger', ['trigger_id' => $trigger['id'], 'scheduled_at' => $now]);
+                }
+                $allEvents = $this->store->all('events');
+                foreach ($this->store->all('triggers') as $trigger) {
+                    if (!$trigger['enabled'] || ($trigger['spec']['type'] ?? null) !== 'domain_event') {
+                        continue;
+                    }
+                    $events = $allEvents;
+                    $cursor = $trigger['last_event_id'] ?? null;
+                    if (null !== $cursor) {
+                        $cursorIndex = null;
+                        foreach ($events as $index => $event) {
+                            if (($event['event_id'] ?? $event['id'] ?? null) === $cursor) {
+                                $cursorIndex = $index;
+                                break;
+                            }
+                        }
+                        $events = null === $cursorIndex ? [] : array_slice($events, $cursorIndex + 1);
+                    }
+                    foreach ($events as $event) {
+                        $eventId = (string) ($event['event_id'] ?? $event['id'] ?? '');
+                        if ('' === $eventId) {
+                            continue;
+                        }
+                        if (($event['project_id'] ?? null) !== $trigger['project_id'] || $event['event_type'] !== $trigger['spec']['event_type']) {
+                            $trigger['last_event_id'] = $eventId;
+                            $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
+                            continue;
+                        }
+                        $taskId = $event['data']['task_id'] ?? $event['aggregate']['id'] ?? null;
+                        $task = is_string($taskId) ? $this->store->find('tasks', $taskId) : null;
+                        if (null === $task || $task['project_id'] !== $trigger['project_id']) {
+                            $trigger['last_event_id'] = $eventId;
+                            $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
+                            continue;
+                        }
+                        $statusId = $trigger['spec']['task_status_id'] ?? null;
+                        if (null !== $statusId && $task['status_id'] !== $statusId) {
+                            $trigger['last_event_id'] = $eventId;
+                            $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
+                            continue;
+                        }
+                        $this->store->enqueue('workflow.trigger', [
+                            'trigger_id' => $trigger['id'], 'event_id' => $eventId,
+                            'event_type' => $event['event_type'], 'task_id' => $task['id'],
+                        ]);
+                        $trigger['last_event_id'] = $eventId;
+                        $trigger['last_fired_at'] = $now;
+                        $this->store->save('triggers', $trigger, 'workflow.domain_event_triggered');
+                    }
+                }
+            }
+            if (null === $this->activeRecoveryGate() && !$this->maintenanceMode()) {
+                foreach ($this->store->all('runs') as $run) {
+                    if (empty($run['_maintenance_deferred']) || !in_array($run['state'], ['queued', 'dispatching', 'result_reported', 'reconciling'], true)) {
+                        continue;
+                    }
+                    $attempt = $this->attempt($run, (int) $run['attempt_no']);
+                    if (null !== $attempt['external_thread_id']) {
+                        unset($run['_maintenance_deferred']);
+                        $this->store->save('runs', $run, 'run.maintenance_dispatch_deferred_cleared');
+                        continue;
+                    }
+                    unset($run['_maintenance_deferred']);
+                    $run['state'] = 'dispatching';
+                    $run['status_reason'] = null;
+                    $run = $this->store->save('runs', $run, 'run.maintenance_dispatch_resumed');
+                    $this->store->enqueue('run.dispatch', ['run_id' => $run['id']]);
+                }
+                foreach ($this->store->all('workflow_instances') as $instance) {
+                    if ('paused' !== $instance['state'] || empty($instance['_paused_for_maintenance'])) {
+                        continue;
+                    }
+                    unset($instance['_paused_for_maintenance']);
+                    $instance['state'] = 'running';
+                    $instance['pause_reason'] = null;
+                    $instance = $this->store->save('workflow_instances', $instance, 'workflow.maintenance_resumed');
+                    $this->store->enqueue('workflow.advance', ['instance_id' => $instance['id']]);
                 }
             }
             foreach ($this->store->all('run_observation_schedules') as $schedule) {
@@ -177,333 +190,28 @@ final class RunHandler
                     continue;
                 }
                 $run = $this->store->find('runs', (string) $schedule['run_id']);
-                if ($run === null || !in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
+                if (null === $run || !in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
                     $this->store->remove('run_observation_schedules', $schedule['id'], 'run.observation_schedule_removed');
                     continue;
                 }
-                $schedule['next_due_at'] = (new DateTimeImmutable($now))->modify('+5 seconds')->format(DATE_ATOM);
+                $schedule['next_due_at'] = (new \DateTimeImmutable($now))->modify('+5 seconds')->format(DATE_ATOM);
                 $this->store->save('run_observation_schedules', $schedule, 'run.observation_scheduled');
                 $this->store->enqueue('run.observe', ['run_id' => $run['id']]);
-            }
             }
             foreach ($this->store->all('recovery_observation_schedules') as $schedule) {
                 if ($schedule['next_due_at'] > $now) {
                     continue;
                 }
                 $entry = $this->store->find('recovery_entries', (string) $schedule['entry_id']);
-                if ($entry === null || in_array($entry['status'] ?? null, ['resolved', 'stopped'], true) || empty($entry['external_thread_id'])) {
+                if (null === $entry || in_array($entry['status'] ?? null, ['resolved', 'stopped'], true) || empty($entry['external_thread_id'])) {
                     $this->store->remove('recovery_observation_schedules', $schedule['id'], 'recovery.observation_schedule_removed');
                     continue;
                 }
-                $schedule['next_due_at'] = (new DateTimeImmutable($now))->modify('+5 seconds')->format(DATE_ATOM);
+                $schedule['next_due_at'] = (new \DateTimeImmutable($now))->modify('+5 seconds')->format(DATE_ATOM);
                 $this->store->save('recovery_observation_schedules', $schedule, 'recovery.observation_scheduled');
                 $this->store->enqueue('recovery.entry.observe', ['entry_id' => $entry['id']]);
             }
         });
-    }
-
-    /** @param array<string, mixed> $p @return array<string, mixed> */
-    private function listConnections(array $p, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $items = $this->store->all('connections');
-        usort($items, static fn (array $a, array $b): int => strcasecmp((string) $a['name'], (string) $b['name']));
-
-        return $this->store->page(array_map($this->publicRecord(...), $items), $p);
-    }
-
-    /** @param array<string, mixed> $body @return array<string, mixed> */
-    private function createConnection(array $body, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $url = $this->canonicalHttpsUrl((string) $body['canonical_url']);
-        $connection = $this->store->save('connections', [
-            'name' => trim((string) $body['name']),
-            'bridge_id' => $this->bridgeId((string) $body['bridge_id']),
-            'canonical_url' => $url,
-            'health' => 'unconfigured',
-            'auth_status' => 'missing',
-            'auth_epoch' => 0,
-            'auth_expires_at' => null,
-            'last_success_at' => null,
-            'capability_snapshot_id' => null,
-            'diagnostic' => null,
-        ], 't3_connection.created');
-
-        return $this->publicRecord($connection);
-    }
-
-    /** @return array<string, mixed> */
-    private function getConnection(string $id, Actor $actor): array
-    {
-        $actor->requireOwner();
-
-        return $this->publicRecord($this->record('connections', $id));
-    }
-
-    /** @param array<string, mixed> $body @return array<string, mixed> */
-    private function updateConnection(string $id, array $body, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $connection = $this->record('connections', $id);
-        $previousUrl = $connection['canonical_url'];
-        if (isset($body['name'])) {
-            $connection['name'] = trim((string) $body['name']);
-        }
-        if (isset($body['canonical_url'])) {
-            $connection['canonical_url'] = $this->canonicalHttpsUrl((string) $body['canonical_url']);
-        }
-        if ($connection['canonical_url'] !== $previousUrl) {
-            $connection['auth_status'] = 'missing';
-            $connection['auth_expires_at'] = null;
-            $connection['health'] = 'unconfigured';
-            $connection['capability_snapshot_id'] = null;
-            $connection['diagnostic'] = 'Die T3-Adresse wurde geändert. Eine neue OAuth-Anmeldung und der Abgleich offener Läufe sind erforderlich.';
-            unset($connection['credential_secret_ref'], $connection['oauth_client_id'], $connection['oauth_issuer']);
-            foreach ($this->store->all('runs') as $run) {
-                if ($this->runUsesConnection($run, $id) && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
-                    $run['state'] = 'reconciling';
-                    $run['status_reason'] = 'Die T3-Adresse wurde geändert. Der externe Ausgang muss abgeglichen werden.';
-                    $this->store->save('runs', $run, 'run.reconciliation_required');
-                    $this->store->enqueue('run.reconcile', ['run_id' => $run['id']]);
-                }
-            }
-        }
-
-        return $this->publicRecord($this->store->save('connections', $connection, 't3_connection.updated'));
-    }
-
-    /** @param array<string, mixed> $body @return array<string, mixed> */
-    private function checkConnection(string $id, array $body, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $connection = $this->record('connections', $id);
-        $check = $this->store->save('connection_checks', [
-            'connection_id' => $id,
-            'checked_at' => $this->store->now(),
-            'network' => 'not_checked',
-            'authentication' => 'not_checked',
-            'mcp_handshake' => 'not_checked',
-            'capabilities' => 'not_checked',
-            'diagnostic' => null,
-            'snapshot_id' => null,
-            'status' => 'queued',
-        ], 't3_connection.check_requested');
-        $this->store->enqueue('connection.check', ['check_id' => $check['id']]);
-
-        return ['action_id' => $check['id'], 'status' => 'accepted', 'action_url' => '/api/v1/connections/'.$id.'/check', 'resource' => ['type' => 'connection_check', 'id' => $check['id']], 'run_id' => null];
-    }
-
-    /** @return array<string, mixed> */
-    private function getConnectionCheck(string $id, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $this->record('connections', $id);
-        $checks = array_values(array_filter($this->store->all('connection_checks'), static fn (array $check): bool => $check['connection_id'] === $id));
-        usort($checks, static fn (array $a, array $b): int => strcmp((string) $b['created_at'], (string) $a['created_at']));
-
-        return $checks[0] ?? throw new Problem(404, 'resource_not_found', 'Es liegt noch keine Verbindungsprüfung vor.');
-    }
-
-    /** @return array<string, mixed> */
-    private function getCapabilities(string $id, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $connection = $this->record('connections', $id);
-        $snapshotId = $connection['capability_snapshot_id'] ?? null;
-        if (!is_string($snapshotId) || $snapshotId === '') {
-            throw new Problem(404, 'resource_not_found', 'Für diese T3-Verbindung liegt noch kein Fähigkeitssnapshot vor.');
-        }
-
-        return $this->record('capability_snapshots', $snapshotId);
-    }
-
-    /** @param array<string, mixed> $p @return array<string, mixed> */
-    private function listRemoteProjects(string $id, array $p, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $connection = $this->record('connections', $id);
-        $result = $this->bridge->projects($connection, $this->connectionToken($connection), isset($p['cursor']) ? (string) $p['cursor'] : null, min(100, max(1, (int) ($p['limit'] ?? 50))));
-        $items = $result['items'];
-        $page = $this->store->page($items, $p);
-        if (isset($result['next_cursor'])) {
-            $page['next_cursor'] = $result['next_cursor'];
-        }
-
-        return $page;
-    }
-
-    /** @param array<string, mixed> $body @return array<string, mixed> */
-    private function startOAuth(string $id, array $body, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $connection = $this->record('connections', $id);
-        $resourceUrl = rtrim($connection['canonical_url'], '/').'/mcp';
-        $callback = (string) ($body['redirect_uri'] ?? (rtrim((string) (getenv('FALKENWARTE_PUBLIC_URL') ?: 'https://localhost:8443'), '/').'/auth/t3/callback'));
-        if (!$this->isHttpsUrl($callback) && !preg_match('#^http://127\.0\.0\.1(?::[0-9]+)?/#', $callback)) {
-            throw new Problem(422, 'validation_failed', 'Der OAuth-Callback muss eine HTTPS-Adresse oder Loopback-Adresse verwenden.');
-        }
-        $state = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
-        $verifier = rtrim(strtr(base64_encode(random_bytes(48)), '+/', '-_'), '=');
-        $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
-        $registration = $this->oauth->begin((string) $connection['canonical_url'], $callback, $resourceUrl, $state, $challenge);
-        $verifierRef = 'oauth-verifier-'.$this->store->id();
-        $this->store->putSecret($verifierRef, $verifier);
-        $expiresAt = (new DateTimeImmutable('+10 minutes'))->setTimezone(new DateTimeZone('UTC'))->format(DATE_ATOM);
-        $this->store->save('oauth_flows', [
-            'connection_id' => $id,
-            'state_hash' => hash('sha256', $state),
-            'issuer' => $registration['issuer'],
-            'authorization_server' => $registration['authorization_server'],
-            'token_endpoint' => $registration['token_endpoint'],
-            'client_id' => $registration['client_id'],
-            'callback_url' => $callback,
-            'resource_url' => $resourceUrl,
-            'verifier_secret_ref' => $verifierRef,
-            'expires_at' => $expiresAt,
-            'consumed' => false,
-        ], 't3_oauth.started');
-        $connection['auth_status'] = 'pending';
-        $this->store->save('connections', $connection, 't3_connection.authorization_started');
-        return ['authorization_url' => $registration['authorization_url'], 'callback_url' => $callback, 'expires_at' => $expiresAt];
-    }
-
-    /** @param array<string, mixed> $p @return array<string, mixed> */
-    private function finishOAuth(array $p): array
-    {
-        $state = (string) ($p['state'] ?? '');
-        $flow = null;
-        foreach ($this->store->all('oauth_flows') as $candidate) {
-            if (hash_equals((string) $candidate['state_hash'], hash('sha256', $state))) {
-                $flow = $candidate;
-                break;
-            }
-        }
-        if ($flow === null || $flow['consumed'] || strtotime((string) $flow['expires_at']) <= time()) {
-            throw new Problem(400, 't3_oauth_state_invalid', 'Die T3-Anmeldung ist abgelaufen oder ihre Browserbestätigung passt nicht.');
-        }
-        if (isset($p['iss']) && rtrim((string) $p['iss'], '/') !== rtrim((string) $flow['issuer'], '/')) {
-            throw new Problem(400, 't3_oauth_issuer_mismatch', 'Der OAuth-Issuer stimmt nicht mit der entdeckten T3-Verbindung überein.');
-        }
-        $flow['consumed'] = true;
-        $this->store->save('oauth_flows', $flow, 't3_oauth.callback_received');
-        $connection = $this->record('connections', (string) $flow['connection_id']);
-        if (isset($p['error'])) {
-            $connection['auth_status'] = 'revoked';
-            $connection['diagnostic'] = mb_substr((string) ($p['error_description'] ?? $p['error']), 0, 500);
-            $this->store->save('connections', $connection, 't3_connection.authorization_failed');
-
-            return ['redirect' => $this->settingsRedirect($connection['id'], 'authorization_failed')];
-        }
-        $code = (string) ($p['code'] ?? '');
-        if ($code === '') {
-            throw new Problem(400, 't3_oauth_code_missing', 'T3 hat keinen Autorisierungscode zurückgegeben.');
-        }
-        $verifier = $this->store->secret((string) $flow['verifier_secret_ref']);
-        $token = $this->oauth->exchange((string) $flow['token_endpoint'], $code, (string) $flow['callback_url'], (string) $flow['client_id'], $verifier, (string) $flow['resource_url']);
-        if (!is_string($token['access_token'] ?? null) || $token['access_token'] === '') {
-            throw new Problem(502, 't3_oauth_invalid_response', 'T3 hat kein verwendbares Zugangstoken ausgegeben.');
-        }
-        $secretRef = (string) ($connection['credential_secret_ref'] ?? ('t3-credential-'.$connection['id']));
-        $this->store->putSecret($secretRef, $token['access_token']);
-        $connection['credential_secret_ref'] = $secretRef;
-        $connection['oauth_client_id'] = $flow['client_id'];
-        $connection['oauth_issuer'] = $flow['issuer'];
-        $connection['auth_epoch'] = (int) $connection['auth_epoch'] + 1;
-        $connection['auth_status'] = 'valid';
-        $connection['auth_expires_at'] = isset($token['expires_in']) ? (new DateTimeImmutable('+'.max(1, (int) $token['expires_in']).' seconds'))->format(DATE_ATOM) : null;
-        $connection['diagnostic'] = null;
-        $this->store->save('connections', $connection, 't3_connection.authorized');
-        foreach ($this->store->all('runs') as $run) {
-            if ($this->runUsesConnection($run, $connection['id']) && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
-                $run['state'] = 'reconciling';
-                $run['status_reason'] = 'Die T3-Autorisierung wurde erneuert. Der zuvor gestartete Auftrag wird im gespeicherten Kontext abgeglichen.';
-                $this->store->save('runs', $run, 'run.reconciliation_required');
-                $this->store->enqueue('run.reconcile', ['run_id' => $run['id']]);
-            }
-        }
-
-        return ['redirect' => $this->settingsRedirect($connection['id'], 'authorized')];
-    }
-
-    /** @return array<string, mixed> */
-    private function removeCredentials(string $id, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $connection = $this->record('connections', $id);
-        if (isset($connection['credential_secret_ref'])) {
-            $this->store->deleteSecret((string) $connection['credential_secret_ref']);
-        }
-        unset($connection['credential_secret_ref']);
-        $connection['auth_status'] = 'missing';
-        $connection['auth_expires_at'] = null;
-        $connection['diagnostic'] = 'Die lokale T3-Autorisierung wurde entfernt.';
-        $this->store->save('connections', $connection, 't3_connection.credentials_removed');
-        foreach ($this->store->all('runs') as $run) {
-            if ($this->runUsesConnection($run, $id) && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
-                $run['state'] = 'auth_blocked';
-                $run['status_reason'] = 'Für die Beobachtung oder Fortsetzung wird eine neue T3-Anmeldung benötigt.';
-                $this->store->save('runs', $run, 'run.auth_blocked');
-            }
-        }
-
-        return $this->publicRecord($connection);
-    }
-
-    /** @param array<string, mixed> $p @return array<string, mixed> */
-    private function listProfiles(array $p, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $items = $this->store->all('agent_profiles');
-        if (isset($p['enabled'])) {
-            $enabled = filter_var($p['enabled'], FILTER_VALIDATE_BOOLEAN);
-            $items = array_values(array_filter($items, static fn (array $item): bool => (bool) $item['enabled'] === $enabled));
-        }
-
-        return $this->store->page(array_map($this->publicRecord(...), $items), $p);
-    }
-
-    /** @return array<string, mixed> */
-    private function getProfile(string $id, Actor $actor): array
-    {
-        $actor->requireOwner();
-
-        return $this->publicRecord($this->record('agent_profiles', $id));
-    }
-
-    /** @param array<string, mixed> $body @return array<string, mixed> */
-    private function writeProfile(?string $id, array $body, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $connection = $this->record('connections', (string) $body['connection_id']);
-        $executionTarget = $body['execution_target'];
-        if (($executionTarget['mode'] ?? null) === 't3_reference_thread' && empty($executionTarget['reference_thread_id'])) {
-            throw new Problem(422, 'validation_failed', 'Ein T3-Referenzthread benötigt eine konkrete Thread-ID.');
-        }
-        if (($body['max_parallel_runs'] ?? 1) !== 1) {
-            throw new Problem(422, 'validation_failed', 'Ein Agentprofil darf im aktuellen Umfang höchstens einen Auftrag gleichzeitig starten.');
-        }
-        foreach (($body['allowed_project_ids'] ?? []) as $projectId) {
-            $project = $this->record('projects', (string) $projectId);
-            if (!empty($project['archived'])) {
-                throw new Problem(409, 'project_archived', 'Archivierte Projekte können keinem neuen Agentprofil zugeordnet werden.');
-            }
-        }
-        $profile = $id === null ? [] : $this->record('agent_profiles', $id);
-        $profile = array_replace($profile, $body, [
-            'max_parallel_runs' => 1,
-            'prompt_template' => (string) ($body['prompt_template'] ?? ($profile['prompt_template'] ?? '')),
-            'prompt_template_version' => (int) ($profile['prompt_template_version'] ?? 0) + (($id === null || ($body['prompt_template'] ?? '') !== ($profile['prompt_template'] ?? '')) ? 1 : 0),
-            'default_run_completion_policy' => $body['default_run_completion_policy'] ?? ($profile['default_run_completion_policy'] ?? $this->defaultRunPolicy()),
-            'configuration_valid' => $connection['auth_status'] === 'valid' && $connection['health'] !== 'incompatible',
-            'configuration_error' => $connection['auth_status'] !== 'valid' ? 'T3-Verbindung ist noch nicht autorisiert.' : ($connection['health'] === 'incompatible' ? 'T3 stellt die erforderlichen MCP-Fähigkeiten nicht bereit.' : null),
-        ]);
-        if ($id !== null && ($body['prompt_template'] ?? null) !== ($this->record('agent_profiles', $id)['prompt_template'] ?? null)) {
-            $profile['prompt_template_version'] = (int) ($this->record('agent_profiles', $id)['prompt_template_version'] ?? 0) + 1;
-        }
-        $saved = $this->store->save('agent_profiles', $profile, $id === null ? 'agent_profile.created' : 'agent_profile.updated');
-
-        return $this->publicRecord($saved);
     }
 
     /** @param array<string, mixed> $p @return array<string, mixed> */
@@ -517,6 +225,7 @@ final class RunHandler
             $items = array_values(array_filter($items, function (array $run) use ($actor): bool {
                 try {
                     $actor->requireProject((string) $run['project_id']);
+
                     return true;
                 } catch (Problem) {
                     return false;
@@ -525,7 +234,7 @@ final class RunHandler
         }
         foreach (['task_id', 'agent_profile_id', 'state'] as $filter) {
             if (isset($p[$filter])) {
-                $items = array_values(array_filter($items, static fn (array $run): bool => ($filter === 'agent_profile_id' ? ($run['snapshot']['agent_profile_id'] ?? null) : $run[$filter] ?? null) === $p[$filter]));
+                $items = array_values(array_filter($items, static fn (array $run): bool => ('agent_profile_id' === $filter ? ($run['snapshot']['agent_profile_id'] ?? null) : $run[$filter] ?? null) === $p[$filter]));
             }
         }
         usort($items, static fn (array $a, array $b): int => strcmp((string) $b['created_at'], (string) $a['created_at']));
@@ -554,19 +263,25 @@ final class RunHandler
         }
 
         return $this->store->atomic(function () use ($task, $body, $projectId): array {
-            $profile = $this->record('agent_profiles', (string) $body['agent_profile_id']);
+            if ($this->maintenanceMode()) {
+                throw new Problem(409, 'maintenance_mode', 'Der Wartungsmodus hält neue Agentenläufe vorübergehend an. Beobachtung und Wiederherstellung bleiben verfügbar.');
+            }
+            if (null !== $this->activeRecoveryGate()) {
+                throw new Problem(409, 'recovery_inventory_required', 'Nach der Wiederherstellung muss zuerst die externe T3-Inventur ausdrücklich abgeschlossen werden.');
+            }
+            $profile = $this->agentCatalog->profile((string) $body['agent_profile_id']);
             if (!$profile['enabled'] || !$profile['configuration_valid']) {
                 throw new Problem(409, 'agent_profile_unavailable', (string) ($profile['configuration_error'] ?? 'Das Agentprofil ist nicht startbereit.'));
             }
             if (!in_array($projectId, $profile['allowed_project_ids'], true)) {
                 throw new Problem(403, 'forbidden', 'Dieses Agentprofil ist für das Projekt nicht freigegeben.');
             }
-            $binding = $this->bindingForProject($projectId);
-            if ($binding === null) {
+            $binding = $this->agentCatalog->bindingForProject($projectId);
+            if (null === $binding) {
                 throw new Problem(409, 't3_project_unbound', 'Das Projekt ist noch keinem vorhandenen T3-Projekt zugeordnet.');
             }
-            $connection = $this->record('connections', (string) $binding['connection_id']);
-            if ($connection['auth_status'] !== 'valid' || $connection['health'] === 'incompatible') {
+            $connection = $this->agentCatalog->connection((string) $binding['connection_id']);
+            if ('valid' !== $connection['auth_status'] || 'incompatible' === $connection['health']) {
                 throw new Problem(409, 't3_connection_unavailable', 'Die T3-Verbindung ist nicht startbereit. Prüfe Verbindung und Anmeldung.');
             }
             if (($profile['connection_id'] ?? null) !== $connection['id']) {
@@ -582,7 +297,7 @@ final class RunHandler
             $workflowInstance = null;
             if (isset($body['workflow_instance_id'])) {
                 $workflowInstance = $this->record('workflow_instances', (string) $body['workflow_instance_id']);
-                if ($workflowInstance['task_id'] !== $task['id'] || $workflowInstance['project_id'] !== $projectId || $workflowInstance['state'] !== 'running' || $workflowInstance['current_stage_id'] !== $body['stage']) {
+                if ($workflowInstance['task_id'] !== $task['id'] || $workflowInstance['project_id'] !== $projectId || 'running' !== $workflowInstance['state'] || $workflowInstance['current_stage_id'] !== $body['stage']) {
                     throw new Problem(409, 'run_context_mismatch', 'Der Workflow-Auftrag gehört nicht zur aktuellen Phase dieser Aufgabe.');
                 }
             }
@@ -590,10 +305,10 @@ final class RunHandler
             $policy = $this->defaultRunPolicy();
             $workflowVersion = null;
             $routing = null;
-            if ($workflowInstance !== null) {
+            if (null !== $workflowInstance) {
                 $workflow = $this->workflowDefinition((string) $workflowInstance['workflow_id'], (int) $workflowInstance['definition_version']);
                 $stage = $this->stage($workflow, (string) $workflowInstance['current_stage_id']);
-                if ($stage['agent_profile_id'] !== null && $stage['agent_profile_id'] !== $profile['id']) {
+                if (null !== $stage['agent_profile_id'] && $stage['agent_profile_id'] !== $profile['id']) {
                     throw new Problem(409, 'run_context_mismatch', 'Das Agentprofil stimmt nicht mit der Version der aktiven Workflowphase überein.');
                 }
                 $this->assertConditions($stage['entry_conditions'] ?? [], $task, $workflowInstance);
@@ -602,7 +317,7 @@ final class RunHandler
             } else {
                 $routing = $this->store->find('task_routing_snapshots', (string) $task['id']);
                 if (!empty($task['workflow_label_id'])) {
-                    if ($routing === null) {
+                    if (null === $routing) {
                         throw new Problem(409, 'workflow_route_conflict', 'Die Aufgabe hat ein Workflowlabel, aber keine passende versionierte Route.');
                     }
                     $workflow = $this->workflowDefinition((string) $routing['workflow_id'], (int) $routing['workflow_definition_version']);
@@ -634,6 +349,7 @@ final class RunHandler
                 'prompt_template_version' => (int) $profile['prompt_template_version'],
                 'run_completion_policy' => $policy,
                 'execution_target' => $executionTarget,
+                'bridge_plugin_id' => $profile['bridge_plugin_id'] ?? null,
                 'classification_id' => $task['classification_id'] ?? null,
                 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $routing['routing_rules_version'] ?? $task['routing_rules_version'] ?? null,
@@ -674,7 +390,7 @@ final class RunHandler
                 'status_reason' => null,
                 '_dispatch_request' => null,
             ], 'run.queued');
-            if ($workflowInstance !== null) {
+            if (null !== $workflowInstance) {
                 $workflowInstance['run_ids'][] = $run['id'];
                 $this->store->save('workflow_instances', $workflowInstance, 'workflow.run_attached');
             }
@@ -766,10 +482,11 @@ final class RunHandler
         $digest = hash('sha256', json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         $reportId = (string) $body['report_id'];
         $prior = $this->store->find('run_reports', $reportId);
-        if ($prior !== null) {
+        if (null !== $prior) {
             if (($prior['_digest'] ?? null) !== $digest) {
                 throw new Problem(409, 'idempotency_conflict', 'Diese Report-ID wurde bereits mit anderem Inhalt verwendet.');
             }
+
             return $prior;
         }
         $isCurrent = (int) $body['task_revision'] === (int) $run['snapshot']['task_revision']
@@ -848,7 +565,13 @@ final class RunHandler
             $items = array_values(array_filter($items, static fn (array $item): bool => $item['project_id'] === $p['project_id']));
         } elseif (!$actor->owner) {
             $items = array_values(array_filter($items, function (array $item) use ($actor): bool {
-                try { $actor->requireProject((string) $item['project_id']); return true; } catch (Problem) { return false; }
+                try {
+                    $actor->requireProject((string) $item['project_id']);
+
+                    return true;
+                } catch (Problem) {
+                    return false;
+                }
             }));
         }
         foreach (['run_id', 'status'] as $filter) {
@@ -898,7 +621,7 @@ final class RunHandler
     {
         $actor->requireOwner();
         $approval = $this->record('approvals', $id);
-        if ($approval['status'] !== 'pending') {
+        if ('pending' !== $approval['status']) {
             throw new Problem(409, 'approval_not_pending', 'Diese Entscheidung wurde bereits aufgelöst.');
         }
         $run = $this->record('runs', (string) $approval['run_id']);
@@ -921,7 +644,7 @@ final class RunHandler
         $approval['reason'] = trim((string) $body['reason']);
         $approval = $this->store->save('approvals', $approval, 'approval.'.$approval['status']);
         $this->resolveAttention($run['task_id'], 'approval_pending');
-        if ($approval['status'] === 'approved') {
+        if ('approved' === $approval['status']) {
             $this->store->enqueue('run.reconcile', ['run_id' => $run['id']]);
         } else {
             $run['state'] = 'failed';
@@ -938,13 +661,19 @@ final class RunHandler
         $items = $this->store->all('workflows');
         if (isset($p['project_id'])) {
             $actor->requireProject((string) $p['project_id']);
-            $items = array_values(array_filter($items, static fn (array $item): bool => $item['project_id'] === $p['project_id'] || $item['project_id'] === null));
+            $items = array_values(array_filter($items, static fn (array $item): bool => $item['project_id'] === $p['project_id'] || null === $item['project_id']));
         } elseif (!$actor->owner) {
             $items = array_values(array_filter($items, function (array $item) use ($actor): bool {
-                if ($item['project_id'] === null) {
+                if (null === $item['project_id']) {
                     return true;
                 }
-                try { $actor->requireProject((string) $item['project_id']); return true; } catch (Problem) { return false; }
+                try {
+                    $actor->requireProject((string) $item['project_id']);
+
+                    return true;
+                } catch (Problem) {
+                    return false;
+                }
             }));
         }
         if (isset($p['enabled'])) {
@@ -961,20 +690,20 @@ final class RunHandler
     {
         $actor->requireOwner();
         $projectId = $body['project_id'] ?? null;
-        if ($projectId !== null) {
+        if (null !== $projectId) {
             $project = $this->record('projects', (string) $projectId);
             if (!empty($project['archived']) && !empty($body['enabled'])) {
                 throw new Problem(409, 'project_archived', 'Ein archiviertes Projekt kann keine aktive Workflowroute erhalten.');
             }
         }
         $this->validateWorkflowDefinition($body);
-        $existing = $id === null ? null : $this->record('workflows', $id);
-        if ($existing !== null && ($existing['project_id'] ?? null) !== $projectId) {
+        $existing = null === $id ? null : $this->record('workflows', $id);
+        if (null !== $existing && ($existing['project_id'] ?? null) !== $projectId) {
             throw new Problem(409, 'workflow_scope_immutable', 'Der Projektbereich eines Workflows bleibt nach dem Anlegen unverändert.');
         }
-        $definitionVersion = $existing === null ? 1 : (int) $existing['definition_version'] + 1;
+        $definitionVersion = null === $existing ? 1 : (int) $existing['definition_version'] + 1;
         $workflow = array_replace($existing ?? [], $body, ['definition_version' => $definitionVersion]);
-        $saved = $this->store->save('workflows', $workflow, $existing === null ? 'workflow.created' : 'workflow.definition_replaced');
+        $saved = $this->store->save('workflows', $workflow, null === $existing ? 'workflow.created' : 'workflow.definition_replaced');
         $this->store->save('workflow_versions', [
             'workflow_id' => $saved['id'], 'definition_version' => $definitionVersion,
             'project_id' => $saved['project_id'], 'name' => $saved['name'], 'preset_id' => $saved['preset_id'],
@@ -988,7 +717,7 @@ final class RunHandler
     private function getWorkflow(string $id, Actor $actor): array
     {
         $workflow = $this->record('workflows', $id);
-        if ($workflow['project_id'] !== null) {
+        if (null !== $workflow['project_id']) {
             $actor->requireProject((string) $workflow['project_id']);
         }
 
@@ -1006,7 +735,7 @@ final class RunHandler
                 break;
             }
         }
-        if ($record === null || $version < 1 || $version > (int) $workflow['definition_version']) {
+        if (null === $record || $version < 1 || $version > (int) $workflow['definition_version']) {
             throw new Problem(404, 'resource_not_found', 'Diese Workflowversion ist nicht vorhanden.');
         }
 
@@ -1016,65 +745,12 @@ final class RunHandler
     /** @param array<string, mixed> $body */
     private function validateWorkflowDefinition(array $body): void
     {
-        $stages = $body['stages'] ?? [];
-        $stageIds = [];
-        foreach ($stages as $stage) {
-            $stageId = (string) ($stage['id'] ?? '');
-            if ($stageId === '' || isset($stageIds[$stageId])) {
-                throw new Problem(422, 'workflow_definition_invalid', 'Phasen benötigen eindeutige IDs.');
-            }
-            $stageIds[$stageId] = $stage;
-            foreach (($stage['entry_conditions'] ?? []) as $condition) {
-                $this->validateCondition($condition);
-            }
-            foreach (($stage['run_completion_policy']['required_criterion_ids'] ?? []) as $criterionId) {
-                if ($criterionId === '') {
-                    throw new Problem(422, 'workflow_definition_invalid', 'Ein Phasenkriterium muss eine gültige Aufgabenreferenz besitzen.');
-                }
-            }
-            if (($stage['agent_profile_id'] ?? null) !== null) {
-                $this->record('agent_profiles', (string) $stage['agent_profile_id']);
-            }
-        }
-        if ($stages === []) {
-            throw new Problem(422, 'workflow_definition_invalid', 'Ein Workflow benötigt mindestens eine Phase.');
-        }
-        $transitions = [];
-        foreach (($body['transitions'] ?? []) as $transition) {
-            $from = (string) $transition['from_stage_id'];
-            $to = (string) $transition['to_stage_id'];
-            $on = (string) $transition['on'];
-            if (!isset($stageIds[$from], $stageIds[$to]) || ($from === $to && $on !== 'needs_changes')) {
-                throw new Problem(422, 'workflow_definition_invalid', 'Jeder Übergang muss auf vorhandene Phasen verweisen.');
-            }
-            $key = $from.'|'.$on;
-            if (isset($transitions[$key])) {
-                throw new Problem(422, 'workflow_definition_ambiguous', 'Für dieselbe Phase und dasselbe Ergebnis gibt es mehrere mögliche Übergänge.');
-            }
-            $transitions[$key] = true;
-            foreach (($transition['conditions'] ?? []) as $condition) {
-                $this->validateCondition($condition);
-            }
-        }
-        foreach (['max_repair_rounds', 'max_depth', 'max_parallel_runs', 'max_total_seconds'] as $limit) {
-            if (!isset($body['limits'][$limit])) {
-                throw new Problem(422, 'workflow_definition_invalid', 'Workflowgrenzen müssen vollständig angegeben sein.');
-            }
-        }
-        if ((int) $body['limits']['max_parallel_runs'] > 1) {
-            throw new Problem(422, 'workflow_definition_invalid', 'Im aktuellen Umfang ist höchstens ein aktiver Auftrag je T3-Projektbindung erlaubt.');
-        }
-    }
+        $this->workflowPolicy->validateDefinition($body);
 
-    /** @param array<string, mixed> $condition */
-    private function validateCondition(array $condition): void
-    {
-        $allowed = ['all_required_criteria_human_confirmed', 'required_evidence_reported', 'required_evidence_human_confirmed', 'human_approval_granted', 'review_report_accepted', 'run_succeeded', 'intake_ready', 'no_human_attention'];
-        if (!in_array($condition['type'] ?? null, $allowed, true)) {
-            throw new Problem(422, 'workflow_condition_invalid', 'Der Workflow verwendet eine nicht registrierte Bedingung.');
-        }
-        if (str_starts_with((string) $condition['type'], 'required_evidence_') && !isset($condition['evidence_kind'])) {
-            throw new Problem(422, 'workflow_condition_invalid', 'Die Bedingung benötigt eine Art des gemeldeten Nachweises.');
+        foreach (($body['stages'] ?? []) as $stage) {
+            if (($stage['agent_profile_id'] ?? null) !== null) {
+                $this->agentCatalog->profile((string) $stage['agent_profile_id']);
+            }
         }
     }
 
@@ -1088,16 +764,16 @@ final class RunHandler
         }
         $this->assertTaskCanStart($task);
         $routing = $this->store->find('task_routing_snapshots', $taskId);
-        if (!empty($task['workflow_label_id']) && ($routing === null
+        if (!empty($task['workflow_label_id']) && (null === $routing
             || $routing['workflow_id'] !== $body['workflow_id']
             || (int) $routing['workflow_definition_version'] !== (int) $body['definition_version'])) {
             throw new Problem(409, 'workflow_route_conflict', 'Der ausgewählte Workflow stimmt nicht mit der versionierten Aufgabenroute überein.');
         }
         $workflow = $this->workflowDefinition((string) $body['workflow_id'], (int) $body['definition_version']);
-        if (!$workflow['enabled'] || ($workflow['project_id'] !== null && $workflow['project_id'] !== $task['project_id'])) {
+        if (!$workflow['enabled'] || (null !== $workflow['project_id'] && $workflow['project_id'] !== $task['project_id'])) {
             throw new Problem(409, 'workflow_unavailable', 'Der Workflow ist deaktiviert oder gehört zu einem anderen Projekt.');
         }
-        if ($workflow['stages'] === []) {
+        if ([] === $workflow['stages']) {
             throw new Problem(409, 'workflow_definition_invalid', 'Der Workflow enthält keine startbare Phase.');
         }
         foreach ($this->store->all('workflow_instances', (string) $task['project_id']) as $instance) {
@@ -1113,7 +789,7 @@ final class RunHandler
             'state' => 'running', 'current_stage_id' => $firstStage['id'], 'run_ids' => [],
             'repair_round' => 0, 'pause_reason' => null, 'started_at' => $this->store->now(), 'deadline_at' => $this->deadline((int) $workflow['limits']['max_total_seconds']),
         ], 'workflow.started');
-        if ($firstStage['agent_profile_id'] !== null) {
+        if (null !== $firstStage['agent_profile_id']) {
             $this->store->enqueue('workflow.advance', ['instance_id' => $instance['id']]);
         }
 
@@ -1134,19 +810,21 @@ final class RunHandler
     {
         $instance = $this->record('workflow_instances', $id);
         $actor->requireProject((string) $instance['project_id']);
-        if ($body['action'] === 'pause') {
-            if ($instance['state'] !== 'running') {
+        if ('pause' === $body['action']) {
+            if ('running' !== $instance['state']) {
                 throw new Problem(409, 'workflow_transition_invalid', 'Nur ein laufender Workflow kann pausiert werden.');
             }
             $instance['state'] = 'paused';
             $instance['pause_reason'] = trim((string) $body['reason']);
+            unset($instance['_paused_for_maintenance']);
             $instance = $this->store->save('workflow_instances', $instance, 'workflow.paused');
-        } elseif ($body['action'] === 'resume') {
-            if ($instance['state'] !== 'paused') {
+        } elseif ('resume' === $body['action']) {
+            if ('paused' !== $instance['state']) {
                 throw new Problem(409, 'workflow_transition_invalid', 'Nur ein pausierter Workflow kann fortgesetzt werden.');
             }
             $instance['state'] = 'running';
             $instance['pause_reason'] = null;
+            unset($instance['_paused_for_maintenance']);
             $instance = $this->store->save('workflow_instances', $instance, 'workflow.resumed');
             $this->store->enqueue('workflow.advance', ['instance_id' => $id]);
         } else {
@@ -1158,7 +836,7 @@ final class RunHandler
             $instance = $this->store->save('workflow_instances', $instance, 'workflow.cancelled');
             foreach ($instance['run_ids'] as $runId) {
                 $run = $this->store->find('runs', (string) $runId);
-                if ($run !== null && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
+                if (null !== $run && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
                     $run['state'] = 'cancel_requested';
                     $run['status_reason'] = 'Der übergeordnete Workflow wurde abgebrochen.';
                     $this->store->save('runs', $run, 'run.cancel_requested');
@@ -1178,7 +856,13 @@ final class RunHandler
             $actor->requireProject((string) $p['project_id']);
         } elseif (!$actor->owner) {
             $items = array_values(array_filter($items, function (array $instance) use ($actor): bool {
-                try { $actor->requireProject((string) $instance['project_id']); return true; } catch (Problem) { return false; }
+                try {
+                    $actor->requireProject((string) $instance['project_id']);
+
+                    return true;
+                } catch (Problem) {
+                    return false;
+                }
             }));
         }
         if (isset($p['task_id'])) {
@@ -1197,7 +881,13 @@ final class RunHandler
             $actor->requireProject((string) $p['project_id']);
         } elseif (!$actor->owner) {
             $items = array_values(array_filter($items, function (array $item) use ($actor): bool {
-                try { $actor->requireProject((string) $item['project_id']); return true; } catch (Problem) { return false; }
+                try {
+                    $actor->requireProject((string) $item['project_id']);
+
+                    return true;
+                } catch (Problem) {
+                    return false;
+                }
             }));
         }
         if (isset($p['enabled'])) {
@@ -1228,18 +918,18 @@ final class RunHandler
         $workflow = $this->record('workflows', (string) $body['workflow_id']);
         $workflowVersion = (int) ($body['definition_version'] ?? $workflow['definition_version']);
         $workflow = $this->workflowDefinition((string) $body['workflow_id'], $workflowVersion);
-        if (!$workflow['enabled'] || ($workflow['project_id'] !== null && $workflow['project_id'] !== $project['id'])) {
+        if (!$workflow['enabled'] || (null !== $workflow['project_id'] && $workflow['project_id'] !== $project['id'])) {
             throw new Problem(409, 'workflow_unavailable', 'Der Trigger verweist auf keinen aktiven Workflow dieses Projekts.');
         }
         $spec = $body['spec'];
         if (($spec['type'] ?? null) === 'plugin') {
             $plugin = $this->store->find('plugins', (string) $spec['plugin_id']);
-            if ($plugin === null || $plugin['state'] !== 'enabled') {
+            if (null === $plugin || 'enabled' !== $plugin['state']) {
                 throw new Problem(409, 'capability_unavailable', 'Der konfigurierte Plugin-Trigger ist nicht aktiviert.');
             }
         }
-        $trigger = $id === null ? [] : $this->record('triggers', $id);
-        if ($id !== null && $trigger['project_id'] !== $body['project_id']) {
+        $trigger = null === $id ? [] : $this->record('triggers', $id);
+        if (null !== $id && $trigger['project_id'] !== $body['project_id']) {
             throw new Problem(409, 'trigger_scope_immutable', 'Der Projektbereich eines Triggers bleibt nach dem Anlegen unverändert.');
         }
         $trigger = array_replace($trigger, $body, [
@@ -1247,9 +937,9 @@ final class RunHandler
             'next_due_at' => ($body['enabled'] && ($spec['type'] ?? null) === 'schedule') ? $this->nextDue($spec['schedule']) : null,
             'last_fired_at' => $trigger['last_fired_at'] ?? null,
             'last_error' => null,
-            'last_event_id' => $trigger['last_event_id'] ?? null,
+            'last_event_id' => $trigger['last_event_id'] ?? $this->latestEventId(),
         ]);
-        $saved = $this->store->save('triggers', $trigger, $id === null ? 'workflow.trigger_created' : 'workflow.trigger_updated');
+        $saved = $this->store->save('triggers', $trigger, null === $id ? 'workflow.trigger_created' : 'workflow.trigger_updated');
 
         return $saved;
     }
@@ -1270,13 +960,30 @@ final class RunHandler
             return;
         }
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
-        if ($attempt['external_thread_id'] !== null) {
+        if (null !== $attempt['external_thread_id']) {
             $this->observe($runId);
 
             return;
         }
-        $connection = $this->record('connections', (string) $attempt['connection_id']);
-        if ($connection['auth_status'] !== 'valid') {
+        if (null !== $this->activeRecoveryGate()) {
+            $run['state'] = 'reconciling';
+            $run['status_reason'] = 'Die Wiederherstellungsinventur sperrt neue T3-Starts, bis der externe Ausgang ausdrücklich geklärt ist.';
+            $this->store->save('runs', $run, 'run.recovery_inventory_manual_review_required');
+            $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
+            $this->removeObservationSchedule($runId);
+
+            return;
+        }
+        if ($this->maintenanceMode()) {
+            $run['_maintenance_deferred'] = true;
+            $run['status_reason'] = 'Der Wartungsmodus hält neue T3-Starts an. Der gespeicherte Auftrag bleibt für die spätere Fortsetzung erhalten.';
+            $this->store->save('runs', $run, 'run.maintenance_dispatch_deferred');
+            $this->removeObservationSchedule($runId);
+
+            return;
+        }
+        $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
+        if ('valid' !== $connection['auth_status']) {
             $run['state'] = 'auth_blocked';
             $run['status_reason'] = 'Die T3-Anmeldung fehlt oder ist abgelaufen. Melde dich erneut bei T3 an.';
             $this->store->save('runs', $run, 'run.auth_blocked');
@@ -1284,7 +991,7 @@ final class RunHandler
 
             return;
         }
-        if ($attempt['external_thread_id'] === null && (int) ($attempt['auth_epoch'] ?? 0) !== (int) $connection['auth_epoch']) {
+        if ((int) ($attempt['auth_epoch'] ?? 0) !== (int) $connection['auth_epoch']) {
             $run['state'] = 'reconciling';
             $run['status_reason'] = 'Seit der ungeklärten T3-Annahme wurde eine neue OAuth-Session eingerichtet. Der alte Start darf nicht in einem anderen T3-Namespace wiederholt werden.';
             $this->store->save('runs', $run, 'run.new_auth_namespace_reconciliation_required');
@@ -1293,10 +1000,10 @@ final class RunHandler
 
             return;
         }
-        $binding = $this->record('project_bindings', (string) $run['snapshot']['project_binding_id']);
+        $binding = $this->agentCatalog->binding((string) $run['snapshot']['project_binding_id']);
         $payload = $run['_dispatch_request'] ?? null;
         if (!is_array($payload)) {
-            $profile = $this->record('agent_profiles', (string) $run['snapshot']['agent_profile_id']);
+            $profile = $this->agentCatalog->profile((string) $run['snapshot']['agent_profile_id']);
             $message = $this->dispatchMessage($task, $profile, $run);
             $payload = [
                 'projectId' => (string) $binding['external_project_id'],
@@ -1310,6 +1017,7 @@ final class RunHandler
                     $reference = $this->bridge->readThread($connection, $this->connectionToken($connection), (string) $target['reference_thread_id']);
                 } catch (T3BridgeException $exception) {
                     $this->setRunBridgeFailure($run, $exception);
+
                     return;
                 }
                 if (($reference['projectId'] ?? $reference['project_id'] ?? null) !== $binding['external_project_id']) {
@@ -1317,6 +1025,7 @@ final class RunHandler
                     $run['status_reason'] = 'Der Referenzthread gehört nicht zum gebundenen T3-Projekt.';
                     $this->store->save('runs', $run, 'run.reference_target_invalid');
                     $this->openAttention($run['task_id'], $run['project_id'], 'reference_target_invalid', 'owner');
+
                     return;
                 }
                 $modelSelection = $reference['modelSelection'] ?? null;
@@ -1325,6 +1034,7 @@ final class RunHandler
                     $run['status_reason'] = 'T3 liefert für den Referenzthread keine belegten Provider- und Modellreferenzen.';
                     $this->store->save('runs', $run, 'run.reference_target_invalid');
                     $this->openAttention($run['task_id'], $run['project_id'], 'reference_target_invalid', 'owner');
+
                     return;
                 }
                 $payload['modelSelection'] = ['instanceId' => $modelSelection['instanceId'], 'model' => $modelSelection['model']];
@@ -1341,6 +1051,14 @@ final class RunHandler
         $run['state'] = 'dispatching';
         $this->store->save('runs', $run, 'run.dispatch_attempted');
 
+        if ($this->maintenanceMode()) {
+            $run['_maintenance_deferred'] = true;
+            $run['status_reason'] = 'Der Wartungsmodus hält neue T3-Starts an. Der gespeicherte Auftrag bleibt für die spätere Fortsetzung erhalten.';
+            $this->store->save('runs', $run, 'run.maintenance_dispatch_deferred');
+
+            return;
+        }
+
         try {
             $result = $this->bridge->launch($connection, $this->connectionToken($connection), $payload);
         } catch (T3BridgeException $exception) {
@@ -1348,10 +1066,11 @@ final class RunHandler
             if (!$exception->authenticationFailure) {
                 throw $exception;
             }
+
             return;
         }
         $threadId = $result['threadId'] ?? $result['thread_id'] ?? null;
-        if (!is_string($threadId) || $threadId === '') {
+        if (!is_string($threadId) || '' === $threadId) {
             $run['state'] = 'reconciling';
             $run['status_reason'] = 'T3 hat die Anfrage ohne gültige Threadreferenz beantwortet.';
             $this->store->save('runs', $run, 'run.launch_response_invalid');
@@ -1385,30 +1104,42 @@ final class RunHandler
             return;
         }
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
-        if ($attempt['external_thread_id'] === null) {
+        if (null === $attempt['external_thread_id']) {
             if (in_array($run['state'], ['queued', 'dispatching'], true)) {
                 return;
             }
-            $connection = $this->record('connections', (string) $attempt['connection_id']);
+            $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
+            if (null !== $this->activeRecoveryGate()) {
+                $run['state'] = 'reconciling';
+                $run['status_reason'] = 'Der externe Start besitzt keine bestätigte T3-Threadreferenz. Die Wiederherstellungsinventur benötigt eine ausdrückliche Eigentümerklärung.';
+                $this->store->save('runs', $run, 'run.recovery_inventory_manual_review_required');
+                $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
+                $this->removeObservationSchedule($runId);
+
+                return;
+            }
             if ((int) ($attempt['auth_epoch'] ?? 0) !== (int) $connection['auth_epoch']) {
                 $run['state'] = 'reconciling';
                 $run['status_reason'] = 'Seit der ungeklärten T3-Annahme wurde eine neue OAuth-Session eingerichtet. Der alte Start darf nicht in einem anderen T3-Namespace wiederholt werden.';
                 $this->store->save('runs', $run, 'run.new_auth_namespace_reconciliation_required');
                 $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
                 $this->removeObservationSchedule($runId);
+
                 return;
             }
             $this->store->enqueue('run.dispatch', ['run_id' => $runId]);
+
             return;
         }
-        $connection = $this->record('connections', (string) $attempt['connection_id']);
+        $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
         try {
-            $remote = $this->bridge->readThread($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id']);
+            $remote = $this->bridge->readThread($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], isset($attempt['external_dispatch_run_id']) ? (string) $attempt['external_dispatch_run_id'] : null);
         } catch (T3BridgeException $exception) {
             $this->setRunBridgeFailure($run, $exception);
             if (!$exception->authenticationFailure) {
                 throw $exception;
             }
+
             return;
         }
         $attempt['remote_status'] = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
@@ -1431,6 +1162,14 @@ final class RunHandler
             $pending = $remote['pendingInput'] ?? $remote['pending_input'] ?? null;
             if (is_array($pending)) {
                 $run['pending_input'] = $this->normalizePendingInput($pending);
+                $address = $run['pending_input'];
+                if ('permission' === $address['kind']) {
+                    $this->openAttention($run['task_id'], $run['project_id'], 'run_permission_in_t3', 'owner');
+                } elseif ('owner' === $address['addressed_to']) {
+                    $this->openAttention($run['task_id'], $run['project_id'], 'run_input_owner', 'owner');
+                } else {
+                    $this->openAttention($run['task_id'], $run['project_id'], 'agent_question', 'requester');
+                }
             }
             $run['status_reason'] = 'T3 wartet auf eine Eingabe. Berechtigungsanfragen müssen in T3 beantwortet werden.';
         } elseif (in_array($status, ['completed', 'succeeded', 'success'], true)) {
@@ -1459,14 +1198,20 @@ final class RunHandler
             $run['status_reason'] = 'T3 meldet einen unbekannten Zustand. Der Ausführungsplatz bleibt bis zur Klärung belegt.';
             $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
         }
+        if ('waiting_input' !== $run['state']) {
+            foreach (['run_permission_in_t3', 'run_input_owner', 'agent_question'] as $reason) {
+                $this->resolveAttention($run['task_id'], $reason);
+            }
+        }
+        $this->resolveAttention($run['task_id'], 'auth_required');
         $run = $this->store->save('runs', $run, 'run.state_observed');
-        if ($run['state'] === 'verifying') {
+        if ('verifying' === $run['state']) {
             $this->completePhaseIfAllowed($run);
-        } elseif (in_array($run['state'], ['failed', 'cancelled'], true) && $run['workflow_instance_id'] !== null) {
+        } elseif (in_array($run['state'], ['failed', 'cancelled'], true) && null !== $run['workflow_instance_id']) {
             $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
         }
         $current = $this->store->find('runs', $runId);
-        if ($current !== null && in_array($current['state'], self::ACTIVE_RUN_STATES, true)) {
+        if (null !== $current && in_array($current['state'], self::ACTIVE_RUN_STATES, true)) {
             $this->scheduleObservation($runId);
         } else {
             $this->removeObservationSchedule($runId);
@@ -1477,14 +1222,15 @@ final class RunHandler
     {
         $run = $this->record('runs', $runId);
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
-        if ($attempt['external_thread_id'] === null || $attempt['external_dispatch_run_id'] === null) {
+        if (null === $attempt['external_thread_id'] || null === $attempt['external_dispatch_run_id']) {
             $run['state'] = 'reconciling';
             $run['status_reason'] = 'Der externe Startausgang ist ungeklärt. Abbruchwirkung wird vor einer Freigabe des Ausführungsplatzes abgeglichen.';
             $this->store->save('runs', $run, 'run.cancel_reconciliation_required');
             $this->store->enqueue('run.reconcile', ['run_id' => $runId]);
+
             return;
         }
-        $connection = $this->record('connections', (string) $attempt['connection_id']);
+        $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
         try {
             $this->bridge->interrupt($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], (string) $attempt['external_dispatch_run_id']);
         } catch (T3BridgeException $exception) {
@@ -1492,6 +1238,7 @@ final class RunHandler
             if (!$exception->authenticationFailure) {
                 throw $exception;
             }
+
             return;
         }
         $this->store->enqueue('run.observe', ['run_id' => $runId]);
@@ -1501,11 +1248,11 @@ final class RunHandler
     {
         $run = $this->record('runs', $runId);
         $input = $this->record('run_inputs', $inputId);
-        if ($input['run_id'] !== $runId || $input['status'] !== 'queued') {
+        if ($input['run_id'] !== $runId || 'queued' !== $input['status']) {
             return;
         }
         $attempt = $this->attempt($run, (int) $input['attempt_no']);
-        if ($attempt['external_thread_id'] === null) {
+        if (null === $attempt['external_thread_id']) {
             $run['state'] = 'reconciling';
             $run['status_reason'] = 'Die T3-Threadzuordnung fehlt. Die Eingabe bleibt dauerhaft gespeichert.';
             $this->store->save('runs', $run, 'run.input_reconciliation_required');
@@ -1516,7 +1263,7 @@ final class RunHandler
         $message = ($body['type'] ?? null) === 'message'
             ? (string) $body['message']
             : "Antwort auf die Falkenwarte-Rückfrage:\n".implode("\n", array_map(static fn (array $answer): string => $answer['question_id'].': '.implode('; ', $answer['values']), $body['answers']));
-        $connection = $this->record('connections', (string) $attempt['connection_id']);
+        $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
         try {
             $result = $this->bridge->send($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], $message, (string) $input['id']);
         } catch (T3BridgeException $exception) {
@@ -1524,16 +1271,26 @@ final class RunHandler
             if (!$exception->authenticationFailure) {
                 throw $exception;
             }
+
             return;
         }
         $input['status'] = 'sent';
         $input['sent_at'] = $this->store->now();
         $input['external_message_id'] = $result['messageId'] ?? $result['message_id'] ?? null;
         $this->store->save('run_inputs', $input, 'run.input_sent');
+        if (isset($result['runId']) || isset($result['run_id'])) {
+            $attempt['external_dispatch_run_id'] = (string) ($result['runId'] ?? $result['run_id']);
+            $attempts = $run['attempts'];
+            $attempts[$attempt['attempt_no'] - 1] = $attempt;
+            $run['attempts'] = $attempts;
+        }
         $run['state'] = 'running';
         $run['pending_input'] = null;
         $run['status_reason'] = null;
         $this->store->save('runs', $run, 'run.input_delivered');
+        foreach (['run_permission_in_t3', 'run_input_owner', 'agent_question'] as $reason) {
+            $this->resolveAttention($run['task_id'], $reason);
+        }
         $this->store->enqueue('run.observe', ['run_id' => $runId]);
     }
 
@@ -1541,76 +1298,63 @@ final class RunHandler
     {
         $report = $this->currentReport($run, false);
         $policy = $run['snapshot']['run_completion_policy'] ?? $this->defaultRunPolicy();
-        if ($report === null) {
-            $run['status_reason'] = 'T3 hat den Lauf beendet, aber es liegt noch keine passende Agentmeldung vor.';
-            $this->store->save('runs', $run, 'run.report_required');
-            return;
-        }
-        if (!$report['accepted_for_reconciliation'] || $report['outcome'] !== 'reported_success') {
+        $task = $this->record('tasks', (string) $run['task_id']);
+        $evidence = array_values(array_filter(
+            $this->store->all('evidence', (string) $run['project_id']),
+            static fn (array $item): bool => $item['run_id'] === $run['id']
+                && (int) $item['attempt_no'] === (int) $run['attempt_no']
+                && (int) $item['task_revision'] === (int) $run['snapshot']['task_revision'],
+        ));
+        $approvals = $this->store->all('approvals', (string) $run['project_id']);
+        $decision = $this->completionEvaluator->evaluate(
+            $policy,
+            true,
+            $report,
+            $evidence,
+            $approvals,
+            array_values($task['criteria'] ?? []),
+            (string) $run['id'],
+            (int) $run['attempt_no'],
+            (int) $run['snapshot']['task_revision'],
+            is_string($run['result_digest'] ?? null) ? $run['result_digest'] : null,
+        );
+
+        if ('failed' === $decision->outcome) {
             $run['state'] = 'failed';
-            $run['status_reason'] = $report['accepted_for_reconciliation'] ? 'Die Agentmeldung verlangt Änderungen oder meldet einen Fehler.' : 'Die Ergebnismeldung ist überholt.';
+            $run['status_reason'] = $decision->reason;
+            $attempt = $this->attempt($run, (int) $run['attempt_no']);
+            $attempt['ended_at'] ??= $this->store->now();
+            $attempts = $run['attempts'];
+            $attempts[$attempt['attempt_no'] - 1] = $attempt;
+            $run['attempts'] = $attempts;
             $this->store->save('runs', $run, 'run.phase_not_succeeded');
-            if ($run['workflow_instance_id'] !== null) {
+            if (null !== $run['workflow_instance_id']) {
                 $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
             }
+
             return;
         }
-        $evidence = array_values(array_filter($this->store->all('evidence', (string) $run['project_id']), static fn (array $item): bool => $item['run_id'] === $run['id'] && $item['attempt_no'] === $run['attempt_no'] && $item['task_revision'] === $run['snapshot']['task_revision']));
-        foreach (($policy['required_evidence_kinds'] ?? []) as $kind) {
-            if (!array_filter($evidence, static fn (array $item): bool => $item['kind'] === $kind && $item['review_status'] !== 'rejected')) {
-                $run['state'] = 'verifying';
-                $run['status_reason'] = 'Für diese Phase fehlt ein erforderlicher gemeldeter Nachweis ('.$kind.').';
-                $this->store->save('runs', $run, 'run.phase_evidence_pending');
-                $this->openAttention($run['task_id'], $run['project_id'], 'phase_evidence_pending', 'owner');
-                return;
+
+        if (!$decision->isSucceeded()) {
+            $run['state'] = 'verifying';
+            $run['status_reason'] = $decision->reason;
+            $event = match ($decision->outcome) {
+                'report_pending' => 'run.report_required',
+                'external_pending' => 'run.external_result_pending',
+                'evidence_pending' => 'run.phase_evidence_pending',
+                'evidence_review_pending' => 'run.phase_review_pending',
+                'approval_pending' => 'run.phase_decision_pending',
+                'criteria_pending' => 'run.phase_criteria_pending',
+                default => 'run.phase_verification_pending',
+            };
+            $this->store->save('runs', $run, $event);
+            if (null !== $decision->attentionCode) {
+                $this->openAttention($run['task_id'], $run['project_id'], $decision->attentionCode, 'owner');
             }
+
+            return;
         }
-        if (!empty($policy['require_human_confirmed_evidence'])) {
-            foreach ($evidence as $item) {
-                if ($item['review_status'] === 'rejected') {
-                    continue;
-                }
-                if ($item['review_status'] !== 'human_confirmed') {
-                    $run['state'] = 'verifying';
-                    $run['status_reason'] = 'Die Phasenpolicy verlangt eine menschliche Bestätigung der gemeldeten Belege.';
-                    $this->store->save('runs', $run, 'run.phase_review_pending');
-                    $this->openAttention($run['task_id'], $run['project_id'], 'phase_review_pending', 'owner');
-                    return;
-                }
-            }
-        }
-        if (!empty($policy['require_human_phase_decision'])) {
-            $approved = false;
-            foreach ($this->store->all('approvals', (string) $run['project_id']) as $approval) {
-                if ($approval['run_id'] === $run['id'] && $approval['attempt_no'] === $run['attempt_no'] && $approval['status'] === 'approved' && hash_equals((string) $approval['result_digest'], (string) $run['result_digest'])) {
-                    $approved = true;
-                    break;
-                }
-            }
-            if (!$approved) {
-                $run['state'] = 'verifying';
-                $run['status_reason'] = 'Die aktuelle Phasenpolicy verlangt eine Eigentümerentscheidung über diesen Ergebnisstand.';
-                $this->store->save('runs', $run, 'run.phase_decision_pending');
-                $this->openAttention($run['task_id'], $run['project_id'], 'approval_pending', 'owner');
-                return;
-            }
-        }
-        foreach (($policy['required_criterion_ids'] ?? []) as $criterionId) {
-            $criterion = null;
-            foreach (($this->record('tasks', (string) $run['task_id'])['criteria'] ?? []) as $candidate) {
-                if ($candidate['id'] === $criterionId) {
-                    $criterion = $candidate;
-                    break;
-                }
-            }
-            if ($criterion === null || ($criterion['review_status'] ?? null) !== 'human_confirmed') {
-                $run['state'] = 'verifying';
-                $run['status_reason'] = 'Die Phasenpolicy verlangt die menschliche Bestätigung ausgewählter Akzeptanzkriterien.';
-                $this->store->save('runs', $run, 'run.phase_criteria_pending');
-                $this->openAttention($run['task_id'], $run['project_id'], 'phase_criteria_pending', 'owner');
-                return;
-            }
-        }
+
         $run['state'] = 'succeeded';
         $run['status_reason'] = null;
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
@@ -1619,10 +1363,10 @@ final class RunHandler
         $attempts[$attempt['attempt_no'] - 1] = $attempt;
         $run['attempts'] = $attempts;
         $run = $this->store->save('runs', $run, 'run.phase_succeeded');
-        foreach (['phase_evidence_pending', 'phase_review_pending', 'phase_decision_pending', 'phase_criteria_pending', 'reconciliation_required'] as $reason) {
+        foreach (['phase_evidence_pending', 'phase_review_pending', 'phase_decision_pending', 'phase_criteria_pending', 'approval_pending', 'reconciliation_required', 'run_permission_in_t3', 'run_input_owner', 'agent_question'] as $reason) {
             $this->resolveAttention($run['task_id'], $reason);
         }
-        if ($run['workflow_instance_id'] !== null) {
+        if (null !== $run['workflow_instance_id']) {
             $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
         }
     }
@@ -1638,137 +1382,19 @@ final class RunHandler
         }
     }
 
-    /** @return array<string, mixed> */
-    private function getBinding(string $projectId, Actor $actor): array
-    {
-        $actor->requireProject($projectId);
-        $this->record('projects', $projectId);
-        $binding = $this->bindingForProject($projectId);
-        if ($binding === null) {
-            throw new Problem(404, 'resource_not_found', 'Für dieses Projekt ist noch kein T3-Projekt gebunden.');
-        }
-
-        return $binding;
-    }
-
-    /** @param array<string, mixed> $body @return array<string, mixed> */
-    private function setBinding(string $projectId, array $body, Actor $actor): array
-    {
-        $actor->requireOwner();
-        $project = $this->record('projects', $projectId);
-        if (!empty($project['archived'])) {
-            throw new Problem(409, 'project_archived', 'Ein archiviertes Projekt kann kein neues T3-Binding erhalten.');
-        }
-        $connection = $this->record('connections', (string) $body['connection_id']);
-        if ($connection['auth_status'] !== 'valid' || $connection['health'] === 'incompatible') {
-            throw new Problem(409, 't3_connection_unavailable', 'Die T3-Verbindung muss zuerst erfolgreich geprüft und autorisiert werden.');
-        }
-        $existing = $this->bindingForProject($projectId);
-        $bindingRecord = [
-            'project_id' => $projectId,
-            'connection_id' => $connection['id'],
-            'external_project_id' => trim((string) $body['external_project_id']),
-            'active' => true,
-            'max_active_runs' => 1,
-        ];
-        if ($existing !== null) {
-            $bindingRecord['id'] = $existing['id'];
-        }
-        $binding = $this->store->save('project_bindings', $bindingRecord, $existing === null ? 'project.t3_binding_created' : 'project.t3_binding_changed');
-        $project['active_binding_id'] = $binding['id'];
-        $this->store->save('projects', $project, 'project.t3_binding_updated');
-        if ($existing !== null && ($existing['connection_id'] !== $connection['id'] || $existing['external_project_id'] !== $binding['external_project_id'])) {
-            foreach ($this->store->all('runs') as $run) {
-                if (($run['snapshot']['project_binding_id'] ?? null) === $existing['id'] && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
-                    $run['state'] = 'reconciling';
-                    $run['status_reason'] = 'Das aktive T3-Binding wurde geändert. Der zuvor eingefrorene Auftrag muss abgeglichen werden.';
-                    $this->store->save('runs', $run, 'run.reconciliation_required');
-                    $this->store->enqueue('run.reconcile', ['run_id' => $run['id']]);
-                }
-            }
-        }
-
-        return $binding;
-    }
-
-    /** @param array<string, mixed> $payload */
-    private function performConnectionCheck(string $checkId): void
-    {
-        $check = $this->record('connection_checks', $checkId);
-        $connection = $this->record('connections', (string) $check['connection_id']);
-        $check['checked_at'] = $this->store->now();
-        if ($connection['auth_status'] !== 'valid') {
-            $check['network'] = 'not_checked';
-            $check['authentication'] = 'failed';
-            $check['mcp_handshake'] = 'not_checked';
-            $check['capabilities'] = 'not_checked';
-            $check['diagnostic'] = 'Für die T3-Prüfung fehlt eine gültige OAuth-Anmeldung.';
-            $check['status'] = 'failed';
-            $connection['health'] = 'degraded';
-            $connection['diagnostic'] = $check['diagnostic'];
-            $this->store->save('connection_checks', $check, 't3_connection.check_failed');
-            $this->store->save('connections', $connection, 't3_connection.degraded');
-            return;
-        }
-        try {
-            $result = $this->bridge->capabilities($connection, $this->connectionToken($connection));
-            $snapshot = $this->store->save('capability_snapshots', [
-                'connection_id' => $connection['id'], 'snapshot_id' => $this->store->id(),
-                'observed_at' => $this->store->now(), 'server_version' => $result['server_version'],
-                'protocol_version' => $result['protocol_version'], 'tools' => $result['tools'],
-                'providers' => $result['providers'], 'supported_actions' => $result['supported_actions'],
-                'compatible' => $result['compatible'], 'incompatibilities' => $result['compatible'] ? [] : ['Erforderliche Launch-, Read- oder Interrupt-Fähigkeit fehlt.'],
-            ], 't3_capabilities.observed');
-            $connection['health'] = $result['compatible'] ? 'ready' : 'incompatible';
-            $connection['last_success_at'] = $this->store->now();
-            $connection['capability_snapshot_id'] = $snapshot['id'];
-            $connection['diagnostic'] = $result['compatible'] ? null : implode(' ', $snapshot['incompatibilities']);
-            $check['network'] = 'ok';
-            $check['authentication'] = 'ok';
-            $check['mcp_handshake'] = 'ok';
-            $check['capabilities'] = $result['compatible'] ? 'ok' : 'failed';
-            $check['diagnostic'] = $connection['diagnostic'];
-            $check['snapshot_id'] = $snapshot['id'];
-            $check['status'] = $result['compatible'] ? 'succeeded' : 'failed';
-            $this->store->save('connections', $connection, $result['compatible'] ? 't3_connection.ready' : 't3_connection.incompatible');
-            $this->store->save('connection_checks', $check, $result['compatible'] ? 't3_connection.check_succeeded' : 't3_connection.check_failed');
-            foreach ($this->store->all('agent_profiles') as $profile) {
-                if ($profile['connection_id'] === $connection['id']) {
-                    $profile['configuration_valid'] = $result['compatible'];
-                    $profile['configuration_error'] = $result['compatible'] ? null : $connection['diagnostic'];
-                    $this->store->save('agent_profiles', $profile, 'agent_profile.configuration_refreshed');
-                }
-            }
-        } catch (T3BridgeException $exception) {
-            $connection['health'] = $exception->authenticationFailure ? 'degraded' : 'unreachable';
-            $connection['diagnostic'] = $exception->getMessage();
-            $check['network'] = $exception->authenticationFailure ? 'ok' : 'failed';
-            $check['authentication'] = $exception->authenticationFailure ? 'failed' : 'not_checked';
-            $check['mcp_handshake'] = 'failed';
-            $check['capabilities'] = 'not_checked';
-            $check['diagnostic'] = $exception->getMessage();
-            $check['status'] = 'failed';
-            if ($exception->authenticationFailure) {
-                $connection['auth_status'] = 'expired';
-            }
-            $this->store->save('connections', $connection, 't3_connection.check_failed');
-            $this->store->save('connection_checks', $check, 't3_connection.check_failed');
-        }
-    }
-
     /** @param array<string, mixed> $p @return array<string, mixed> */
     private function getHandoff(string $taskId, array $p, Actor $actor): array
     {
         $task = $this->record('tasks', $taskId);
         $actor->requireProject((string) $task['project_id']);
         $run = isset($p['source_run_id']) ? $this->store->find('runs', (string) $p['source_run_id']) : null;
-        $evidence = array_values(array_filter($this->store->all('evidence', (string) $task['project_id']), static fn (array $item): bool => $item['task_id'] === $taskId && $item['review_status'] !== 'rejected'));
+        $evidence = array_values(array_filter($this->store->all('evidence', (string) $task['project_id']), static fn (array $item): bool => $item['task_id'] === $taskId && 'rejected' !== $item['review_status']));
         $collections = array_values(array_filter($this->store->all('link_collections', (string) $task['project_id']), static fn (array $collection): bool => $collection['task_id'] === $taskId));
 
         return [
             'task' => $task,
             'source_run_id' => $run['id'] ?? null,
-            'open_questions' => $run === null ? [] : ($this->currentReport($run, false)['_open_questions'] ?? []),
+            'open_questions' => null === $run ? [] : ($this->currentReport($run, false)['_open_questions'] ?? []),
             'context_summary' => trim((string) $task['title']."\n\n".(string) $task['description']),
             'reported_evidence_ids' => array_column($evidence, 'id'),
             'link_collections' => $collections,
@@ -1806,13 +1432,13 @@ final class RunHandler
                     'external_run_id' => $attempt['external_dispatch_run_id'] ?? null,
                     'entry_kind' => 'known_run', 'status' => 'pending', 'disposition' => null, 'reason' => null,
                 ], 'recovery.known_run_added');
-                if (is_string($attempt['external_thread_id'] ?? null) && $attempt['external_thread_id'] !== '') {
+                if (is_string($attempt['external_thread_id'] ?? null) && '' !== $attempt['external_thread_id']) {
                     $this->store->enqueue('run.reconcile', ['run_id' => $run['id']]);
                 } else {
                     $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
                 }
             }
-            foreach ($this->store->all('project_bindings') as $binding) {
+            foreach ($this->agentCatalog->activeBindings() as $binding) {
                 if (!$binding['active']) {
                     continue;
                 }
@@ -1831,7 +1457,7 @@ final class RunHandler
     {
         $actor->requireOwner();
         $gate = $this->activeRecoveryGate();
-        if ($gate === null) {
+        if (null === $gate) {
             return ['status' => 'clear', 'entries' => []];
         }
         $entries = array_values(array_filter($this->store->all('recovery_entries'), static fn (array $entry): bool => $entry['gate_id'] === $gate['id']));
@@ -1844,14 +1470,14 @@ final class RunHandler
     {
         $actor->requireOwner();
         $gate = $this->activeRecoveryGate();
-        if ($gate === null) {
+        if (null === $gate) {
             throw new Problem(409, 'recovery_not_active', 'Es ist keine Wiederherstellungsinventur offen.');
         }
-        if ($body['action'] === 'register_external_start') {
+        if ('register_external_start' === $body['action']) {
             $start = $body['external_start'];
             $project = $this->record('projects', (string) $start['project_id']);
-            $binding = $this->bindingForProject((string) $project['id']);
-            if ($binding === null || $binding['connection_id'] !== $start['connection_id'] || $binding['external_project_id'] !== $start['external_project_id']) {
+            $binding = $this->agentCatalog->bindingForProject((string) $project['id']);
+            if (null === $binding || $binding['connection_id'] !== $start['connection_id'] || $binding['external_project_id'] !== $start['external_project_id']) {
                 throw new Problem(409, 'run_context_mismatch', 'Der registrierte T3-Lauf passt nicht zum aktiven Projektbinding.');
             }
             $entry = $this->store->save('recovery_entries', [
@@ -1860,16 +1486,16 @@ final class RunHandler
                 'external_run_id' => $start['run_id'] ?? null, 'entry_kind' => 'registered_external_start',
                 'status' => 'pending', 'disposition' => null, 'reason' => trim((string) ($body['reason'] ?? '')),
             ], 'recovery.external_start_registered');
-            if (is_string($entry['external_thread_id']) && $entry['external_thread_id'] !== '') {
+            if (is_string($entry['external_thread_id']) && '' !== $entry['external_thread_id']) {
                 $this->store->enqueue('recovery.entry.observe', ['entry_id' => $entry['id']]);
             }
-        } elseif ($body['action'] === 'resolve_entry') {
+        } elseif ('resolve_entry' === $body['action']) {
             $entry = $this->record('recovery_entries', (string) $body['entry_id']);
             if ($entry['gate_id'] !== $gate['id']) {
                 throw new Problem(404, 'resource_not_found', 'Der Eintrag gehört nicht zur offenen Wiederherstellungsinventur.');
             }
             $disposition = (string) $body['disposition'];
-            if ($entry['entry_kind'] === 'known_run') {
+            if ('known_run' === $entry['entry_kind']) {
                 if (!in_array($disposition, ['confirmed_stopped_in_t3', 'confirmed_not_started'], true)) {
                     throw new Problem(422, 'validation_failed', 'Ein bekannter Lauf darf nur nach bestätigtem T3-Stopp oder bestätigtem Nichtstart aufgelöst werden.');
                 }
@@ -1877,15 +1503,15 @@ final class RunHandler
                 if (in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
                     throw new Problem(409, 'run_still_active', 'Der bekannte Lauf muss zuerst über T3 abgeglichen und beendet werden.');
                 }
-            } elseif ($entry['entry_kind'] === 'unlisted_external_activity') {
-                if ($disposition !== 'reviewed_no_additional_runs') {
+            } elseif ('unlisted_external_activity' === $entry['entry_kind']) {
+                if ('reviewed_no_additional_runs' !== $disposition) {
                     throw new Problem(422, 'validation_failed', 'Der Inventurhinweis kann nur nach manueller Prüfung der T3-Projektaktivität bestätigt werden.');
                 }
             } else {
                 if (!in_array($disposition, ['confirmed_stopped_in_t3', 'confirmed_not_started'], true)) {
                     throw new Problem(422, 'validation_failed', 'Ein registrierter externer Lauf benötigt eine bestätigte Klärung in T3.');
                 }
-                if ($entry['status'] !== 'stopped') {
+                if ('stopped' !== $entry['status']) {
                     throw new Problem(409, 'run_still_active', 'Der registrierte T3-Lauf wurde noch nicht als beendet beobachtet.');
                 }
             }
@@ -1895,9 +1521,9 @@ final class RunHandler
             $entry['resolved_by'] = $actor->ref();
             $entry['resolved_at'] = $this->store->now();
             $this->store->save('recovery_entries', $entry, 'recovery.entry_resolved');
-        } elseif ($body['action'] === 'confirm_inventory') {
+        } elseif ('confirm_inventory' === $body['action']) {
             $entries = array_values(array_filter($this->store->all('recovery_entries'), static fn (array $entry): bool => $entry['gate_id'] === $gate['id']));
-            if (array_filter($entries, static fn (array $entry): bool => $entry['status'] !== 'resolved')) {
+            if (array_filter($entries, static fn (array $entry): bool => 'resolved' !== $entry['status'])) {
                 throw new Problem(409, 'recovery_inventory_incomplete', 'Alle bekannten Läufe und Hinweise auf unbekannte T3-Aktivität müssen zuerst geklärt werden.');
             }
             $gate['status'] = 'released';
@@ -1907,9 +1533,9 @@ final class RunHandler
             $gate['resolution_reason'] = trim((string) $body['reason']);
             $this->store->save('recovery_gates', $gate, 'recovery.inventory_released');
             foreach ($this->store->all('recovery_entries') as $entry) {
-                if ($entry['gate_id'] === $gate['id'] && $entry['entry_kind'] === 'known_run' && is_string($entry['run_id'] ?? null)) {
+                if ($entry['gate_id'] === $gate['id'] && 'known_run' === $entry['entry_kind'] && is_string($entry['run_id'] ?? null)) {
                     $run = $this->store->find('runs', $entry['run_id']);
-                    if ($run !== null) {
+                    if (null !== $run) {
                         $this->resolveAttention((string) $run['task_id'], 'reconciliation_required');
                     }
                 }
@@ -1922,18 +1548,19 @@ final class RunHandler
     private function observeRecoveryEntry(string $entryId): void
     {
         $entry = $this->record('recovery_entries', $entryId);
-        if ($entry['status'] === 'resolved' || !isset($entry['external_thread_id'])) {
+        if ('resolved' === $entry['status'] || !isset($entry['external_thread_id'])) {
             return;
         }
-        $connection = $this->record('connections', (string) $entry['connection_id']);
+        $connection = $this->agentCatalog->connection((string) $entry['connection_id']);
         try {
-            $remote = $this->bridge->readThread($connection, $this->connectionToken($connection), (string) $entry['external_thread_id']);
+            $remote = $this->bridge->readThread($connection, $this->connectionToken($connection), (string) $entry['external_thread_id'], isset($entry['external_run_id']) ? (string) $entry['external_run_id'] : null);
         } catch (T3BridgeException $exception) {
             $entry['last_error'] = $exception->getMessage();
             $this->store->save('recovery_entries', $entry, 'recovery.entry_observation_failed');
             if (!$exception->authenticationFailure) {
                 throw $exception;
             }
+
             return;
         }
         $remoteStatus = strtolower((string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown'));
@@ -1945,7 +1572,7 @@ final class RunHandler
             $entry['status'] = 'pending';
         }
         $this->store->save('recovery_entries', $entry, 'recovery.external_activity_observed');
-        if ($entry['status'] === 'pending') {
+        if ('pending' === $entry['status']) {
             $this->scheduleRecoveryObservation($entryId);
         }
     }
@@ -1953,74 +1580,85 @@ final class RunHandler
     private function advanceWorkflow(string $instanceId): void
     {
         $instance = $this->record('workflow_instances', $instanceId);
-        if ($instance['state'] !== 'running' || strtotime((string) $instance['deadline_at']) <= time()) {
-            if ($instance['state'] === 'running') {
+        if ('running' === $instance['state'] && $this->maintenanceMode()) {
+            $instance['state'] = 'paused';
+            $instance['pause_reason'] = 'Der Wartungsmodus hält neue Workflowphasen an. Laufbeobachtung und Wiederherstellung bleiben verfügbar.';
+            $instance['_paused_for_maintenance'] = true;
+            $this->store->save('workflow_instances', $instance, 'workflow.maintenance_paused');
+
+            return;
+        }
+        if ('running' !== $instance['state'] || strtotime((string) $instance['deadline_at']) <= time()) {
+            if ('running' === $instance['state']) {
                 $instance['state'] = 'paused';
                 $instance['pause_reason'] = 'Die konfigurierte maximale Workflowdauer wurde erreicht.';
                 $this->store->save('workflow_instances', $instance, 'workflow.duration_limit_reached');
                 $this->openAttention($instance['task_id'], $instance['project_id'], 'workflow_duration_limit', 'owner');
             }
+
             return;
         }
         $workflow = $instance['definition_snapshot'] ?? $this->workflowDefinition((string) $instance['workflow_id'], (int) $instance['definition_version']);
         $task = $this->record('tasks', (string) $instance['task_id']);
-        $runs = array_values(array_filter(array_map(fn (string $id): ?array => $this->store->find('runs', $id), $instance['run_ids']), static fn (?array $run): bool => $run !== null));
+        $runs = array_values(array_filter(array_map(fn (string $id): ?array => $this->store->find('runs', $id), $instance['run_ids']), static fn (?array $run): bool => null !== $run));
         $active = array_filter($runs, static fn (array $run): bool => in_array($run['state'], self::ACTIVE_RUN_STATES, true));
-        if ($active !== []) {
+        if ([] !== $active) {
             return;
         }
-        $latest = $runs === [] ? null : $runs[array_key_last($runs)];
+        $latest = [] === $runs ? null : $runs[array_key_last($runs)];
         $stage = $this->stage($workflow, (string) $instance['current_stage_id']);
-        if ($latest === null) {
+        if (null === $latest) {
             $this->assertConditions($stage['entry_conditions'] ?? [], $task, $instance);
-            if ($stage['agent_profile_id'] === null) {
+            if (null === $stage['agent_profile_id']) {
                 $this->pauseWorkflow($instance, 'Für die erste Phase ist kein Agentprofil gesetzt.');
+
                 return;
             }
             $this->queueWorkflowStageRun($instance, $task, $workflow, $stage);
+
             return;
         }
         $report = $this->currentReport($latest, false);
         $outcome = match (true) {
-            $latest['state'] === 'succeeded' => 'accepted',
-            $report !== null => (string) $report['outcome'],
-            $latest['state'] === 'failed' => 'failed',
-            $latest['state'] === 'cancelled' => 'blocked',
+            'succeeded' === $latest['state'] => 'accepted',
+            null !== $report => (string) $report['outcome'],
+            'failed' === $latest['state'] => 'failed',
+            'cancelled' === $latest['state'] => 'blocked',
             default => null,
         };
-        if ($outcome === null) {
+        if (null === $outcome) {
             $this->pauseWorkflow($instance, 'Der letzte Phasenlauf benötigt eine menschliche Klärung.');
+
             return;
         }
-        if ($outcome === 'needs_changes') {
+        if ('needs_changes' === $outcome) {
             ++$instance['repair_round'];
             if ($instance['repair_round'] > (int) $workflow['limits']['max_repair_rounds']) {
                 $this->pauseWorkflow($instance, 'Die konfigurierte Zahl der Reparaturrunden ist erreicht.');
                 $this->openAttention($task['id'], $task['project_id'], 'workflow_repair_limit', 'owner');
+
                 return;
             }
         }
-        $transition = null;
-        foreach ($workflow['transitions'] as $candidate) {
-            if ($candidate['from_stage_id'] !== $instance['current_stage_id'] || $candidate['on'] !== $outcome) {
-                continue;
-            }
-            if ($this->conditionsSatisfied($candidate['conditions'] ?? [], $task, $instance)) {
-                $transition = $candidate;
-                break;
-            }
-        }
-        if ($transition === null) {
-            if ($latest['state'] === 'succeeded' && $outcome === 'accepted') {
+        $transition = $this->workflowPolicy->selectTransition(
+            $workflow['transitions'],
+            (string) $instance['current_stage_id'],
+            $outcome,
+            fn (array $conditions): bool => $this->conditionsSatisfied($conditions, $task, $instance),
+        );
+        if (null === $transition) {
+            if ('succeeded' === $latest['state']) {
                 $instance['state'] = 'succeeded';
                 $instance['current_stage_id'] = null;
                 $instance['pause_reason'] = null;
                 $this->store->save('workflow_instances', $instance, 'workflow.succeeded');
                 $this->resolveAttention($task['id'], 'workflow_repair_limit');
+
                 return;
             }
             $this->pauseWorkflow($instance, 'Für das gemeldete Phasenergebnis ist keine passende Übergangsregel konfiguriert.');
             $this->openAttention($task['id'], $task['project_id'], 'workflow_transition_required', 'owner');
+
             return;
         }
         $nextStage = $this->stage($workflow, (string) $transition['to_stage_id']);
@@ -2029,10 +1667,12 @@ final class RunHandler
         } catch (Problem $problem) {
             $this->pauseWorkflow($instance, $problem->getMessage());
             $this->openAttention($task['id'], $task['project_id'], 'workflow_entry_condition_unmet', 'owner');
+
             return;
         }
-        if ($nextStage['agent_profile_id'] === null) {
+        if (null === $nextStage['agent_profile_id']) {
             $this->pauseWorkflow($instance, 'Die nächste Phase benötigt ein Agentprofil oder eine menschliche Ausführung.');
+
             return;
         }
         $instance['current_stage_id'] = $nextStage['id'];
@@ -2045,33 +1685,44 @@ final class RunHandler
 
     private function queueWorkflowStageRun(array $instance, array $task, array $workflow, array $stage): void
     {
-        if (!empty($task['human_attention']['required']) || $this->activeRecoveryGate() !== null) {
-            $this->pauseWorkflow($instance, $this->activeRecoveryGate() !== null
-                ? 'Nach der Wiederherstellung muss die externe T3-Inventur abgeschlossen werden.'
-                : 'Für diese Aufgabe ist noch eine menschliche Entscheidung offen.');
+        if ($this->maintenanceMode()) {
+            $instance['_paused_for_maintenance'] = true;
+            $this->pauseWorkflow($instance, 'Der Wartungsmodus hält neue Workflowphasen vorübergehend an.');
+
             return;
         }
-        $profile = $this->record('agent_profiles', (string) $stage['agent_profile_id']);
+        if (!empty($task['human_attention']['required']) || null !== $this->activeRecoveryGate()) {
+            $this->pauseWorkflow($instance, null !== $this->activeRecoveryGate()
+                ? 'Nach der Wiederherstellung muss die externe T3-Inventur abgeschlossen werden.'
+                : 'Für diese Aufgabe ist noch eine menschliche Entscheidung offen.');
+
+            return;
+        }
+        $profile = $this->agentCatalog->profile((string) $stage['agent_profile_id']);
         if (!$profile['enabled'] || !$profile['configuration_valid']) {
             $this->pauseWorkflow($instance, 'Das Agentprofil dieser Phase ist nicht startbereit.');
             $this->openAttention($task['id'], $task['project_id'], 'workflow_profile_unavailable', 'owner');
+
             return;
         }
-        $binding = $this->bindingForProject((string) $task['project_id']);
-        if ($binding === null || $binding['connection_id'] !== $profile['connection_id']) {
+        $binding = $this->agentCatalog->bindingForProject((string) $task['project_id']);
+        if (null === $binding || $binding['connection_id'] !== $profile['connection_id']) {
             $this->pauseWorkflow($instance, 'T3-Projektbindung und Agentprofil sind nicht passend konfiguriert.');
             $this->openAttention($task['id'], $task['project_id'], 'workflow_profile_unavailable', 'owner');
+
             return;
         }
-        $connection = $this->record('connections', (string) $binding['connection_id']);
-        if ($connection['auth_status'] !== 'valid' || $connection['health'] === 'incompatible') {
+        $connection = $this->agentCatalog->connection((string) $binding['connection_id']);
+        if ('valid' !== $connection['auth_status'] || 'incompatible' === $connection['health']) {
             $this->pauseWorkflow($instance, 'Die T3-Verbindung dieser Phase ist nicht startbereit.');
             $this->openAttention($task['id'], $task['project_id'], 'auth_required', 'owner');
+
             return;
         }
         foreach ($this->store->all('runs') as $existing) {
             if (($existing['snapshot']['project_binding_id'] ?? null) === $binding['id'] && in_array($existing['state'], self::ACTIVE_RUN_STATES, true)) {
                 $this->pauseWorkflow($instance, 'Für dieses T3-Projekt ist ein anderer Lauf aktiv oder ungeklärt.');
+
                 return;
             }
         }
@@ -2086,6 +1737,7 @@ final class RunHandler
                 'project_binding_id' => $binding['id'], 'workflow_version' => (int) $workflow['definition_version'],
                 'prompt_template_version' => (int) $profile['prompt_template_version'],
                 'run_completion_policy' => $stage['run_completion_policy'], 'execution_target' => $profile['execution_target'],
+                'bridge_plugin_id' => $profile['bridge_plugin_id'] ?? null,
                 'classification_id' => $task['classification_id'] ?? null, 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $task['routing_rules_version'] ?? null,
             ],
@@ -2116,7 +1768,7 @@ final class RunHandler
     private function fireTrigger(string $triggerId, array $payload = []): void
     {
         $trigger = $this->record('triggers', $triggerId);
-        if (!$trigger['enabled'] || $this->activeRecoveryGate() !== null) {
+        if (!$trigger['enabled'] || null !== $this->activeRecoveryGate() || $this->maintenanceMode()) {
             return;
         }
         $project = $this->record('projects', (string) $trigger['project_id']);
@@ -2124,30 +1776,32 @@ final class RunHandler
             $trigger['last_error'] = 'Archiviertes Projekt kann keine neuen automatischen Läufe starten.';
             $trigger['enabled'] = false;
             $this->store->save('triggers', $trigger, 'workflow.trigger_disabled_for_archived_project');
+
             return;
         }
-        if ($trigger['spec']['type'] === 'plugin') {
+        if ('plugin' === $trigger['spec']['type']) {
             $trigger['last_error'] = 'Plugin-Trigger werden erst ausgeführt, wenn das aktivierte Plugin einen registrierten Trigger-Handler bereitstellt.';
             $this->store->save('triggers', $trigger, 'workflow.trigger_handler_unavailable');
+
             return;
         }
         $tasks = [];
-        if ($trigger['task_id'] !== null) {
+        if (null !== $trigger['task_id']) {
             $task = $this->store->find('tasks', (string) $trigger['task_id']);
-            if ($task !== null) {
+            if (null !== $task) {
                 $tasks[] = $task;
             }
-        } elseif ($trigger['spec']['type'] === 'domain_event' && isset($payload['task_id'])) {
+        } elseif ('domain_event' === $trigger['spec']['type'] && isset($payload['task_id'])) {
             $task = $this->store->find('tasks', (string) $payload['task_id']);
-            if ($task !== null && $task['project_id'] === $project['id']) {
+            if (null !== $task && $task['project_id'] === $project['id']) {
                 $tasks[] = $task;
             }
-        } elseif ($trigger['spec']['type'] === 'domain_event' && isset($trigger['spec']['task_status_id'])) {
+        } elseif ('domain_event' === $trigger['spec']['type'] && isset($trigger['spec']['task_status_id'])) {
             $tasks = array_values(array_filter($this->store->all('tasks', (string) $project['id']), static fn (array $task): bool => $task['status_id'] === $trigger['spec']['task_status_id']));
         }
         $started = 0;
         foreach ($tasks as $task) {
-            if ($trigger['spec']['type'] === 'domain_event' && isset($payload['event_type']) && $payload['event_type'] !== $trigger['spec']['event_type']) {
+            if ('domain_event' === $trigger['spec']['type'] && isset($payload['event_type']) && $payload['event_type'] !== $trigger['spec']['event_type']) {
                 continue;
             }
             try {
@@ -2160,7 +1814,7 @@ final class RunHandler
                 $trigger['last_error'] = mb_substr($problem->getMessage(), 0, 500);
             }
         }
-        if ($started === 0 && $trigger['last_error'] === null && $trigger['spec']['type'] === 'manual') {
+        if (0 === $started && null === $trigger['last_error'] && 'manual' === $trigger['spec']['type']) {
             $trigger['last_error'] = 'Der manuelle Trigger benötigt eine konkrete Aufgabe.';
         }
         $trigger['last_fired_at'] = $this->store->now();
@@ -2176,12 +1830,12 @@ final class RunHandler
                 break;
             }
         }
-        $nextDue = (new DateTimeImmutable($this->store->now()))->modify('+5 seconds')->format(DATE_ATOM);
+        $nextDue = (new \DateTimeImmutable($this->store->now()))->modify('+5 seconds')->format(DATE_ATOM);
         $record = [
             'run_id' => $runId,
             'next_due_at' => $nextDue,
         ];
-        if ($schedule !== null) {
+        if (null !== $schedule) {
             $record['id'] = $schedule['id'];
         }
         $this->store->save('run_observation_schedules', $record, 'run.observation_scheduled');
@@ -2207,9 +1861,9 @@ final class RunHandler
         }
         $record = [
             'entry_id' => $entryId,
-            'next_due_at' => (new DateTimeImmutable($this->store->now()))->modify('+5 seconds')->format(DATE_ATOM),
+            'next_due_at' => (new \DateTimeImmutable($this->store->now()))->modify('+5 seconds')->format(DATE_ATOM),
         ];
-        if ($schedule !== null) {
+        if (null !== $schedule) {
             $record['id'] = $schedule['id'];
         }
         $this->store->save('recovery_observation_schedules', $record, 'recovery.observation_scheduled');
@@ -2224,7 +1878,7 @@ final class RunHandler
     private function pathId(array $parameters, string $name): string
     {
         $id = $parameters[$name] ?? null;
-        if (!is_string($id) || $id === '') {
+        if (!is_string($id) || '' === $id) {
             throw new Problem(422, 'validation_failed', 'Der Ressourcenbezeichner fehlt.');
         }
 
@@ -2234,7 +1888,7 @@ final class RunHandler
     private function jobId(array $payload, string $name): string
     {
         $id = $payload[$name] ?? null;
-        if (!is_string($id) || $id === '') {
+        if (!is_string($id) || '' === $id) {
             throw new Problem(422, 'invalid_job', 'Der dauerhafte Auftrag enthält keine Ressourcenkennung.');
         }
 
@@ -2246,84 +1900,32 @@ final class RunHandler
         return $this->store->redact($record);
     }
 
-    private function canonicalHttpsUrl(string $url): string
-    {
-        $url = rtrim(trim($url), '/');
-        $parts = parse_url($url);
-        $isSecure = ($parts['scheme'] ?? null) === 'https';
-        $isTestMock = getenv('APP_ENV') === 'test' && ($parts['scheme'] ?? null) === 'http' && ($parts['host'] ?? null) === 't3-mock';
-        if ((!$isSecure && !$isTestMock) || !isset($parts['host']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
-            throw new Problem(422, 'validation_failed', 'Die T3-Adresse muss eine kanonische HTTPS-URL ohne Zugangsdaten oder Query sein.');
-        }
-
-        return $url;
-    }
-
-    private function isHttpsUrl(string $url): bool
-    {
-        return parse_url($url, PHP_URL_SCHEME) === 'https' && is_string(parse_url($url, PHP_URL_HOST));
-    }
-
-    private function settingsRedirect(string $connectionId, string $status): string
-    {
-        return '/agents?connection='.rawurlencode($connectionId).'&authorization='.rawurlencode($status);
-    }
-
     private function connectionToken(array $connection): string
     {
-        $reference = $connection['credential_secret_ref'] ?? null;
-        if (!is_string($reference) || $reference === '') {
-            throw new T3BridgeException('Für die T3-Verbindung ist keine OAuth-Autorisierung gespeichert.', true);
-        }
-        try {
-            return $this->store->secret($reference);
-        } catch (Throwable $exception) {
-            throw new T3BridgeException('Das lokal gespeicherte T3-Credential ist nicht verfügbar.', true, $exception);
-        }
-    }
-
-    private function bindingForProject(string $projectId): ?array
-    {
-        $project = $this->store->find('projects', $projectId);
-        if (is_string($project['active_binding_id'] ?? null)) {
-            $binding = $this->store->find('project_bindings', $project['active_binding_id']);
-            if ($binding !== null && !empty($binding['active'])) {
-                return $binding;
-            }
-        }
-        foreach ($this->store->all('project_bindings', $projectId) as $binding) {
-            if (!empty($binding['active'])) {
-                return $binding;
-            }
+        $token = $this->agentCatalog->accessToken((string) $connection['id']);
+        if (!is_string($token) || '' === $token) {
+            throw new T3BridgeException('Das lokal gespeicherte T3-Credential ist nicht verfügbar.', true);
         }
 
-        return null;
-    }
-
-    private function runUsesConnection(array $run, string $connectionId): bool
-    {
-        foreach (($run['attempts'] ?? []) as $attempt) {
-            if (($attempt['connection_id'] ?? null) === $connectionId) {
-                return true;
-            }
-        }
-
-        return false;
+        return $token;
     }
 
     private function assertCapabilities(array $connection, array $required): void
     {
         $snapshotId = $connection['capability_snapshot_id'] ?? null;
-        $snapshot = is_string($snapshotId) ? $this->store->find('capability_snapshots', $snapshotId) : null;
+        $snapshot = is_string($snapshotId) ? $this->agentCatalog->capabilitySnapshot($snapshotId) : null;
         $tools = $snapshot['tools'] ?? [];
         $missing = array_values(array_diff($required, $tools));
-        if ($snapshot === null || !$snapshot['compatible'] || $missing !== []) {
+        if (null === $snapshot || !$snapshot['compatible'] || [] !== $missing) {
             throw new Problem(409, 'capability_unavailable', 'Die letzte T3-Prüfung bestätigt nicht alle für diesen Auftrag benötigten Fähigkeiten.');
         }
     }
 
     private function assertTaskCanStart(array $task): void
     {
+        if ($this->maintenanceMode()) {
+            throw new Problem(409, 'maintenance_mode', 'Der Wartungsmodus hält neue Agentenläufe und Workflows vorübergehend an. Beobachtung und Wiederherstellung bleiben verfügbar.');
+        }
         $project = $this->record('projects', (string) $task['project_id']);
         if (!empty($project['archived'])) {
             throw new Problem(409, 'project_archived', 'In einem archivierten Projekt kann kein neuer Auftrag gestartet werden.');
@@ -2345,9 +1947,16 @@ final class RunHandler
                 throw new Problem(409, 'human_attention_required', 'Für diese Aufgabe ist zuerst eine offene menschliche Entscheidung aufzulösen.');
             }
         }
-        if ($this->activeRecoveryGate() !== null) {
+        if (null !== $this->activeRecoveryGate()) {
             throw new Problem(409, 'recovery_inventory_required', 'Nach der Wiederherstellung muss zuerst die externe T3-Inventur ausdrücklich abgeschlossen werden.');
         }
+    }
+
+    private function maintenanceMode(): bool
+    {
+        $settings = $this->store->find('settings', '00000000-0000-4000-8000-000000000001');
+
+        return null !== $settings && !empty($settings['maintenance_mode']);
     }
 
     private function activeRecoveryGate(): ?array
@@ -2358,16 +1967,18 @@ final class RunHandler
         return $gates[0] ?? null;
     }
 
-    private function bridgeId(string $bridgeId): string
+    private function latestEventId(): ?string
     {
-        if ($bridgeId !== self::T3_BRIDGE_ID) {
-            throw new Problem(422, 'validation_failed', 'Die angeforderte T3-Bridge-Version wird nicht unterstützt.');
+        $events = $this->store->all('events');
+        if ([] === $events) {
+            return null;
         }
+        $latest = $events[array_key_last($events)];
+        $id = $latest['event_id'] ?? $latest['id'] ?? null;
 
-        return $bridgeId;
+        return is_string($id) ? $id : null;
     }
 
-    /** @param array<string, mixed> $workflow */
     private function workflowDefinition(string $workflowId, int $version): array
     {
         $workflow = $this->record('workflows', $workflowId);
@@ -2436,7 +2047,7 @@ final class RunHandler
     {
         foreach (array_reverse($run['report_ids'] ?? []) as $reportId) {
             $report = $this->store->find('run_reports', (string) $reportId);
-            if ($report !== null && (int) $report['attempt_no'] === (int) $run['attempt_no'] && (int) $report['task_revision'] === (int) $run['snapshot']['task_revision']) {
+            if (null !== $report && (int) $report['attempt_no'] === (int) $run['attempt_no'] && (int) $report['task_revision'] === (int) $run['snapshot']['task_revision']) {
                 return $report;
             }
         }
@@ -2483,11 +2094,11 @@ final class RunHandler
             $taskApprovals = array_values(array_filter($approvals, static fn (array $approval): bool => ($approval['run_id'] ?? null) !== null));
             $satisfied = match ($type) {
                 'all_required_criteria_human_confirmed' => array_reduce($task['criteria'] ?? [], static fn (bool $carry, array $criterion): bool => $carry && (($criterion['review_status'] ?? null) === 'human_confirmed'), true),
-                'required_evidence_reported' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && $item['review_status'] !== 'rejected'),
-                'required_evidence_human_confirmed' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && $item['review_status'] === 'human_confirmed'),
-                'human_approval_granted' => (bool) array_filter($taskApprovals, static fn (array $approval): bool => $approval['status'] === 'approved'),
+                'required_evidence_reported' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && 'rejected' !== $item['review_status']),
+                'required_evidence_human_confirmed' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && 'human_confirmed' === $item['review_status']),
+                'human_approval_granted' => (bool) array_filter($taskApprovals, static fn (array $approval): bool => 'approved' === $approval['status']),
                 'review_report_accepted' => (bool) array_filter($this->store->all('runs', (string) $task['project_id']), fn (array $run): bool => $run['task_id'] === $task['id'] && ($this->currentReport($run, false)['outcome'] ?? null) === 'reported_success'),
-                'run_succeeded' => (bool) array_filter($this->store->all('runs', (string) $task['project_id']), static fn (array $run): bool => $run['task_id'] === $task['id'] && $run['state'] === 'succeeded'),
+                'run_succeeded' => (bool) array_filter($this->store->all('runs', (string) $task['project_id']), static fn (array $run): bool => $run['task_id'] === $task['id'] && 'succeeded' === $run['state']),
                 'intake_ready' => ($task['classification_required'] ?? false) ? ($task['intake_outcome'] ?? null) === 'ready' : true,
                 'no_human_attention' => empty($task['human_attention']['required']) && !$this->hasOpenOwnerAttention((string) $task['id'], (string) $task['project_id']),
                 default => false,
@@ -2514,7 +2125,7 @@ final class RunHandler
     private function openAttention(string $taskId, string $projectId, string $code, string $addressedTo): void
     {
         foreach ($this->store->all('attention_reasons', $projectId) as $reason) {
-            if ($reason['task_id'] === $taskId && $reason['code'] === $code && !empty($reason['open'])) {
+            if ($reason['task_id'] === $taskId && $reason['code'] === $code && ($reason['source'] ?? null) === 'orchestration' && ($reason['addressed_to'] ?? null) === $addressedTo && !empty($reason['open'])) {
                 return;
             }
         }
@@ -2528,11 +2139,11 @@ final class RunHandler
     private function resolveAttention(string $taskId, string $code): void
     {
         $task = $this->store->find('tasks', $taskId);
-        if ($task === null) {
+        if (null === $task) {
             return;
         }
         foreach ($this->store->all('attention_reasons', (string) $task['project_id']) as $reason) {
-            if ($reason['task_id'] === $taskId && $reason['code'] === $code && !empty($reason['open'])) {
+            if ($reason['task_id'] === $taskId && $reason['code'] === $code && ($reason['source'] ?? null) === 'orchestration' && !empty($reason['open'])) {
                 $reason['open'] = false;
                 $reason['resolved_at'] = $this->store->now();
                 $this->store->save('attention_reasons', $reason, 'attention.reason_resolved');
@@ -2557,10 +2168,10 @@ final class RunHandler
         $template = strtr($template, ['{{task.title}}' => (string) $task['title'], '{{task.description}}' => (string) $task['description']]);
         $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['description'], $task['criteria'] ?? []);
         $body = "Falkenwarte-Auftrag\nRun-ID: {$run['id']}\nVersuch: {$run['attempt_no']}\nAufgabenrevision: {$run['snapshot']['task_revision']}\n\nAufgabe: {$task['title']}\n\n{$task['description']}";
-        if ($criteria !== []) {
+        if ([] !== $criteria) {
             $body .= "\n\nAkzeptanzkriterien:\n".implode("\n", $criteria);
         }
-        if (trim($template) !== '') {
+        if ('' !== trim($template)) {
             $body .= "\n\nRollenhinweise:\n".$template;
         }
         $body .= "\n\nNutze die freigegebenen Falkenwarte-MCP-Werkzeuge für Rückfragen, Ergebnislinks und Ergebnisberichte. Berichte Beobachtungen als Agentmeldung. Falkenwarte prüft keinen Code und lädt keine Links herunter.";
@@ -2580,6 +2191,7 @@ final class RunHandler
             foreach ($item as $key => $nested) {
                 $item[$key] = $normalize($nested);
             }
+
             return $item;
         };
 
@@ -2588,31 +2200,32 @@ final class RunHandler
 
     private function deadline(int $seconds): string
     {
-        return (new DateTimeImmutable($this->store->now()))->modify('+'.$seconds.' seconds')->format(DATE_ATOM);
+        return (new \DateTimeImmutable($this->store->now()))->modify('+'.$seconds.' seconds')->format(DATE_ATOM);
     }
 
     /** @param array<string, mixed> $schedule */
-    private function nextDue(array $schedule, ?DateTimeImmutable $from = null): ?string
+    private function nextDue(array $schedule, ?\DateTimeImmutable $from = null): ?string
     {
-        $from ??= new DateTimeImmutable($this->store->now());
+        $from ??= new \DateTimeImmutable($this->store->now());
         $kind = $schedule['kind'] ?? null;
-        if ($kind === 'once') {
-            $due = new DateTimeImmutable((string) $schedule['run_at']);
+        if ('once' === $kind) {
+            $due = new \DateTimeImmutable((string) $schedule['run_at']);
+
             return $due > $from ? $due->format(DATE_ATOM) : null;
         }
-        if ($kind === 'interval') {
+        if ('interval' === $kind) {
             return $from->modify('+'.max(60, (int) $schedule['every_seconds']).' seconds')->format(DATE_ATOM);
         }
-        if ($kind === 'daily') {
-            $timezone = new DateTimeZone((string) $schedule['timezone']);
+        if ('daily' === $kind) {
+            $timezone = new \DateTimeZone((string) $schedule['timezone']);
             $candidate = $from->setTimezone($timezone)->setTime((int) substr($schedule['local_time'], 0, 2), (int) substr($schedule['local_time'], 3, 2));
             if ($candidate <= $from->setTimezone($timezone)) {
                 $candidate = $candidate->modify('+1 day');
             }
             $weekdays = $schedule['weekdays'] ?? [];
             for ($offset = 0; $offset < 7; ++$offset) {
-                if ($weekdays === [] || in_array((int) $candidate->format('N'), $weekdays, true)) {
-                    return $candidate->setTimezone(new DateTimeZone('UTC'))->format(DATE_ATOM);
+                if ([] === $weekdays || in_array((int) $candidate->format('N'), $weekdays, true)) {
+                    return $candidate->setTimezone(new \DateTimeZone('UTC'))->format(DATE_ATOM);
                 }
                 $candidate = $candidate->modify('+1 day');
             }

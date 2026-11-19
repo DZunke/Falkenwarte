@@ -4,18 +4,18 @@ declare(strict_types=1);
 
 namespace App\Orchestration\Infrastructure;
 
+use App\AgentCatalog\Application\AgentCatalogMcpClient;
 use App\Orchestration\Application\AgentExecutionBridge;
 use App\Orchestration\Application\T3BridgeException;
 use Mcp\Client;
 use Mcp\Client\Transport\HttpTransport;
-use Mcp\Schema\Enum\ProtocolVersion;
 use Mcp\Schema\Content\TextContent;
+use Mcp\Schema\Enum\ProtocolVersion;
 use Symfony\Component\HttpClient\Psr18Client;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
-use Throwable;
 
 /** A deliberately small client for the T3 MCP profile selected by the concept. */
-final class T3McpBridge implements AgentExecutionBridge
+final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
 {
     public const PROTOCOL_VERSION = '2025-06-18';
 
@@ -50,7 +50,7 @@ final class T3McpBridge implements AgentExecutionBridge
         return $this->withSession($connection, $token, function (Client $client, array $tools) use ($cursor, $limit): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_project_list']);
-            $result = $this->tool($client, 't3_project_list', array_filter(['cursor' => $cursor, 'limit' => $limit], static fn (mixed $value): bool => $value !== null));
+            $result = $this->tool($client, 't3_project_list', array_filter(['cursor' => $cursor, 'limit' => $limit], static fn (mixed $value): bool => null !== $value));
             $projects = $result['projects'] ?? $result['items'] ?? [];
             if (!is_array($projects)) {
                 throw new T3BridgeException('T3 lieferte keine gültige Projektliste.');
@@ -68,13 +68,42 @@ final class T3McpBridge implements AgentExecutionBridge
     }
 
     /** @param array<string, mixed> $connection @return array<string, mixed> */
-    public function readThread(array $connection, string $token, string $threadId): array
+    public function readThread(array $connection, string $token, string $threadId, ?string $runId = null): array
     {
-        return $this->withSession($connection, $token, function (Client $client, array $tools) use ($threadId): array {
+        return $this->withSession($connection, $token, function (Client $client, array $tools) use ($threadId, $runId): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_read']);
+            $result = $this->tool($client, 't3_thread_read', ['threadId' => $threadId, 'afterPosition' => 0, 'limit' => 100, 'runLimit' => 50, 'maxCharsPerItem' => 20000]);
+            $runs = $result['runs'] ?? [];
+            if (is_array($runs) && [] !== $runs) {
+                $selected = null;
+                if (null !== $runId) {
+                    foreach ($runs as $candidate) {
+                        if (is_array($candidate) && (string) ($candidate['runId'] ?? $candidate['id'] ?? '') === $runId) {
+                            $selected = $candidate;
+                            break;
+                        }
+                    }
+                }
+                if (null === $selected) {
+                    $selected = $runs[array_key_last($runs)];
+                }
+                if (is_array($selected)) {
+                    $result['run'] = $selected;
+                    $result['runId'] ??= $selected['runId'] ?? $selected['id'] ?? null;
+                    $result['status'] ??= $selected['status'] ?? null;
+                    $result['pendingInput'] ??= $selected['pendingInput'] ?? $selected['pending_input'] ?? null;
+                }
+            }
+            if (!isset($result['modelSelection'])) {
+                $instanceId = $result['providerInstanceId'] ?? $result['provider_instance_id'] ?? null;
+                $model = $result['model'] ?? null;
+                if (is_string($instanceId) && '' !== $instanceId && is_string($model) && '' !== $model) {
+                    $result['modelSelection'] = ['instanceId' => $instanceId, 'model' => $model];
+                }
+            }
 
-            return $this->tool($client, 't3_thread_read', ['threadId' => $threadId, 'afterPosition' => 0, 'limit' => 100, 'runLimit' => 50, 'maxCharsPerItem' => 20000]);
+            return $result;
         });
     }
 
@@ -121,7 +150,7 @@ final class T3McpBridge implements AgentExecutionBridge
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_interrupt']);
 
-            return $this->tool($client, 't3_thread_interrupt', ['threadId' => $threadId, 'runId' => $runId]);
+            return $this->tool($client, 't3_thread_interrupt', ['threadId' => $threadId, 'runId' => $runId, 'clientRequestId' => 'interrupt-'.$runId]);
         });
     }
 
@@ -144,7 +173,7 @@ final class T3McpBridge implements AgentExecutionBridge
         $transport = new HttpTransport($baseUrl.'/mcp', ['Authorization' => 'Bearer '.$token], $psr18, $psr18, $psr18);
         try {
             $client->connect($transport);
-            if ($client->getProtocolVersion()?->value !== self::PROTOCOL_VERSION) {
+            if (self::PROTOCOL_VERSION !== $client->getProtocolVersion()?->value) {
                 throw new T3BridgeException('T3 hat ein nicht freigegebenes MCP-Protokoll ausgehandelt.');
             }
             $tools = array_map(static fn ($tool): array => $tool->jsonSerialize(), $client->listTools()->tools);
@@ -152,7 +181,7 @@ final class T3McpBridge implements AgentExecutionBridge
             return $operation($client, $tools);
         } catch (T3BridgeException $exception) {
             throw $exception;
-        } catch (Throwable $exception) {
+        } catch (\Throwable $exception) {
             if (str_contains($exception->getMessage(), '401') || str_contains($exception->getMessage(), '403')) {
                 throw new T3BridgeException('T3 hat die aktuelle Autorisierung abgewiesen.', true, $exception);
             }
@@ -160,7 +189,7 @@ final class T3McpBridge implements AgentExecutionBridge
         } finally {
             try {
                 $client->disconnect();
-            } catch (Throwable) {
+            } catch (\Throwable) {
                 // Session cleanup does not change the result of an already completed MCP operation.
             }
         }
@@ -170,7 +199,7 @@ final class T3McpBridge implements AgentExecutionBridge
     private function requireTools(array $actual, array $required): void
     {
         $missing = array_values(array_diff($required, $actual));
-        if ($missing !== []) {
+        if ([] !== $missing) {
             throw new T3BridgeException('T3 fehlen erforderliche MCP-Fähigkeiten: '.implode(', ', $missing));
         }
     }
@@ -202,7 +231,7 @@ final class T3McpBridge implements AgentExecutionBridge
     {
         $host = parse_url($url, PHP_URL_HOST);
 
-        return getenv('APP_ENV') === 'test' && parse_url($url, PHP_URL_SCHEME) === 'http' && $host === 't3-mock';
+        return 'test' === getenv('APP_ENV') && 'http' === parse_url($url, PHP_URL_SCHEME) && 't3-mock' === $host;
     }
 
     /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool}> */
@@ -218,7 +247,7 @@ final class T3McpBridge implements AgentExecutionBridge
                 continue;
             }
             $id = $provider['providerInstanceId'] ?? $provider['instanceId'] ?? null;
-            if (!is_string($id) || $id === '') {
+            if (!is_string($id) || '' === $id) {
                 continue;
             }
             $result[] = [
@@ -246,5 +275,4 @@ final class T3McpBridge implements AgentExecutionBridge
 
         return array_values(array_unique(array_map(static fn (string $tool): string => $mapping[$tool], array_intersect($tools, array_keys($mapping)))));
     }
-
 }

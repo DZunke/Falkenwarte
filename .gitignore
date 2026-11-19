@@ -19,3 +19,4 @@ qa/results/
 # Machine-generated per-run evidence and local QA caches
 /qa/results.json
 /.php-cs-fixer.cache
+/config/reference.php

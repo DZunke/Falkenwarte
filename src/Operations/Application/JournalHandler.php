@@ -120,6 +120,6 @@ final readonly class JournalHandler
         if (false === file_put_contents($path.'.tmp', $bytes, LOCK_EX) || !rename($path.'.tmp', $path)) {
             throw new \RuntimeException('Export konnte nicht gespeichert werden.');
         }
-        $this->store->save('exports', array_replace($export, ['status' => 'ready', 'sha256' => hash('sha256', $bytes), 'size_bytes' => strlen($bytes), 'expires_at' => gmdate(DATE_ATOM,time() + 86400), 'download_url' => '/api/v1/exports/'.$export['id'].'/content', '_file' => $path]), 'operations.export_completed');
+        $this->store->save('exports', array_replace($export, ['status' => 'ready', 'sha256' => hash('sha256', $bytes), 'size_bytes' => strlen($bytes), 'expires_at' => gmdate(DATE_ATOM, time() + 86400), 'download_url' => '/api/v1/exports/'.$export['id'].'/content', '_file' => $path]), 'operations.export_completed');
     }
 }

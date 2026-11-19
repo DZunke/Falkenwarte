@@ -1,19 +1,17 @@
 <?php
+
 declare(strict_types=1);
 
 namespace App\Operations\Application;
 
+use App\Extensions\Application\PluginManifestReader;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
-use JsonException;
-use SQLite3;
-use Throwable;
-use ZipArchive;
 
 final class BackupHandler
 {
-    public function __construct(public Store $store, private readonly MigrationVersionReader $migrationVersions)
+    public function __construct(public Store $store, private readonly MigrationVersionReader $migrationVersions, private readonly PluginManifestReader $plugins)
     {
     }
 
@@ -45,6 +43,53 @@ final class BackupHandler
             'restore.request' => $this->writeRestoreRequest($payload),
             default => throw new Problem(400, 'operation_not_found', 'Unbekannter Backupauftrag.'),
         };
+    }
+
+    /** @param array<string, mixed> $marker */
+    public function finalizeRestoredBackup(array $marker): void
+    {
+        $id = $this->payloadId($marker, 'backup_id');
+        $expectedHash = strtolower((string) ($marker['database_sha256'] ?? ''));
+        $job = $this->store->find('backups', $id);
+        if (null === $job) {
+            throw new Problem(409, 'backup_restore_record_missing', 'Der wiederhergestellte Datenbankstand enthält den Backupauftrag nicht.');
+        }
+
+        $zip = new \ZipArchive();
+        if (true !== $zip->open($this->archivePath($id), \ZipArchive::RDONLY)) {
+            throw new Problem(409, 'backup_invalid', 'Das wiederhergestellte Backupmanifest kann nicht gelesen werden.');
+        }
+        try {
+            $bytes = $zip->getFromName('manifest.json');
+        } finally {
+            $zip->close();
+        }
+        if (!is_string($bytes) || strlen($bytes) > 1048576) {
+            throw new Problem(409, 'backup_invalid', 'Das wiederhergestellte Backupmanifest ist ungültig.');
+        }
+
+        try {
+            $manifest = json_decode($bytes, true, 32, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw new Problem(409, 'backup_invalid', 'Das wiederhergestellte Backupmanifest ist ungültiges JSON.');
+        }
+        if (!is_array($manifest)
+            || !isset($manifest['database_sha256'])
+            || !is_string($manifest['database_sha256'])
+            || !hash_equals($expectedHash, strtolower($manifest['database_sha256']))) {
+            throw new Problem(409, 'backup_checksum_mismatch', 'Der Restore-Nachweis passt nicht zum gesicherten Datenbankstand.');
+        }
+        $this->verifyArchive($id, $manifest);
+
+        if (($job['status'] ?? null) === 'ready' && $this->canonicalJson($job['manifest'] ?? []) === $this->canonicalJson($manifest)) {
+            return;
+        }
+
+        $job['status'] = 'ready';
+        $job['manifest'] = $manifest;
+        $job['download_url'] = '/api/v1/backups/'.$id.'/content';
+        $job['error'] = null;
+        $this->store->save('backups', $job, 'backup.restore_finalized');
     }
 
     /** @param array<string, mixed> $p @return array<string, mixed> */
@@ -103,7 +148,7 @@ final class BackupHandler
 
         $expectedHash = strtolower((string) ($body['database_sha256'] ?? ''));
         $actualHash = strtolower((string) ($job['manifest']['database_sha256'] ?? ''));
-        if ($expectedHash === '' || !hash_equals($actualHash, $expectedHash)) {
+        if ('' === $expectedHash || !hash_equals($actualHash, $expectedHash)) {
             throw new Problem(409, 'backup_checksum_mismatch', 'Der bestätigte Datenbank-Prüfwert stimmt nicht mit dem Backup überein.');
         }
 
@@ -137,7 +182,7 @@ final class BackupHandler
     {
         $id = $this->payloadId($payload, 'backup_id');
         $job = $this->store->find('backups', $id);
-        if ($job === null || in_array($job['status'] ?? '', ['ready', 'failed'], true)) {
+        if (null === $job || in_array($job['status'] ?? '', ['ready', 'failed'], true)) {
             return;
         }
 
@@ -148,7 +193,7 @@ final class BackupHandler
         $temporaryDirectory = null;
         $temporaryArchive = $this->archivePath($id).'.tmp';
         try {
-            if (!class_exists(ZipArchive::class)) {
+            if (!class_exists(\ZipArchive::class)) {
                 throw new Problem(503, 'backup_unavailable', 'Die ZIP-Erweiterung ist im Laufzeitimage nicht verfügbar.');
             }
 
@@ -170,8 +215,8 @@ final class BackupHandler
             file_put_contents($manifestFile, json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), LOCK_EX);
             chmod($manifestFile, 0600);
 
-            $zip = new ZipArchive();
-            if ($zip->open($temporaryArchive, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            $zip = new \ZipArchive();
+            if (true !== $zip->open($temporaryArchive, \ZipArchive::CREATE | \ZipArchive::OVERWRITE)) {
                 throw new Problem(503, 'backup_unavailable', 'Das Backuparchiv kann nicht erstellt werden.');
             }
             $zip->addFile($databaseFile, 'database.sqlite');
@@ -193,18 +238,18 @@ final class BackupHandler
             $job['download_url'] = '/api/v1/backups/'.$id.'/content';
             $job['error'] = null;
             $this->store->save('backups', $job, 'backup.ready');
-        } catch (Throwable $error) {
+        } catch (\Throwable $error) {
             if (is_file($temporaryArchive)) {
                 unlink($temporaryArchive);
             }
             $job = $this->store->find('backups', $id);
-            if ($job !== null && ($job['status'] ?? '') !== 'ready') {
+            if (null !== $job && ($job['status'] ?? '') !== 'ready') {
                 $job['status'] = 'failed';
                 $job['error'] = mb_substr($error instanceof Problem ? $error->getMessage() : 'Die Sicherung konnte nicht erstellt werden.', 0, 300);
                 $this->store->save('backups', $job, 'backup.failed');
             }
         } finally {
-            if ($temporaryDirectory !== null && is_dir($temporaryDirectory)) {
+            if (null !== $temporaryDirectory && is_dir($temporaryDirectory)) {
                 foreach (glob($temporaryDirectory.'/*') ?: [] as $file) {
                     if (is_file($file)) {
                         unlink($file);
@@ -247,13 +292,13 @@ final class BackupHandler
     private function verifyArchive(string $id, array $manifest): void
     {
         $path = $this->archivePath($id);
-        $zip = new ZipArchive();
-        if ($zip->open($path, ZipArchive::RDONLY) !== true) {
+        $zip = new \ZipArchive();
+        if (true !== $zip->open($path, \ZipArchive::RDONLY)) {
             throw new Problem(409, 'backup_invalid', 'Das Backuparchiv kann nicht geöffnet werden.');
         }
 
         try {
-            if ($zip->numFiles !== 2 || $zip->locateName('database.sqlite') === false || $zip->locateName('manifest.json') === false) {
+            if (2 !== $zip->numFiles || false === $zip->locateName('database.sqlite') || false === $zip->locateName('manifest.json')) {
                 throw new Problem(409, 'backup_invalid', 'Das Backuparchiv enthält unerwartete Dateien.');
             }
 
@@ -269,14 +314,14 @@ final class BackupHandler
 
             $databaseEntry = $zip->statName('database.sqlite');
             $maxBytes = max(1048576, (int) (getenv('FALKENWARTE_BACKUP_MAX_BYTES') ?: 5368709120));
-            if (!is_array($databaseEntry) || (int) ($databaseEntry['size'] ?? 0) <= 0 || (int) $databaseEntry['size'] > $maxBytes) {
+            if (!is_array($databaseEntry) || $databaseEntry['size'] <= 0 || (int) $databaseEntry['size'] > $maxBytes) {
                 throw new Problem(413, 'backup_invalid', 'Die gesicherte Datenbank hat eine unzulässige Größe.');
             }
 
             $temporaryDatabase = $this->backupDirectory().'/verify-'.bin2hex(random_bytes(8)).'.sqlite';
             $input = $zip->getStream('database.sqlite');
             $output = fopen($temporaryDatabase, 'xb');
-            if ($input === false || $output === false) {
+            if (false === $input || false === $output) {
                 if (is_resource($input)) {
                     fclose($input);
                 }
@@ -291,10 +336,10 @@ final class BackupHandler
                 chmod($temporaryDatabase, 0600);
                 while (!feof($input)) {
                     $chunk = fread($input, 1048576);
-                    if ($chunk === false) {
+                    if (false === $chunk) {
                         throw new Problem(409, 'backup_invalid', 'Die Datenbank im Backup kann nicht gelesen werden.');
                     }
-                    if ($chunk === '') {
+                    if ('' === $chunk) {
                         continue;
                     }
                     hash_update($hash, $chunk);
@@ -312,7 +357,7 @@ final class BackupHandler
                 fclose($output);
                 unlink($temporaryDatabase);
             }
-        } catch (JsonException) {
+        } catch (\JsonException) {
             throw new Problem(409, 'backup_invalid', 'Das eingebettete Backupmanifest ist ungültig.');
         } finally {
             $zip->close();
@@ -322,11 +367,11 @@ final class BackupHandler
     /** @return array<string, mixed> */
     private function manifest(string $databaseHash): array
     {
-        $plugins = array_map(static fn (array $plugin): array => [
-            'plugin_id' => (string) ($plugin['id'] ?? $plugin['plugin_id'] ?? ''),
-            'version' => (string) ($plugin['version'] ?? 'unknown'),
-        ], $this->store->all('plugins'));
-        $plugins = array_values(array_filter($plugins, static fn (array $plugin): bool => $plugin['plugin_id'] !== ''));
+        $plugins = array_map(static fn (array $manifest): array => [
+            'plugin_id' => (string) ($manifest['id'] ?? ''),
+            'version' => (string) ($manifest['version'] ?? ''),
+        ], $this->plugins->manifests());
+        $plugins = array_values(array_filter($plugins, static fn (array $plugin): bool => '' !== $plugin['plugin_id'] && '' !== $plugin['version']));
         usort($plugins, static fn (array $left, array $right): int => strcmp($left['plugin_id'], $right['plugin_id']));
 
         $artifactManifestHash = hash('sha256', '[]');
@@ -348,8 +393,8 @@ final class BackupHandler
             throw new Problem(503, 'backup_unavailable', 'Die Falkenwarte-Datenbank wurde nicht gefunden.');
         }
 
-        $source = new SQLite3($databasePath, SQLITE3_OPEN_READONLY);
-        $target = new SQLite3($destination, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
+        $source = new \SQLite3($databasePath, SQLITE3_OPEN_READONLY);
+        $target = new \SQLite3($destination, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
         try {
             if (!$source->backup($target)) {
                 throw new Problem(503, 'backup_unavailable', 'Die konsistente SQLite-Sicherung ist fehlgeschlagen.');
@@ -364,10 +409,10 @@ final class BackupHandler
 
     private function assertDatabaseHealthy(string $path): void
     {
-        $database = new SQLite3($path, SQLITE3_OPEN_READONLY);
+        $database = new \SQLite3($path, SQLITE3_OPEN_READONLY);
         try {
             $result = $database->querySingle('PRAGMA integrity_check');
-            if ($result !== 'ok') {
+            if ('ok' !== $result) {
                 throw new Problem(409, 'backup_invalid', 'Die gesicherte Datenbank besteht die SQLite-Integritätsprüfung nicht.');
             }
         } finally {
@@ -379,12 +424,13 @@ final class BackupHandler
     {
         try {
             $version = $this->migrationVersions->latestVersion();
-        } catch (Throwable) {
+        } catch (\Throwable) {
             throw new Problem(503, 'backup_unavailable', 'Der Datenbank-Migrationsstand kann nicht gelesen werden.');
         }
-        if ($version === '') {
+        if ('' === $version) {
             throw new Problem(503, 'backup_unavailable', 'Die Datenbank enthält keine ausgeführten Migrationen.');
         }
+
         return $version;
     }
 
@@ -415,7 +461,7 @@ final class BackupHandler
         }
         chmod($directory, 0700);
         $resolved = realpath($directory);
-        if ($resolved === false || $resolved !== rtrim($directory, '/')) {
+        if (false === $resolved || $resolved !== rtrim($directory, '/')) {
             throw new Problem(503, 'backup_unavailable', 'Das Backupziel darf keine symbolischen Links verwenden.');
         }
 
@@ -424,7 +470,7 @@ final class BackupHandler
 
     private function archivePath(string $id): string
     {
-        if (preg_match('/^[a-f0-9-]{36}$/i', $id) !== 1) {
+        if (1 !== preg_match('/^[a-f0-9-]{36}$/i', $id)) {
             throw new Problem(400, 'validation_failed', 'Die Backup-ID ist ungültig.');
         }
 
@@ -455,7 +501,7 @@ final class BackupHandler
 
         $temporary = $path.'.'.bin2hex(random_bytes(8)).'.tmp';
         $handle = fopen($temporary, 'xb');
-        if ($handle === false) {
+        if (false === $handle) {
             throw new Problem(503, 'restore_unavailable', 'Der Wiederherstellungsauftrag kann nicht gespeichert werden.');
         }
 
@@ -482,7 +528,7 @@ final class BackupHandler
     private function syncFile(string $path): void
     {
         $handle = fopen($path, 'rb');
-        if ($handle !== false) {
+        if (false !== $handle) {
             if (function_exists('fsync')) {
                 fsync($handle);
             }
@@ -496,7 +542,7 @@ final class BackupHandler
             return;
         }
         $handle = fopen($directory, 'r');
-        if ($handle !== false) {
+        if (false !== $handle) {
             fsync($handle);
             fclose($handle);
         }
@@ -524,7 +570,7 @@ final class BackupHandler
     private function pathId(array $p): string
     {
         $id = $p['backup_id'] ?? null;
-        if (!is_string($id) || $id === '') {
+        if (!is_string($id) || '' === $id) {
             throw new Problem(400, 'validation_failed', 'Backup-ID fehlt.');
         }
 
@@ -535,7 +581,7 @@ final class BackupHandler
     private function payloadId(array $payload, string $key): string
     {
         $id = $payload[$key] ?? null;
-        if (!is_string($id) || $id === '') {
+        if (!is_string($id) || '' === $id) {
             throw new Problem(400, 'validation_failed', 'Backupauftrag ist ungültig.');
         }
 

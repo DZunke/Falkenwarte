@@ -17,7 +17,7 @@ final readonly class DbalIdempotencyStore implements IdempotencyStore
     {
         $row = $this->connection->fetchAssociative('SELECT fingerprint,data FROM dedup WHERE principal=? AND key=?', [$principalId, $key]);
 
-        return $row === false ? null : [
+        return false === $row ? null : [
             'fingerprint' => $row['fingerprint'],
             'response' => json_decode($row['data'], true, flags: JSON_THROW_ON_ERROR),
         ];

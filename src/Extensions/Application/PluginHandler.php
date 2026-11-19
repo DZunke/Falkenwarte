@@ -7,15 +7,19 @@ namespace App\Extensions\Application;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
+use Falkenwarte\LinkNotes\Application\LinkNoteRepository;
 
 final class PluginHandler
 {
     private const LINK_NOTES_ID = 'falkenwarte.link-notes';
-    private const CONTRACT_VERSION = '1.0';
-    private const LINK_NOTES_SCHEMA_ID = 'https://falkenwarte.local/schemas/link-notes-settings-v1';
 
-    public function __construct(private readonly Store $store, private readonly ExtensionPersistence $extensions)
-    {
+    public function __construct(
+        private readonly Store $store,
+        private readonly ExtensionPersistence $extensions,
+        private readonly PluginRegistry $registry,
+        private readonly PluginEventDispatcher $events,
+        private readonly LinkNoteRepository $linkNotes,
+    ) {
     }
 
     public function handles(string $op): bool
@@ -71,19 +75,21 @@ final class PluginHandler
         }
 
         $plugin = $this->plugin($pluginId);
-        if ($kind === 'plugin.activate' && $plugin['state'] === 'enabling') {
+        if ('plugin.activate' === $kind && 'enabling' === $plugin['state']) {
             $plugin['state'] = 'enabled';
             $plugin['last_safe_state'] = 'enabled';
             $plugin['last_error'] = null;
             $this->store->save('plugins', $plugin, 'PluginActivationChanged');
+            $this->events->dispatch($pluginId);
         }
 
-        if ($kind === 'plugin.drain' && $plugin['state'] === 'draining') {
+        if ('plugin.drain' === $kind && 'draining' === $plugin['state']) {
             $activeWork = $this->activeWorkCounts($pluginId);
             $plugin['active_run_count'] = $activeWork['runs'];
             $plugin['pending_job_count'] = $activeWork['jobs'];
+            $plugin['unresolved_external_activity_count'] = $activeWork['external'];
 
-            if ($activeWork['runs'] === 0 && $activeWork['jobs'] === 0) {
+            if (0 === $activeWork['runs'] && 0 === $activeWork['jobs'] && 0 === $activeWork['external']) {
                 $plugin['state'] = 'disabled';
                 $plugin['last_safe_state'] = 'disabled';
             }
@@ -95,13 +101,9 @@ final class PluginHandler
     private function list(array $p, Actor $actor): array
     {
         $actor->requireOwner();
-        $plugins = [$this->plugin(self::LINK_NOTES_ID)];
+        $plugins = array_map(fn (array $manifest): array => $this->plugin((string) $manifest['id']), $this->registry->manifests());
 
-        foreach ($this->store->all('plugins') as $stored) {
-            if (($stored['id'] ?? null) !== self::LINK_NOTES_ID) {
-                $plugins[] = $stored;
-            }
-        }
+        usort($plugins, static fn (array $left, array $right): int => strcmp($left['id'], $right['id']));
 
         return $this->store->page($plugins, $p);
     }
@@ -135,7 +137,8 @@ final class PluginHandler
         }
 
         $configuration = $this->storedConfiguration($pluginId);
-        if ($pluginId === self::LINK_NOTES_ID && ($configuration['schema_id'] ?? self::LINK_NOTES_SCHEMA_ID) !== self::LINK_NOTES_SCHEMA_ID) {
+        $schemaId = $this->settingsSchemaId($pluginId);
+        if (($configuration['schema_id'] ?? $schemaId) !== $schemaId) {
             throw new Problem(409, 'plugin_configuration_invalid', 'The link notes configuration uses an unsupported schema.');
         }
 
@@ -157,21 +160,24 @@ final class PluginHandler
         $actor->requireOwner();
         $plugin = $this->requireInstalledPlugin($pluginId);
 
-        if ($plugin['state'] !== 'enabled') {
+        if (!in_array($plugin['state'], ['enabled', 'draining'], true)) {
             throw new Problem(409, 'plugin_state_conflict', 'Only an enabled plugin can enter the drain state.');
         }
 
-        if (!in_array($body['policy'] ?? null, ['finish_active', 'request_cancel'], true) || trim((string) ($body['reason'] ?? '')) === '') {
+        if (!in_array($body['policy'] ?? null, ['finish_active', 'request_cancel'], true) || '' === trim((string) ($body['reason'] ?? ''))) {
             throw new Problem(422, 'validation_failed', 'A drain policy and reason are required.');
         }
 
-        $plugin['state'] = 'draining';
-        $plugin['last_safe_state'] = 'enabled';
+        if ('enabled' === $plugin['state']) {
+            $plugin['state'] = 'draining';
+            $plugin['last_safe_state'] = 'enabled';
+        }
         $plugin['drain_policy'] = $body['policy'];
         $plugin['drain_reason'] = trim((string) $body['reason']);
         $counts = $this->activeWorkCounts($pluginId);
         $plugin['active_run_count'] = $counts['runs'];
         $plugin['pending_job_count'] = $counts['jobs'];
+        $plugin['unresolved_external_activity_count'] = $counts['external'];
         $plugin = $this->store->save('plugins', $plugin, 'PluginActivationChanged');
         $this->store->enqueue('plugin.drain', ['plugin_id' => $pluginId, 'policy' => $body['policy']]);
 
@@ -188,20 +194,22 @@ final class PluginHandler
         $actor->requireOwner();
         $plugin = $this->requireInstalledPlugin($pluginId);
 
-        if ($plugin['state'] !== 'disabled') {
+        if ('disabled' !== $plugin['state']) {
             throw new Problem(409, 'plugin_state_conflict', 'The plugin must finish draining before deactivation.');
         }
 
-        if (trim((string) ($body['reason'] ?? '')) === '') {
+        if ('' === trim((string) ($body['reason'] ?? ''))) {
             throw new Problem(422, 'validation_failed', 'A deactivation reason is required.');
         }
 
-        foreach ($this->store->all('plugins') as $other) {
-            if (($other['state'] ?? null) === 'enabled') {
-                foreach ($other['dependencies'] ?? [] as $dependency) {
-                    if (($dependency['plugin_id'] ?? null) === $pluginId) {
-                        throw new Problem(409, 'plugin_dependency_active', 'An enabled plugin depends on this plugin.');
-                    }
+        foreach ($this->registry->manifests() as $manifest) {
+            $dependentId = (string) $manifest['id'];
+            if (!in_array($this->registry->state($dependentId), ['enabled', 'draining'], true)) {
+                continue;
+            }
+            foreach ($this->registry->dependencies($dependentId) as $dependency) {
+                if ($dependency['plugin_id'] === $pluginId) {
+                    throw new Problem(409, 'plugin_dependency_active', 'An enabled plugin depends on this plugin.');
                 }
             }
         }
@@ -224,32 +232,21 @@ final class PluginHandler
         $actor->requireOwner();
         $plugin = $this->requireInstalledPlugin($pluginId);
 
-        if ($pluginId !== self::LINK_NOTES_ID) {
-            throw new Problem(409, 'plugin_configuration_unavailable', 'This plugin does not expose an editable configuration.');
-        }
-
         $values = $body['values'] ?? null;
-        if (($body['schema_id'] ?? null) !== self::LINK_NOTES_SCHEMA_ID || !is_array($values) || array_diff(array_keys($values), ['enabled_labels']) !== []) {
+        $manifest = $this->registry->manifest($pluginId);
+        $schemaId = $this->settingsSchemaId($pluginId);
+        if (($body['schema_id'] ?? null) !== $schemaId || !is_array($values) || [] !== array_diff(array_keys($values), array_keys($manifest['settings_schema']['properties'] ?? []))) {
             throw new Problem(422, 'validation_failed', 'The plugin configuration does not match its registered schema.');
         }
-
-        $labels = $values['enabled_labels'] ?? [];
-        if (!is_array($labels) || count($labels) > 200 || array_filter($labels, static fn ($label): bool => !is_string($label) || $label === '') !== []) {
-            throw new Problem(422, 'validation_failed', 'Enabled labels must be a list of label identifiers.');
-        }
+        $this->validateConfigurationValues($manifest['settings_schema'], $values);
 
         $configuration = [
             'id' => $pluginId,
             'plugin_id' => $pluginId,
             'plugin_version' => $plugin['version'],
-            'schema_id' => self::LINK_NOTES_SCHEMA_ID,
-            'schema' => [
-                'type' => 'object',
-                'properties' => ['enabled_labels' => ['type' => 'array', 'items' => ['type' => 'string']]],
-                'required' => [],
-                'additionalProperties' => false,
-            ],
-            'values' => ['enabled_labels' => array_values(array_unique($labels))],
+            'schema_id' => $schemaId,
+            'schema' => $manifest['settings_schema'],
+            'values' => array_replace($this->defaultSettings($manifest['settings_schema']), $values),
             'redacted_fields' => [],
         ];
         $this->store->save('plugin_configurations', $configuration, 'PluginConfigurationChanged');
@@ -267,15 +264,10 @@ final class PluginHandler
 
         return [
             'plugin_id' => $pluginId,
-            'plugin_version' => 1,
-            'schema_id' => self::LINK_NOTES_SCHEMA_ID,
-            'schema' => [
-                'type' => 'object',
-                'properties' => ['enabled_labels' => ['type' => 'array', 'items' => ['type' => 'string']]],
-                'required' => [],
-                'additionalProperties' => false,
-            ],
-            'values' => $stored['values'] ?? ['enabled_labels' => []],
+            'plugin_version' => $this->plugin($pluginId)['version'],
+            'schema_id' => $this->settingsSchemaId($pluginId),
+            'schema' => $this->registry->manifest($pluginId)['settings_schema'],
+            'values' => $stored['values'] ?? $this->defaultSettings($this->registry->manifest($pluginId)['settings_schema']),
             'redacted_fields' => [],
         ];
     }
@@ -287,7 +279,7 @@ final class PluginHandler
         $targetVersion = $body['target_version'] ?? null;
         $source = $body['source'] ?? null;
 
-        if (!is_string($pluginId) || preg_match('/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/', $pluginId) !== 1 || !is_string($targetVersion) || trim($targetVersion) === '' || !in_array($source, ['registry', 'local_build'], true)) {
+        if (!is_string($pluginId) || 1 !== preg_match('/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/', $pluginId) || !is_string($targetVersion) || '' === trim($targetVersion) || !in_array($source, ['registry', 'local_build'], true)) {
             throw new Problem(422, 'validation_failed', 'A plugin identifier, version and supported source are required.');
         }
 
@@ -298,7 +290,8 @@ final class PluginHandler
             'status' => 'prepared',
             'requires_build' => true,
             'requires_restart' => true,
-            'requires_migration' => $pluginId === self::LINK_NOTES_ID,
+            'requires_migration' => $this->registry->has($pluginId)
+                && (int) ($this->registry->manifest($pluginId)['migrations']['data_version'] ?? 0) > 0,
             'steps' => [
                 ['kind' => 'resolve_package', 'description' => 'Paket und Zielversion in einem geprüften Build auflösen.', 'operator_required' => true],
                 ['kind' => 'review_dependencies', 'description' => 'Abhängigkeiten und Pluginvertrag prüfen.', 'operator_required' => true],
@@ -318,14 +311,8 @@ final class PluginHandler
     private function linkNotes(string $taskId, Actor $actor): array
     {
         $task = $this->task($taskId, $actor);
-        $notes = array_values(array_filter(
-            $this->store->all('plugin_link_notes', $task['project_id']),
-            static fn (array $note): bool => ($note['task_id'] ?? null) === $taskId && ($note['deleted_at'] ?? null) === null,
-        ));
 
-        usort($notes, static fn (array $left, array $right): int => [$left['created_at'] ?? '', $left['id']] <=> [$right['created_at'] ?? '', $right['id']]);
-
-        return $this->store->page($notes);
+        return $this->store->page($this->linkNotes->forTask($task['project_id'], $taskId));
     }
 
     private function createLinkNote(string $taskId, array $body, Actor $actor): array
@@ -335,78 +322,46 @@ final class PluginHandler
         $linkId = $body['link_id'] ?? null;
         $noteText = trim((string) ($body['note'] ?? ''));
 
-        if (!is_string($linkId) || !$this->taskHasLink($taskId, $linkId) || $noteText === '' || mb_strlen($noteText) > 2000) {
+        if (!is_string($linkId) || !$this->taskHasLink($taskId, $linkId) || '' === $noteText || mb_strlen($noteText) > 2000) {
             throw new Problem(422, 'validation_failed', 'A registered task link and a note of 1 to 2000 characters are required.');
         }
 
-        $record = [
-            'project_id' => $task['project_id'],
-            'task_id' => $taskId,
-            'link_id' => $linkId,
-            'note' => $noteText,
-            'created_by' => $actor->ref(),
-            'history' => [[
-                'version' => 1,
-                'note' => $noteText,
-                'actor' => $actor->ref(),
-                'recorded_at' => $this->store->now(),
-            ]],
-            'deleted_at' => null,
-        ];
-
-        return $this->store->save('plugin_link_notes', $record, 'LinkNoteCreated');
+        return $this->linkNotes->create($this->store->id(), $task['project_id'], $taskId, $linkId, $noteText, $actor->ref(), $this->store->now());
     }
 
     private function updateLinkNote(string $taskId, string $noteId, array $body, Actor $actor): array
     {
         $task = $this->task($taskId, $actor);
         $this->requireLinkNotesEnabled($task);
-        $note = $this->store->find('plugin_link_notes', $noteId);
-        if ($note === null || ($note['task_id'] ?? null) !== $taskId || ($note['project_id'] ?? null) !== $task['project_id'] || ($note['deleted_at'] ?? null) !== null) {
+        $note = $this->linkNotes->find($noteId);
+        if (null === $note || ($note['task_id'] ?? null) !== $taskId || ($note['project_id'] ?? null) !== $task['project_id'] || ($note['deleted_at'] ?? null) !== null) {
             throw new Problem(404, 'resource_not_found', 'The requested link note does not exist.');
         }
 
         $text = trim((string) ($body['note'] ?? ''));
-        if ($text === '' || mb_strlen($text) > 2000) {
+        if ('' === $text || mb_strlen($text) > 2000) {
             throw new Problem(422, 'validation_failed', 'A note of 1 to 2000 characters is required.');
         }
 
-        $note['note'] = $text;
-        $note['history'][] = [
-            'version' => $note['version'] + 1,
-            'note' => $text,
-            'actor' => $actor->ref(),
-            'recorded_at' => $this->store->now(),
-        ];
-
-        return $this->store->save('plugin_link_notes', $note, 'LinkNoteChanged');
+        return $this->linkNotes->update($noteId, $text, $actor->ref(), $this->store->now());
     }
 
     private function removeLinkNote(string $taskId, string $noteId, Actor $actor): array
     {
         $task = $this->task($taskId, $actor);
         $this->requireLinkNotesEnabled($task);
-        $note = $this->store->find('plugin_link_notes', $noteId);
-        if ($note === null || ($note['task_id'] ?? null) !== $taskId || ($note['project_id'] ?? null) !== $task['project_id'] || ($note['deleted_at'] ?? null) !== null) {
+        $note = $this->linkNotes->find($noteId);
+        if (null === $note || ($note['task_id'] ?? null) !== $taskId || ($note['project_id'] ?? null) !== $task['project_id'] || ($note['deleted_at'] ?? null) !== null) {
             throw new Problem(404, 'resource_not_found', 'The requested link note does not exist.');
         }
 
-        $note['deleted_at'] = $this->store->now();
-        $note['history'][] = [
-            'version' => $note['version'] + 1,
-            'note' => null,
-            'actor' => $actor->ref(),
-            'recorded_at' => $note['deleted_at'],
-            'change' => 'removed',
-        ];
-
-        return $this->store->save('plugin_link_notes', $note, 'LinkNoteRemoved');
+        return $this->linkNotes->remove($noteId, $actor->ref(), $this->store->now());
     }
 
     private function task(string $taskId, Actor $actor): array
     {
         $task = $this->store->find('tasks', $taskId);
-        if ($task === null) {
+        if (null === $task) {
             throw new Problem(404, 'resource_not_found', 'The requested task does not exist.');
         }
 
@@ -448,19 +403,18 @@ final class PluginHandler
 
     private function requireLinkNotesEnabled(array $task): void
     {
-        $plugin = $this->plugin(self::LINK_NOTES_ID);
-        if ($plugin['state'] !== 'enabled') {
+        if (!$this->registry->enabled(self::LINK_NOTES_ID) || !$this->registry->supports(self::LINK_NOTES_ID, 'links.notes')) {
             throw new Problem(409, 'capability_unavailable', 'Linknotizen sind derzeit nicht aktiviert.');
         }
 
         $configuration = $this->storedConfiguration(self::LINK_NOTES_ID);
         $enabledLabels = $configuration['values']['enabled_labels'] ?? [];
-        if ($enabledLabels === []) {
+        if ([] === $enabledLabels) {
             return;
         }
 
         $taskLabels = $task['label_ids'] ?? [];
-        if (array_intersect($enabledLabels, $taskLabels) === []) {
+        if ([] === array_intersect($enabledLabels, $taskLabels)) {
             throw new Problem(409, 'capability_unavailable', 'Linknotizen sind für die Labels dieses Tickets nicht freigegeben.');
         }
     }
@@ -468,7 +422,7 @@ final class PluginHandler
     private function installPlan(string $planId): array
     {
         $plan = $this->store->find('plugin_install_plans', $planId);
-        if ($plan === null) {
+        if (null === $plan) {
             throw new Problem(404, 'resource_not_found', 'The requested plugin installation plan does not exist.');
         }
 
@@ -503,54 +457,36 @@ final class PluginHandler
 
     private function plugin(string $pluginId): array
     {
-        if ($pluginId !== self::LINK_NOTES_ID) {
-            $stored = $this->store->find('plugins', $pluginId);
-            if ($stored === null) {
-                throw new Problem(404, 'resource_not_found', 'The requested plugin is not installed.');
-            }
+        $manifest = $this->registry->manifest($pluginId);
+        $stored = $this->store->find('plugins', $pluginId) ?? [];
+        $state = $this->registry->state($pluginId);
+        $counts = $this->activeWorkCounts($pluginId);
+        $configuration = $this->storedConfiguration($pluginId);
 
-            $stored['allowed_actions'] = $this->allowedActions((string) ($stored['state'] ?? 'failed'));
-
-            return array_intersect_key($stored, array_flip([
-                'id', 'version', 'name', 'installed_version', 'contract_version', 'state', 'last_safe_state',
-                'description', 'dependencies', 'capabilities', 'active_run_count', 'pending_job_count',
-                'retained_data_bytes', 'configuration_schema_id', 'restart_required', 'last_error', 'allowed_actions',
-            ]));
-        }
-
-        $stored = $this->store->find('plugins', self::LINK_NOTES_ID) ?? [];
-        $plugin = [
-            'id' => self::LINK_NOTES_ID,
-            'version' => 1,
-            'name' => 'Linknotizen',
-            'installed_version' => '1.0.0',
-            'contract_version' => self::CONTRACT_VERSION,
-            'state' => 'installed_disabled',
-            'last_safe_state' => null,
-            'description' => 'Ergänzt lokale Notizen zu registrierten Ticketlinks. Es werden keine externen URLs abgerufen.',
-            'dependencies' => [],
-            'capabilities' => ['links.notes'],
-            'active_run_count' => 0,
-            'pending_job_count' => 0,
-            'retained_data_bytes' => $this->retainedBytes(),
-            'configuration_schema_id' => self::LINK_NOTES_SCHEMA_ID,
-            'restart_required' => false,
-            'last_error' => null,
+        return [
+            'id' => $pluginId,
+            'version' => (int) ($stored['version'] ?? 1),
+            'name' => $manifest['name'],
+            'installed_version' => $manifest['version'],
+            'contract_version' => $manifest['contract_version'],
+            'state' => $state,
+            'last_safe_state' => $stored['last_safe_state'] ?? null,
+            'description' => $manifest['description'],
+            'dependencies' => $this->registry->dependencies($pluginId),
+            'capabilities' => array_values(array_map(static fn (array $capability): string => $capability['name'], $manifest['capabilities'])),
+            'ui_contributions' => array_values(array_filter(
+                $manifest['ui'],
+                fn (array $contribution): bool => $this->registry->supports($pluginId, (string) $contribution['required_capability']),
+            )),
+            'active_run_count' => $counts['runs'],
+            'pending_job_count' => $counts['jobs'],
+            'unresolved_external_activity_count' => $counts['external'],
+            'retained_data_bytes' => self::LINK_NOTES_ID === $pluginId ? $this->linkNotes->retainedBytes() : (int) ($stored['retained_data_bytes'] ?? 0),
+            'configuration_schema_id' => $this->settingsSchemaId($pluginId),
+            'restart_required' => (bool) ($stored['restart_required'] ?? false),
+            'last_error' => $stored['last_error'] ?? null,
+            'allowed_actions' => $this->allowedActions($state),
         ];
-
-        foreach (['version', 'state', 'last_safe_state', 'last_error', 'restart_required', 'configuration_schema_id'] as $field) {
-            if (array_key_exists($field, $stored)) {
-                $plugin[$field] = $stored[$field];
-            }
-        }
-
-        $counts = $this->activeWorkCounts(self::LINK_NOTES_ID);
-        $plugin['active_run_count'] = $counts['runs'];
-        $plugin['pending_job_count'] = $counts['jobs'];
-        $plugin['retained_data_bytes'] = $this->retainedBytes();
-        $plugin['allowed_actions'] = $this->allowedActions($plugin['state']);
-
-        return $plugin;
     }
 
     private function allowedActions(string $state): array
@@ -558,7 +494,7 @@ final class PluginHandler
         $actions = [];
         foreach ([
             'activate' => ['installed_disabled', 'disabled'],
-            'drain' => ['enabled'],
+            'drain' => ['enabled', 'draining'],
             'deactivate' => ['disabled'],
             'configure' => ['installed_disabled', 'disabled', 'enabled'],
         ] as $action => $states) {
@@ -578,31 +514,105 @@ final class PluginHandler
         return $this->store->find('plugin_configurations', $pluginId) ?? [];
     }
 
-    private function activeWorkCounts(string $pluginId): array
+    private function settingsSchemaId(string $pluginId): string
     {
-        $runs = array_filter($this->store->all('runs'), static fn (array $run): bool => ($run['plugin_id'] ?? null) === $pluginId && !in_array($run['state'] ?? null, ['succeeded', 'failed', 'cancelled'], true));
-        return ['runs' => count($runs), 'jobs' => $this->extensions->pendingWorkCount($pluginId)];
-    }
-
-    private function retainedBytes(): int
-    {
-        $notes = $this->store->all('plugin_link_notes');
-        if ($notes === []) {
-            return 0;
+        $manifest = $this->registry->manifest($pluginId);
+        if (is_string($manifest['settings_schema_id'] ?? null)) {
+            return $manifest['settings_schema_id'];
         }
 
-        return array_sum(array_map(static fn (array $note): int => strlen(json_encode($note, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: ''), $notes));
+        $version = max(1, (int) ($manifest['migrations']['data_version'] ?? 1));
+
+        return 'https://falkenwarte.local/schemas/'.str_replace('.', '-', $pluginId).'-settings-v'.$version;
+    }
+
+    /** @param array<string, mixed> $schema @param array<string, mixed> $values */
+    private function validateConfigurationValues(array $schema, array $values): void
+    {
+        if (($schema['type'] ?? null) !== 'object') {
+            throw new Problem(422, 'validation_failed', 'The plugin settings schema must describe an object.');
+        }
+        foreach ($schema['required'] ?? [] as $required) {
+            if (!array_key_exists($required, $values)) {
+                throw new Problem(422, 'validation_failed', 'A required plugin setting is missing: '.$required.'.');
+            }
+        }
+        foreach ($values as $name => $value) {
+            $property = $schema['properties'][$name] ?? null;
+            if (!is_array($property) || !$this->matchesSettingSchema($value, $property)) {
+                throw new Problem(422, 'validation_failed', 'A plugin setting does not match its registered schema: '.$name.'.');
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $schema */
+    private function matchesSettingSchema(mixed $value, array $schema): bool
+    {
+        $type = $schema['type'] ?? null;
+        $matches = match ($type) {
+            'array' => is_array($value) && array_is_list($value) && count($value) <= (int) ($schema['maxItems'] ?? 200),
+            'object' => is_array($value),
+            'string' => is_string($value),
+            'integer' => is_int($value),
+            'number' => is_int($value) || is_float($value),
+            'boolean' => is_bool($value),
+            default => false,
+        };
+        if (!$matches) {
+            return false;
+        }
+        if ('string' === $type && (mb_strlen($value) < (int) ($schema['minLength'] ?? 0) || mb_strlen($value) > (int) ($schema['maxLength'] ?? 4000))) {
+            return false;
+        }
+        if ('array' === $type) {
+            foreach ($value as $item) {
+                if (isset($schema['items']) && (!$this->matchesSettingSchema($item, $schema['items']))) {
+                    return false;
+                }
+            }
+        }
+        if ('object' === $type) {
+            $properties = $schema['properties'] ?? [];
+            foreach ($value as $name => $item) {
+                if (!isset($properties[$name]) || !$this->matchesSettingSchema($item, $properties[$name])) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private function activeWorkCounts(string $pluginId): array
+    {
+        $runs = array_filter($this->store->all('runs'), static fn (array $run): bool => (($run['plugin_id'] ?? null) === $pluginId || ($run['snapshot']['bridge_plugin_id'] ?? null) === $pluginId) && !in_array($run['state'] ?? null, ['succeeded', 'failed', 'cancelled'], true));
+        $external = array_filter($this->store->all('recovery_entries'), static fn (array $entry): bool => ($entry['bridge_plugin_id'] ?? null) === $pluginId && !in_array($entry['status'] ?? null, ['stopped', 'resolved'], true) && in_array($entry['entry_kind'] ?? null, ['unlisted_external_activity', 'registered_external_start'], true));
+
+        return ['runs' => count($runs), 'jobs' => $this->extensions->pendingWorkCount($pluginId), 'external' => count($external)];
     }
 
     private function knownPlugin(string $pluginId): bool
     {
-        return $pluginId === self::LINK_NOTES_ID || $this->store->find('plugins', $pluginId) !== null;
+        return $this->registry->has($pluginId);
+    }
+
+    /** @param array<string, mixed> $schema @return array<string, mixed> */
+    private function defaultSettings(array $schema): array
+    {
+        $values = [];
+        foreach ($schema['properties'] ?? [] as $name => $property) {
+            if (is_array($property) && array_key_exists('default', $property)) {
+                $values[$name] = $property['default'];
+            }
+        }
+
+        return $values;
     }
 
     private function requiredId(array $params, string $key): string
     {
         $value = $params[$key] ?? null;
-        if (!is_string($value) || trim($value) === '') {
+        if (!is_string($value) || '' === trim($value)) {
             throw new Problem(422, 'validation_failed', 'A valid '.$key.' is required.');
         }
 
