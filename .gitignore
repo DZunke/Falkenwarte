@@ -1,0 +1,10 @@
+.notes/
+/vendor/
+/var/
+/public/build/
+/public/docs/
+/node_modules/
+**/node_modules/
+**/test-results/
+**/playwright-report/
+.env.local
