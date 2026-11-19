@@ -101,6 +101,26 @@ final class DbalStore implements DbalStoreAccess
         return array_map(static fn ($row) => json_decode($row, true, flags: JSON_THROW_ON_ERROR), $this->connection->fetchFirstColumn($sql.' ORDER BY seq', $params));
     }
 
+    public function latestEventId(): ?string
+    {
+        $id = $this->connection->fetchOne('SELECT id FROM events ORDER BY seq DESC LIMIT 1');
+
+        return false === $id ? null : (string) $id;
+    }
+
+    public function projectEventsAfter(string $projectId, string $eventType, ?string $cursor): array
+    {
+        $sql = "SELECT data FROM events WHERE project_id=? AND json_extract(data,'$.event_type')=? AND json_extract(data,'$.kind')='domain' AND json_extract(data,'$.aggregate.type')!='trigger'";
+        $parameters = [$projectId, $eventType];
+        if (null !== $cursor) {
+            $sql .= ' AND seq > (SELECT seq FROM events WHERE id=?)';
+            $parameters[] = $cursor;
+        }
+        $events = $this->connection->fetchFirstColumn($sql.' ORDER BY seq LIMIT 128', $parameters);
+
+        return array_map(static fn (string $event): array => json_decode($event, true, flags: JSON_THROW_ON_ERROR), $events);
+    }
+
     public function page(array $items, array $p = []): array
     {
         $offset = 0;
@@ -210,7 +230,7 @@ final class DbalStore implements DbalStoreAccess
         }
 
         return ['type' => match (true) {
-            null === $value => 'null', is_bool($value) => 'boolean', is_numeric($value) && !is_string($value) => 'number', default => 'text'
+            null === $value => 'null', is_bool($value) => 'boolean', is_numeric($value) && !is_string($value) => 'number', default => 'text',
         }, 'value' => is_string($value) ? mb_substr($value, 0, 20000) : $value];
     }
 
@@ -261,9 +281,9 @@ final class DbalStore implements DbalStoreAccess
     {
         $secret = getenv('APP_SECRET') ?: '';
         if (strlen($secret) < 32) {
-            throw new Problem(503,'secret_unavailable','APP_SECRET mit mindestens 32 Zeichen konfigurieren.');
+            throw new Problem(503, 'secret_unavailable', 'APP_SECRET mit mindestens 32 Zeichen konfigurieren.');
         }
 
-        return hash('sha256',$secret,true);
+        return hash('sha256', $secret, true);
     }
 }

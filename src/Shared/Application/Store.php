@@ -27,6 +27,10 @@ interface Store
 
     public function all(string $type, ?string $project = null): array;
 
+    public function latestEventId(): ?string;
+
+    public function projectEventsAfter(string $projectId, string $eventType, ?string $cursor): array;
+
     public function page(array $items, array $p = []): array;
 
     public function save(string $type, array $record, string $event): array;

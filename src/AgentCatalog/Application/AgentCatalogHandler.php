@@ -152,7 +152,7 @@ final class AgentCatalogHandler
     private function checkConnection(string $id, Actor $actor): array
     {
         $actor->requireOwner();
-        $this->catalog->connection($id);
+        $connection = $this->catalog->connection($id);
         $check = $this->store->save('connection_checks', [
             'connection_id' => $id,
             'checked_at' => $this->store->now(),
@@ -166,7 +166,7 @@ final class AgentCatalogHandler
         ], 't3_connection.check_requested');
         $this->store->enqueue('connection.check', ['check_id' => $check['id']]);
 
-        return ['action_id' => $check['id'], 'status' => 'accepted', 'action_url' => '/api/v1/connections/'.$id.'/check', 'resource' => ['type' => 'connection_check', 'id' => $check['id']], 'run_id' => null];
+        return $this->store->accepted(['resource_type' => 'connection', 'id' => $connection['id'], 'version' => $connection['version']]);
     }
 
     /** @return array<string, mixed> */

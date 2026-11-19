@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Orchestration\Domain;
 
+use App\Shared\Domain\CanonicalData;
+
 /** The immutable T3 request persisted before any external launch is attempted. */
 final readonly class DispatchRequest
 {
@@ -35,29 +37,9 @@ final readonly class DispatchRequest
     public function sha256(): string
     {
         try {
-            return hash('sha256', $this->canonicalJson($this->payload));
+            return hash('sha256', json_encode(CanonicalData::sorted($this->payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
         } catch (\JsonException $exception) {
             throw new \InvalidArgumentException('The dispatch payload is not JSON serializable.', previous: $exception);
         }
-    }
-
-    /** @param array<string, mixed> $value */
-    private function canonicalJson(array $value): string
-    {
-        $normalize = static function (mixed $item) use (&$normalize): mixed {
-            if (!is_array($item)) {
-                return $item;
-            }
-            if (!array_is_list($item)) {
-                ksort($item);
-            }
-            foreach ($item as $key => $nested) {
-                $item[$key] = $normalize($nested);
-            }
-
-            return $item;
-        };
-
-        return json_encode($normalize($value), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 }

@@ -6,10 +6,13 @@ namespace App\Orchestration\Application;
 
 use App\AgentCatalog\Application\AgentCatalogReader;
 use App\Automation\Application\WorkflowPolicy;
+use App\Orchestration\Domain\DispatchRequest;
 use App\Orchestration\Domain\RunCompletionEvaluator;
 use App\Orchestration\Domain\RunDelegationPolicy;
+use App\Orchestration\Domain\RunDelegationViolation;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
+use App\Shared\Domain\CanonicalData;
 use App\Shared\Domain\Problem;
 
 final class RunHandler
@@ -107,78 +110,92 @@ final class RunHandler
                     $this->store->save('triggers', $trigger, 'workflow.trigger_due');
                     $this->store->enqueue('workflow.trigger', ['trigger_id' => $trigger['id'], 'scheduled_at' => $now]);
                 }
-                $allEvents = $this->store->all('events');
                 foreach ($this->store->all('triggers') as $trigger) {
                     if (!$trigger['enabled'] || ($trigger['spec']['type'] ?? null) !== 'domain_event') {
                         continue;
                     }
-                    $events = $allEvents;
-                    $cursor = $trigger['last_event_id'] ?? null;
-                    if (null !== $cursor) {
-                        $cursorIndex = null;
-                        foreach ($events as $index => $event) {
-                            if (($event['event_id'] ?? $event['id'] ?? null) === $cursor) {
-                                $cursorIndex = $index;
-                                break;
-                            }
-                        }
-                        $events = null === $cursorIndex ? [] : array_slice($events, $cursorIndex + 1);
+                    $events = $this->store->projectEventsAfter($trigger['project_id'], $trigger['spec']['event_type'], $trigger['last_event_id'] ?? null);
+                    if ([] === $events) {
+                        continue;
                     }
+                    $fired = false;
                     foreach ($events as $event) {
-                        $eventId = (string) ($event['event_id'] ?? $event['id'] ?? '');
-                        if ('' === $eventId) {
-                            continue;
-                        }
-                        if (($event['project_id'] ?? null) !== $trigger['project_id'] || $event['event_type'] !== $trigger['spec']['event_type']) {
-                            $trigger['last_event_id'] = $eventId;
-                            $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
-                            continue;
-                        }
-                        $taskId = $event['data']['task_id'] ?? $event['aggregate']['id'] ?? null;
+                        $trigger['last_event_id'] = $event['event_id'];
+                        $taskId = $event['data']['task_id'] ?? $event['data']['transition']['after']['task_id'] ?? $event['aggregate']['id'] ?? null;
                         $task = is_string($taskId) ? $this->store->find('tasks', $taskId) : null;
-                        if (null === $task || $task['project_id'] !== $trigger['project_id']) {
-                            $trigger['last_event_id'] = $eventId;
-                            $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
-                            continue;
-                        }
                         $statusId = $trigger['spec']['task_status_id'] ?? null;
-                        if (null !== $statusId && $task['status_id'] !== $statusId) {
-                            $trigger['last_event_id'] = $eventId;
-                            $this->store->save('triggers', $trigger, 'workflow.domain_event_cursor_advanced');
+                        if (null === $task || $task['project_id'] !== $trigger['project_id'] || (null !== $statusId && $task['status_id'] !== $statusId)) {
                             continue;
                         }
                         $this->store->enqueue('workflow.trigger', [
-                            'trigger_id' => $trigger['id'], 'event_id' => $eventId,
+                            'trigger_id' => $trigger['id'], 'event_id' => $event['event_id'],
                             'event_type' => $event['event_type'], 'task_id' => $task['id'],
                         ]);
-                        $trigger['last_event_id'] = $eventId;
                         $trigger['last_fired_at'] = $now;
-                        $this->store->save('triggers', $trigger, 'workflow.domain_event_triggered');
+                        $fired = true;
                     }
+                    $this->store->save('triggers', $trigger, $fired ? 'workflow.domain_event_triggered' : 'workflow.domain_event_cursor_advanced');
                 }
             }
             if (null === $this->activeRecoveryGate() && !$this->maintenanceMode()) {
                 foreach ($this->store->all('runs') as $run) {
-                    if (empty($run['_maintenance_deferred']) || !in_array($run['state'], ['queued', 'dispatching', 'result_reported', 'reconciling'], true)) {
+                    if ((empty($run['_maintenance_deferred']) && empty($run['_provider_deferred'])) || !in_array($run['state'], ['queued', 'dispatching', 'result_reported', 'reconciling'], true)) {
                         continue;
                     }
                     $attempt = $this->attempt($run, (int) $run['attempt_no']);
+                    if (!empty($run['_provider_deferred']) && !$this->providerEnabledForRun($run, $attempt)) {
+                        continue;
+                    }
                     if (null !== $attempt['external_thread_id']) {
                         unset($run['_maintenance_deferred']);
+                        unset($run['_provider_deferred']);
                         $this->store->save('runs', $run, 'run.maintenance_dispatch_deferred_cleared');
                         continue;
                     }
                     unset($run['_maintenance_deferred']);
+                    unset($run['_provider_deferred']);
                     $run['state'] = 'dispatching';
                     $run['status_reason'] = null;
                     $run = $this->store->save('runs', $run, 'run.maintenance_dispatch_resumed');
                     $this->store->enqueue('run.dispatch', ['run_id' => $run['id']]);
                 }
+                foreach ($this->store->all('runs') as $run) {
+                    if (($run['_provider_deferred_action'] ?? null) !== 'cancel' || !in_array($run['state'], ['cancel_requested', 'reconciling'], true)) {
+                        continue;
+                    }
+                    $attempt = $this->attempt($run, (int) $run['attempt_no']);
+                    if (!$this->providerEnabledForRun($run, $attempt)) {
+                        continue;
+                    }
+                    unset($run['_provider_deferred_action']);
+                    $this->store->save('runs', $run, 'run.bridge_cancel_resumed');
+                    $this->store->enqueue('run.cancel', ['run_id' => $run['id']]);
+                }
+                foreach ($this->store->all('run_inputs') as $input) {
+                    if ('queued' !== $input['status'] || empty($input['_provider_deferred'])) {
+                        continue;
+                    }
+                    $run = $this->store->find('runs', (string) $input['run_id']);
+                    if (null === $run) {
+                        continue;
+                    }
+                    $attempt = $this->attempt($run, (int) $input['attempt_no']);
+                    if (!$this->providerEnabledForRun($run, $attempt)) {
+                        continue;
+                    }
+                    unset($input['_provider_deferred']);
+                    $this->store->save('run_inputs', $input, 'run.bridge_input_resumed');
+                    $this->store->enqueue('run.input', ['run_id' => $run['id'], 'input_id' => $input['id']]);
+                }
                 foreach ($this->store->all('workflow_instances') as $instance) {
-                    if ('paused' !== $instance['state'] || empty($instance['_paused_for_maintenance'])) {
+                    if ('paused' !== $instance['state'] || (empty($instance['_paused_for_maintenance']) && empty($instance['_paused_for_provider_id']))) {
+                        continue;
+                    }
+                    if (isset($instance['_paused_for_provider_id']) && !$this->agentCatalog->providerEnabled((string) $instance['_paused_for_provider_id'])) {
                         continue;
                     }
                     unset($instance['_paused_for_maintenance']);
+                    unset($instance['_paused_for_provider_id']);
                     $instance['state'] = 'running';
                     $instance['pause_reason'] = null;
                     $instance = $this->store->save('workflow_instances', $instance, 'workflow.maintenance_resumed');
@@ -257,12 +274,20 @@ final class RunHandler
         $task = $this->record('tasks', $taskId);
         $projectId = (string) $task['project_id'];
         $actor->requireProject($projectId);
+        if (!$actor->owner && (!isset($body['parent_run_id']) || !in_array('runs.request', $actor->capabilities, true))) {
+            throw new Problem(403, 'forbidden', 'Ein technischer Agent darf nur mit ausdrücklich gewährtem runs.request und einem passenden übergeordneten Lauf delegieren.');
+        }
         $this->assertTaskCanStart($task);
         if ((int) $task['version'] !== (int) $body['task_revision']) {
             throw new Problem(412, 'version_conflict', 'Die Aufgabe hat sich seit dem gelesenen Stand geändert.');
         }
 
-        return $this->store->atomic(function () use ($task, $body, $projectId): array {
+        return $this->store->atomic(function () use ($task, $body, $projectId, $actor): array {
+            $task = $this->record('tasks', (string) $task['id']);
+            if ((int) $task['version'] !== (int) $body['task_revision']) {
+                throw new Problem(412, 'version_conflict', 'Die Aufgabe hat sich seit dem gelesenen Stand geändert.');
+            }
+            $this->assertTaskCanStart($task);
             if ($this->maintenanceMode()) {
                 throw new Problem(409, 'maintenance_mode', 'Der Wartungsmodus hält neue Agentenläufe vorübergehend an. Beobachtung und Wiederherstellung bleiben verfügbar.');
             }
@@ -272,6 +297,10 @@ final class RunHandler
             $profile = $this->agentCatalog->profile((string) $body['agent_profile_id']);
             if (!$profile['enabled'] || !$profile['configuration_valid']) {
                 throw new Problem(409, 'agent_profile_unavailable', (string) ($profile['configuration_error'] ?? 'Das Agentprofil ist nicht startbereit.'));
+            }
+            $providerId = $profile['bridge_plugin_id'] ?? null;
+            if (!is_string($providerId) || '' === $providerId || !$this->agentCatalog->providerEnabled($providerId)) {
+                throw new Problem(409, 'capability_unavailable', 'Der registrierte Ausführungsprovider nimmt keine neuen T3-Aufträge an.');
             }
             if (!in_array($projectId, $profile['allowed_project_ids'], true)) {
                 throw new Problem(403, 'forbidden', 'Dieses Agentprofil ist für das Projekt nicht freigegeben.');
@@ -288,6 +317,17 @@ final class RunHandler
                 throw new Problem(409, 'agent_connection_mismatch', 'Agentprofil und Projektbindung verwenden unterschiedliche T3-Verbindungen.');
             }
             $this->assertCapabilities($connection, ['t3_thread_launch', 't3_thread_read']);
+            $parentRun = null;
+            if (isset($body['parent_run_id'])) {
+                $parentRun = $this->record('runs', (string) $body['parent_run_id']);
+                if ($parentRun['project_id'] !== $projectId || $parentRun['task_id'] !== $task['id']) {
+                    throw new Problem(409, 'run_context_mismatch', 'Ein delegierter Lauf muss zum selben Ticket und Projekt wie sein übergeordneter Lauf gehören.');
+                }
+                if (!in_array($parentRun['state'], ['succeeded', 'failed', 'cancelled', 'abandoned'], true)) {
+                    throw new Problem(409, 'run_parent_active', 'Ein Lauf kann erst delegieren, wenn sein eigener T3-Ausgang geklärt ist.');
+                }
+            }
+
             foreach ($this->store->all('runs') as $existing) {
                 if (($existing['snapshot']['project_binding_id'] ?? null) === $binding['id'] && in_array($existing['state'], self::ACTIVE_RUN_STATES, true)) {
                     throw new Problem(409, 'execution_slot_occupied', 'Für dieses T3-Projekt ist bereits ein Auftrag aktiv oder ungeklärt.');
@@ -299,6 +339,27 @@ final class RunHandler
                 $workflowInstance = $this->record('workflow_instances', (string) $body['workflow_instance_id']);
                 if ($workflowInstance['task_id'] !== $task['id'] || $workflowInstance['project_id'] !== $projectId || 'running' !== $workflowInstance['state'] || $workflowInstance['current_stage_id'] !== $body['stage']) {
                     throw new Problem(409, 'run_context_mismatch', 'Der Workflow-Auftrag gehört nicht zur aktuellen Phase dieser Aufgabe.');
+                }
+            }
+
+            $delegationDepth = 0;
+            if (null !== $parentRun) {
+                if (null === $workflowInstance || ($parentRun['workflow_instance_id'] ?? null) !== $workflowInstance['id']) {
+                    throw new Problem(409, 'run_delegation_unbounded', 'Ein delegierter Lauf benötigt dieselbe aktive, zeitlich und fachlich begrenzte Workflowinstanz.');
+                }
+                if ((int) $parentRun['snapshot']['task_revision'] !== (int) $task['version']) {
+                    throw new Problem(409, 'run_context_mismatch', 'Der übergeordnete Lauf gehört zu einer anderen Aufgabenrevision.');
+                }
+                try {
+                    $delegationDepth = $this->delegationPolicy->childDepth(
+                        (int) ($parentRun['snapshot']['delegation_depth'] ?? 0),
+                        (int) ($workflowInstance['definition_snapshot']['limits']['max_depth'] ?? 0),
+                    );
+                } catch (RunDelegationViolation $violation) {
+                    throw new Problem(409, $violation->problemCode, $violation->getMessage());
+                }
+                if (new \DateTimeImmutable((string) $workflowInstance['deadline_at']) <= new \DateTimeImmutable($this->store->now())) {
+                    throw new Problem(409, 'workflow_duration_limit', 'Das Zeitbudget der Workflowinstanz ist abgelaufen.');
                 }
             }
 
@@ -350,6 +411,7 @@ final class RunHandler
                 'run_completion_policy' => $policy,
                 'execution_target' => $executionTarget,
                 'bridge_plugin_id' => $profile['bridge_plugin_id'] ?? null,
+                'delegation_depth' => $delegationDepth,
                 'classification_id' => $task['classification_id'] ?? null,
                 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $routing['routing_rules_version'] ?? $task['routing_rules_version'] ?? null,
@@ -380,7 +442,8 @@ final class RunHandler
                 'snapshot' => $snapshot,
                 'attempt_no' => $attemptNo,
                 'attempts' => [$attempt],
-                'parent_run_id' => $body['parent_run_id'] ?? null,
+                'parent_run_id' => $parentRun['id'] ?? null,
+                '_requested_by' => $actor->ref(),
                 'workflow_instance_id' => $workflowInstance['id'] ?? null,
                 'pending_input' => null,
                 'result_digest' => null,
@@ -396,7 +459,7 @@ final class RunHandler
             }
             $this->store->enqueue('run.dispatch', ['run_id' => $run['id']]);
 
-            return ['action_id' => $this->store->actionId(), 'status' => 'accepted', 'action_url' => '/api/v1/runs/'.$run['id'], 'resource' => ['type' => 'run', 'id' => $run['id']], 'run_id' => $run['id']];
+            return $this->store->accepted(['resource_type' => 'run', 'id' => $run['id']], $run['id']);
         });
     }
 
@@ -413,7 +476,7 @@ final class RunHandler
         $run = $this->store->save('runs', $run, 'run.cancel_requested');
         $this->store->enqueue('run.cancel', ['run_id' => $id]);
 
-        return ['action_id' => $this->store->actionId(), 'status' => 'accepted', 'action_url' => '/api/v1/runs/'.$id, 'resource' => ['type' => 'run', 'id' => $id], 'run_id' => $id];
+        return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -438,7 +501,7 @@ final class RunHandler
         $input = $this->store->save('run_inputs', ['run_id' => $id, 'attempt_no' => $run['attempt_no'], 'body' => $body, 'status' => 'queued'], 'run.input_queued');
         $this->store->enqueue('run.input', ['run_id' => $id, 'input_id' => $input['id']]);
 
-        return ['action_id' => $this->store->actionId(), 'status' => 'accepted', 'action_url' => '/api/v1/runs/'.$id, 'resource' => ['type' => 'run', 'id' => $id], 'run_id' => $id];
+        return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -454,7 +517,7 @@ final class RunHandler
         $this->store->save('runs', $run, 'run.reconciliation_requested');
         $this->store->enqueue('run.reconcile', ['run_id' => $id]);
 
-        return ['action_id' => $this->store->actionId(), 'status' => 'accepted', 'action_url' => '/api/v1/runs/'.$id, 'resource' => ['type' => 'run', 'id' => $id], 'run_id' => $id];
+        return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -469,7 +532,7 @@ final class RunHandler
         $run['status_reason'] = trim((string) $body['reason']);
         $run = $this->store->save('runs', $run, 'run.abandoned');
 
-        return $run;
+        return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -479,15 +542,17 @@ final class RunHandler
         $actor->requireProject((string) $run['project_id']);
         $attempt = $this->attempt($run, (int) $body['attempt_no']);
         $task = $this->record('tasks', (string) $run['task_id']);
-        $digest = hash('sha256', json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        $encoding = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR;
+        $digest = hash('sha256', json_encode(CanonicalData::sorted($body), $encoding));
         $reportId = (string) $body['report_id'];
         $prior = $this->store->find('run_reports', $reportId);
         if (null !== $prior) {
-            if (($prior['_digest'] ?? null) !== $digest) {
+            $expected = isset($prior['_reporter_id']) ? $digest : hash('sha256', json_encode($body, $encoding));
+            if ($prior['run_id'] !== $id || ($prior['_reporter_id'] ?? $actor->id) !== $actor->id || ($prior['_digest'] ?? null) !== $expected) {
                 throw new Problem(409, 'idempotency_conflict', 'Diese Report-ID wurde bereits mit anderem Inhalt verwendet.');
             }
 
-            return $prior;
+            return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
         }
         $isCurrent = (int) $body['task_revision'] === (int) $run['snapshot']['task_revision']
             && (int) $body['task_revision'] === (int) $task['version']
@@ -516,7 +581,7 @@ final class RunHandler
             ], 'evidence.reported');
             $evidenceIds[] = $evidence['id'];
         }
-        $report = $this->store->save('run_reports', [
+        $this->store->save('run_reports', [
             'id' => $reportId,
             'run_id' => $id,
             'attempt_no' => (int) $body['attempt_no'],
@@ -528,6 +593,7 @@ final class RunHandler
             'rejection_reason' => $isCurrent ? null : 'Die Meldung bezieht sich auf einen überholten oder beendeten Versuch.',
             'accepted_for_reconciliation' => $isCurrent,
             '_digest' => $digest,
+            '_reporter_id' => $actor->id,
             '_open_questions' => array_values($body['open_questions'] ?? []),
         ], 'run.result_reported');
         if ($isCurrent) {
@@ -540,7 +606,7 @@ final class RunHandler
             $this->store->enqueue('run.reconcile', ['run_id' => $id]);
         }
 
-        return $report;
+        return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
     }
 
     /** @return array<string, mixed> */
@@ -636,14 +702,21 @@ final class RunHandler
             $approval['decided_by'] = $actor->ref();
             $approval['reason'] = trim((string) ($body['reason'] ?? ''));
 
-            return $this->store->save('approvals', $approval, 'approval.invalidated');
+            $approval = $this->store->save('approvals', $approval, 'approval.invalidated');
+            if (!$this->hasPendingApprovalForTask((string) $run['task_id'], (string) $run['project_id'])) {
+                $this->resolveAttention((string) $run['task_id'], 'approval_pending');
+            }
+
+            return $approval;
         }
         $approval['status'] = (string) $body['decision'];
         $approval['decided_at'] = $this->store->now();
         $approval['decided_by'] = $actor->ref();
         $approval['reason'] = trim((string) $body['reason']);
         $approval = $this->store->save('approvals', $approval, 'approval.'.$approval['status']);
-        $this->resolveAttention($run['task_id'], 'approval_pending');
+        if (!$this->hasPendingApprovalForTask((string) $run['task_id'], (string) $run['project_id'])) {
+            $this->resolveAttention((string) $run['task_id'], 'approval_pending');
+        }
         if ('approved' === $approval['status']) {
             $this->store->enqueue('run.reconcile', ['run_id' => $run['id']]);
         } else {
@@ -653,6 +726,21 @@ final class RunHandler
         }
 
         return $approval;
+    }
+
+    private function hasPendingApprovalForTask(string $taskId, string $projectId): bool
+    {
+        foreach ($this->store->all('approvals', $projectId) as $approval) {
+            if ('pending' !== ($approval['status'] ?? null)) {
+                continue;
+            }
+            $run = $this->store->find('runs', (string) ($approval['run_id'] ?? ''));
+            if (($run['task_id'] ?? null) === $taskId) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param array<string, mixed> $p @return array<string, mixed> */
@@ -757,6 +845,9 @@ final class RunHandler
     /** @param array<string, mixed> $body @return array<string, mixed> */
     private function startWorkflow(string $taskId, array $body, Actor $actor): array
     {
+        if (!$actor->owner && 'system' !== $actor->id) {
+            throw new Problem(403, 'forbidden', 'Workflowinstanzen dürfen nur vom Eigentümer oder durch einen geprüften Automation-Trigger gestartet werden.');
+        }
         $task = $this->record('tasks', $taskId);
         $actor->requireProject((string) $task['project_id']);
         if ((int) $task['version'] !== (int) $body['task_revision']) {
@@ -793,7 +884,7 @@ final class RunHandler
             $this->store->enqueue('workflow.advance', ['instance_id' => $instance['id']]);
         }
 
-        return $instance;
+        return $this->store->accepted(['resource_type' => 'workflow_instance', 'id' => $instance['id'], 'version' => $instance['version']]);
     }
 
     /** @return array<string, mixed> */
@@ -845,7 +936,7 @@ final class RunHandler
             }
         }
 
-        return $instance;
+        return $this->store->accepted(['resource_type' => 'workflow_instance', 'id' => $instance['id'], 'version' => $instance['version']]);
     }
 
     /** @param array<string, mixed> $p @return array<string, mixed> */
@@ -937,7 +1028,7 @@ final class RunHandler
             'next_due_at' => ($body['enabled'] && ($spec['type'] ?? null) === 'schedule') ? $this->nextDue($spec['schedule']) : null,
             'last_fired_at' => $trigger['last_fired_at'] ?? null,
             'last_error' => null,
-            'last_event_id' => $trigger['last_event_id'] ?? $this->latestEventId(),
+            'last_event_id' => (null !== $id && $trigger['enabled'] && $trigger['spec'] === $spec && isset($trigger['last_event_id'])) ? $trigger['last_event_id'] : $this->store->latestEventId(),
         ]);
         $saved = $this->store->save('triggers', $trigger, null === $id ? 'workflow.trigger_created' : 'workflow.trigger_updated');
 
@@ -975,9 +1066,19 @@ final class RunHandler
             return;
         }
         if ($this->maintenanceMode()) {
-            $run['_maintenance_deferred'] = true;
-            $run['status_reason'] = 'Der Wartungsmodus hält neue T3-Starts an. Der gespeicherte Auftrag bleibt für die spätere Fortsetzung erhalten.';
-            $this->store->save('runs', $run, 'run.maintenance_dispatch_deferred');
+            $current = $this->record('runs', $runId);
+            $current['_maintenance_deferred'] = true;
+            $current['status_reason'] = 'Der Wartungsmodus hält neue T3-Starts an. Der gespeicherte Auftrag bleibt für die spätere Fortsetzung erhalten.';
+            $this->store->save('runs', $current, 'run.maintenance_dispatch_deferred');
+            $this->removeObservationSchedule($runId);
+
+            return;
+        }
+        if (!$this->providerEnabledForRun($run, $attempt)) {
+            $current = $this->record('runs', $runId);
+            $current['_provider_deferred'] = true;
+            $current['status_reason'] = 'Der registrierte T3-Provider wird stillgelegt. Der gespeicherte Start wird fortgesetzt, sobald der Provider wieder aktiviert ist.';
+            $this->store->save('runs', $current, 'run.bridge_provider_draining');
             $this->removeObservationSchedule($runId);
 
             return;
@@ -1039,7 +1140,9 @@ final class RunHandler
                 }
                 $payload['modelSelection'] = ['instanceId' => $modelSelection['instanceId'], 'model' => $modelSelection['model']];
             }
-            $attempt['request_sha256'] = hash('sha256', $this->canonicalJson($payload));
+            $dispatchRequest = DispatchRequest::fromPayload($payload);
+            $payload = $dispatchRequest->payload;
+            $attempt['request_sha256'] = $dispatchRequest->sha256();
             $attempts = $run['attempts'];
             $attempts[$attempt['attempt_no'] - 1] = $attempt;
             $run['attempts'] = $attempts;
@@ -1048,16 +1151,18 @@ final class RunHandler
             $run['status_reason'] = null;
             $run = $this->store->save('runs', $run, 'run.dispatch_prepared');
         }
-        $run['state'] = 'dispatching';
-        $this->store->save('runs', $run, 'run.dispatch_attempted');
-
-        if ($this->maintenanceMode()) {
-            $run['_maintenance_deferred'] = true;
-            $run['status_reason'] = 'Der Wartungsmodus hält neue T3-Starts an. Der gespeicherte Auftrag bleibt für die spätere Fortsetzung erhalten.';
-            $this->store->save('runs', $run, 'run.maintenance_dispatch_deferred');
+        $dispatchRequest = DispatchRequest::fromPayload($payload);
+        if (!hash_equals((string) $attempt['request_sha256'], $dispatchRequest->sha256())) {
+            $run['state'] = 'reconciling';
+            $run['status_reason'] = 'Der gespeicherte T3-Dispatch stimmt nicht mehr mit seinem unveränderlichen Requesthash überein.';
+            $this->store->save('runs', $run, 'run.dispatch_payload_conflict');
+            $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
 
             return;
         }
+        $payload = $dispatchRequest->payload;
+        $run['state'] = 'dispatching';
+        $this->store->save('runs', $run, 'run.dispatch_attempted');
 
         try {
             $result = $this->bridge->launch($connection, $this->connectionToken($connection), $payload);
@@ -1082,16 +1187,18 @@ final class RunHandler
             $this->store->save('runs', $run, 'run.launch_response_mismatch');
             throw new T3BridgeException('Die T3-Antwort stimmt nicht mit dem ProjectBinding überein.');
         }
-        $attempt['external_thread_id'] = $threadId;
-        $attempt['external_dispatch_run_id'] = isset($result['runId']) ? (string) $result['runId'] : (isset($result['run_id']) ? (string) $result['run_id'] : null);
-        $attempt['remote_status'] = (string) ($result['status'] ?? 'unknown');
-        $attempt['started_at'] = $this->store->now();
-        $attempts = $run['attempts'];
-        $attempts[$attempt['attempt_no'] - 1] = $attempt;
-        $run['attempts'] = $attempts;
-        $run['state'] = 'running';
-        $run['status_reason'] = null;
-        $run = $this->store->save('runs', $run, 'run.external_launch_accepted');
+        $current = $this->record('runs', $runId);
+        $currentAttempt = $this->attempt($current, (int) $attempt['attempt_no']);
+        $currentAttempt['external_thread_id'] = $threadId;
+        $currentAttempt['external_dispatch_run_id'] = isset($result['runId']) ? (string) $result['runId'] : (isset($result['run_id']) ? (string) $result['run_id'] : null);
+        $currentAttempt['remote_status'] = (string) ($result['status'] ?? 'unknown');
+        $currentAttempt['started_at'] = $this->store->now();
+        $attempts = $current['attempts'];
+        $attempts[$currentAttempt['attempt_no'] - 1] = $currentAttempt;
+        $current['attempts'] = $attempts;
+        $current['state'] = !empty($current['report_ids']) ? 'result_reported' : 'running';
+        $current['status_reason'] = null;
+        $run = $this->store->save('runs', $current, 'run.external_launch_accepted');
         $this->resolveAttention($run['task_id'], 'auth_required');
         $this->scheduleObservation($runId);
         $this->store->enqueue('run.observe', ['run_id' => $runId]);
@@ -1142,6 +1249,8 @@ final class RunHandler
 
             return;
         }
+        $run = $this->record('runs', $runId);
+        $attempt = $this->attempt($run, (int) $run['attempt_no']);
         $attempt['remote_status'] = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
         $attempt['external_observed_run_id'] = isset($remote['runId']) ? (string) $remote['runId'] : (isset($remote['run']['id']) ? (string) $remote['run']['id'] : $attempt['external_dispatch_run_id']);
         $attempt['last_observed_at'] = $this->store->now();
@@ -1230,6 +1339,13 @@ final class RunHandler
 
             return;
         }
+        if (!$this->providerEnabledForRun($run, $attempt)) {
+            $run['_provider_deferred_action'] = 'cancel';
+            $run['status_reason'] = 'Der registrierte T3-Provider wird stillgelegt. Der Abbruch wird fortgesetzt, sobald der Provider wieder aktiviert ist.';
+            $this->store->save('runs', $run, 'run.bridge_cancel_deferred');
+
+            return;
+        }
         $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
         try {
             $this->bridge->interrupt($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], (string) $attempt['external_dispatch_run_id']);
@@ -1264,6 +1380,12 @@ final class RunHandler
             ? (string) $body['message']
             : "Antwort auf die Falkenwarte-Rückfrage:\n".implode("\n", array_map(static fn (array $answer): string => $answer['question_id'].': '.implode('; ', $answer['values']), $body['answers']));
         $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
+        if (!$this->providerEnabledForRun($run, $attempt)) {
+            $input['_provider_deferred'] = true;
+            $this->store->save('run_inputs', $input, 'run.bridge_input_deferred');
+
+            return;
+        }
         try {
             $result = $this->bridge->send($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], $message, (string) $input['id']);
         } catch (T3BridgeException $exception) {
@@ -1428,6 +1550,7 @@ final class RunHandler
                 $attempt = $run['attempts'][$run['attempt_no'] - 1] ?? [];
                 $entry = $this->store->save('recovery_entries', [
                     'gate_id' => $gate['id'], 'project_id' => $run['project_id'], 'connection_id' => $attempt['connection_id'] ?? null,
+                    'bridge_plugin_id' => $run['snapshot']['bridge_plugin_id'] ?? (is_string($attempt['connection_id'] ?? null) ? $this->agentCatalog->providerIdForConnection($attempt['connection_id']) : null),
                     'run_id' => $run['id'], 'external_thread_id' => $attempt['external_thread_id'] ?? null,
                     'external_run_id' => $attempt['external_dispatch_run_id'] ?? null,
                     'entry_kind' => 'known_run', 'status' => 'pending', 'disposition' => null, 'reason' => null,
@@ -1444,6 +1567,7 @@ final class RunHandler
                 }
                 $this->store->save('recovery_entries', [
                     'gate_id' => $gate['id'], 'project_id' => $binding['project_id'], 'connection_id' => $binding['connection_id'],
+                    'bridge_plugin_id' => $this->agentCatalog->providerIdForConnection((string) $binding['connection_id']),
                     'external_project_id' => $binding['external_project_id'], 'entry_kind' => 'unlisted_external_activity',
                     'status' => 'owner_review_required', 'disposition' => null,
                     'reason' => 'Der T3-Vertrag stellt in der festgelegten MCP-Baseline keine allgemeine Threadinventarliste bereit. Prüfe das Projekt in T3 und registriere unbekannte aktive Aufträge.',
@@ -1482,6 +1606,7 @@ final class RunHandler
             }
             $entry = $this->store->save('recovery_entries', [
                 'gate_id' => $gate['id'], 'project_id' => $project['id'], 'connection_id' => $binding['connection_id'],
+                'bridge_plugin_id' => $this->agentCatalog->providerIdForConnection((string) $binding['connection_id']),
                 'external_project_id' => $binding['external_project_id'], 'external_thread_id' => $start['thread_id'],
                 'external_run_id' => $start['run_id'] ?? null, 'entry_kind' => 'registered_external_start',
                 'status' => 'pending', 'disposition' => null, 'reason' => trim((string) ($body['reason'] ?? '')),
@@ -1699,6 +1824,13 @@ final class RunHandler
             return;
         }
         $profile = $this->agentCatalog->profile((string) $stage['agent_profile_id']);
+        $providerId = $profile['bridge_plugin_id'] ?? null;
+        if (is_string($providerId) && '' !== $providerId && !$this->agentCatalog->providerEnabled($providerId)) {
+            $instance['_paused_for_provider_id'] = $providerId;
+            $this->pauseWorkflow($instance, 'Der registrierte T3-Provider wird stillgelegt. Die Workflowphase wird nach seiner Aktivierung fortgesetzt.');
+
+            return;
+        }
         if (!$profile['enabled'] || !$profile['configuration_valid']) {
             $this->pauseWorkflow($instance, 'Das Agentprofil dieser Phase ist nicht startbereit.');
             $this->openAttention($task['id'], $task['project_id'], 'workflow_profile_unavailable', 'owner');
@@ -1738,6 +1870,7 @@ final class RunHandler
                 'prompt_template_version' => (int) $profile['prompt_template_version'],
                 'run_completion_policy' => $stage['run_completion_policy'], 'execution_target' => $profile['execution_target'],
                 'bridge_plugin_id' => $profile['bridge_plugin_id'] ?? null,
+                'delegation_depth' => 0,
                 'classification_id' => $task['classification_id'] ?? null, 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $task['routing_rules_version'] ?? null,
             ],
@@ -1748,7 +1881,7 @@ final class RunHandler
                 'external_message_id' => null, 'external_url' => null, 'remote_status' => null, 'last_observed_at' => null,
                 'started_at' => null, 'ended_at' => null, 'request_sha256' => hash('sha256', ''),
             ]],
-            'parent_run_id' => null, 'workflow_instance_id' => $instance['id'], 'pending_input' => null,
+            'parent_run_id' => null, 'workflow_instance_id' => $instance['id'], '_requested_by' => ['kind' => 'system', 'id' => 'system'], 'pending_input' => null,
             'result_digest' => null, 'evidence_ids' => [], 'report_ids' => [], 'last_observed_at' => null,
             'status_reason' => null, '_dispatch_request' => null,
         ], 'run.queued');
@@ -1921,6 +2054,17 @@ final class RunHandler
         }
     }
 
+    /** @param array<string, mixed> $run @param array<string, mixed> $attempt */
+    private function providerEnabledForRun(array $run, array $attempt): bool
+    {
+        $providerId = $run['snapshot']['bridge_plugin_id'] ?? null;
+        if (!is_string($providerId) || '' === $providerId) {
+            $providerId = $this->agentCatalog->providerIdForConnection((string) $attempt['connection_id']);
+        }
+
+        return is_string($providerId) && '' !== $providerId && $this->agentCatalog->providerEnabled($providerId);
+    }
+
     private function assertTaskCanStart(array $task): void
     {
         if ($this->maintenanceMode()) {
@@ -1965,18 +2109,6 @@ final class RunHandler
         usort($gates, static fn (array $a, array $b): int => strcmp((string) $b['created_at'], (string) $a['created_at']));
 
         return $gates[0] ?? null;
-    }
-
-    private function latestEventId(): ?string
-    {
-        $events = $this->store->all('events');
-        if ([] === $events) {
-            return null;
-        }
-        $latest = $events[array_key_last($events)];
-        $id = $latest['event_id'] ?? $latest['id'] ?? null;
-
-        return is_string($id) ? $id : null;
     }
 
     private function workflowDefinition(string $workflowId, int $version): array
@@ -2177,25 +2309,6 @@ final class RunHandler
         $body .= "\n\nNutze die freigegebenen Falkenwarte-MCP-Werkzeuge für Rückfragen, Ergebnislinks und Ergebnisberichte. Berichte Beobachtungen als Agentmeldung. Falkenwarte prüft keinen Code und lädt keine Links herunter.";
 
         return $body;
-    }
-
-    private function canonicalJson(array $value): string
-    {
-        $normalize = static function (mixed $item) use (&$normalize): mixed {
-            if (!is_array($item)) {
-                return $item;
-            }
-            if (!array_is_list($item)) {
-                ksort($item);
-            }
-            foreach ($item as $key => $nested) {
-                $item[$key] = $normalize($nested);
-            }
-
-            return $item;
-        };
-
-        return json_encode($normalize($value), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 
     private function deadline(int $seconds): string

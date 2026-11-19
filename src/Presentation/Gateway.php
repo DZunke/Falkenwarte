@@ -9,6 +9,7 @@ use App\Extensions\Application\PluginRegistry;
 use App\Shared\Application\Actor;
 use App\Shared\Application\IdempotencyStore;
 use App\Shared\Application\Store;
+use App\Shared\Domain\CanonicalData;
 use App\Shared\Domain\Problem;
 
 final class Gateway
@@ -45,7 +46,7 @@ final class Gateway
             if ($dedup && (!is_string($key) || strlen($key) < 8 || strlen($key) > 256)) {
                 throw new Problem(428, 'precondition_required', 'Ein gültiger Idempotency-Key ist erforderlich.');
             }
-            $fingerprint = hash('sha256', json_encode($this->canonical([$name, $p, $body, $etag]), JSON_THROW_ON_ERROR));
+            $fingerprint = hash('sha256', json_encode(CanonicalData::sorted([$name, $p, $body, $etag]), JSON_THROW_ON_ERROR));
             if ($dedup) {
                 $old = $this->idempotency->findReplay($actor->id, $key);
                 if ($old) {
@@ -98,20 +99,6 @@ final class Gateway
         };
 
         return $read ? $call() : $this->store->atomic($call);
-    }
-
-    private function canonical(array $value): array
-    {
-        if (!array_is_list($value)) {
-            ksort($value);
-        }
-        foreach ($value as &$item) {
-            if (is_array($item)) {
-                $item = $this->canonical($item);
-            }
-        }
-
-        return $value;
     }
 
     private function project(array $params): ?string
