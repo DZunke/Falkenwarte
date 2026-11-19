@@ -21,14 +21,34 @@ Bundle und Component unterstützen die gewählte PHP-/Symfony-Basis. Die tatsäc
 
 Der Imagebuild pinnt das Dockerfile-Frontend per Digest, den PHP-Erweiterungs-Snapshot und die Versionen der eingebetteten Mercure- und SQLite-Laufzeiten. Beim Release erhält BuildKit den Zeitstempel des geprüften Commits als `SOURCE_DATE_EPOCH`; der Docker-Exporter schreibt diesen Zeitstempel auch in die Dateimetadaten. Der Build erstellt aus Composer-Metadaten, dem NPM-Produktionsgraphen, Debian-Paketdaten und den eingebetteten Caddy-Modulen ein CycloneDX-1.5-Inventar. Fehlende Lizenzdaten aus Composer oder NPM brechen den Build ab; Debian-Pakete ohne maschinenlesbares Lizenzfeld werden als `NOASSERTION` ausgewiesen. Das kompakte Laufzeitzeugnis prüft Mercure `v1.1.6` mit AGPL-3.0, beide Symfony-Mercure-Pakete mit MIT sowie SQLite `3.51.3` über SQLite3 und PDO.
 
-Der geprüfte, zeitstabile Imagebuild und der lokale Inventarexport laufen ohne zusätzlichen Dienst:
+`quality.yml` pinnt `docker/setup-buildx-action` auf Commit `f87e5991a6d7451dcb8d9637bfbc97413f497069`, Buildx auf `v0.39.0` und den `docker-container`-Builder auf `moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb`. Der lokale Buildx-Client muss ebenfalls `v0.39.0` melden; die offizielle Binärversion ist unter [Docker Buildx v0.39.0](https://github.com/docker/buildx/releases/tag/v0.39.0) verfügbar.
+
+Für einen lokalen Vergleich verwende denselben Builder und einen Git-Archivkontext des geprüften Commits. Git setzt die Zeitstempel auf die Commitzeit und die Archivmaske auf `0022`; ein alter, zuvor bearbeiteter Checkout kann dagegen frühere `mtime`-Werte enthalten, die `rewrite-timestamp=true` nur nach oben begrenzt.
 
 ```sh
-docker buildx build --file docker/Dockerfile --target app --build-arg VCS_REF="$(git rev-parse HEAD)" --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" --build-arg APP_VERSION="$(cat version.txt)" --provenance=false --output type=docker,name=falkenwarte:local,rewrite-timestamp=true .
+set -euo pipefail
+builder="falkenwarte-release-local-$$"
+image_archive="$(mktemp)"
+trap 'docker buildx rm "$builder" >/dev/null 2>&1 || true; rm -f "$image_archive"' EXIT
+docker buildx version | grep -F 'v0.39.0'
+docker buildx create --name "$builder" --driver docker-container --driver-opt image=moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb --use
+docker buildx inspect --bootstrap "$builder"
+sha="$(git rev-parse HEAD)"
+source_date_epoch="$(git show -s --format=%ct "$sha")"
+app_version="$(git show "$sha:version.txt")"
+git -c tar.umask=0022 archive --format=tar "$sha" | docker buildx build --builder "$builder" --file docker/Dockerfile --target app --provenance=false --build-arg VCS_REF="$sha" --build-arg SOURCE_DATE_EPOCH="$source_date_epoch" --build-arg APP_VERSION="$app_version" --output "type=docker,name=falkenwarte:local,dest=$image_archive,rewrite-timestamp=true" -
+docker load --input "$image_archive"
+docker run --rm --env SOURCE_DATE_EPOCH="$source_date_epoch" --entrypoint php falkenwarte:local -r '$expected = (int) getenv("SOURCE_DATE_EPOCH"); foreach (["/app/composer.lock", "/usr/share/falkenwarte/image-audit/runtime-evidence.json"] as $path) { if (filemtime($path) !== $expected) { exit(1); } }'
 scripts/export-image-audit.sh falkenwarte:local var/image-audit
 ```
 
 Der dokumentierte Prüfsnapshot (`VCS_REF=515f5f248566f54604f837ca06a5ccd8fdee09bf`, `APP_VERSION=0.1.0`, Commit-Epoch `1795113705`, Context-Tar SHA-256 `898df2dc06a93a2f8fcee2888b3b1d47e39a52efd7c1a2428a85516aca2421a9`) wurde zweimal unabhängig mit `--no-cache` gebaut; beide Images hatten dieselbe ID `sha256:7ac98fcaa532378bd4d233fd9a0610fbffd2a77d6a5a5e0c15847d13cf7a9276` und dieselben 43 RootFS-Layer. Das CycloneDX-SBOM hat in beiden Images den SHA-256 `82fe9ceebf583b318567bca0cecc22516a28ef68232c466d297288f57701b388`; diese Werte dokumentieren genau diesen Prüfsnapshot.
+
+Im früheren [Hosted-Build 44601867336](https://github.com/DZunke/Falkenwarte/actions/runs/44601867336) wichen nur nicht normalisierte TAR-`mtime`-Metadaten ab; SBOM und Image-Payloads waren gleich. Dieser Vergleich erklärt eine Archivmetadaten-Differenz, belegt aber keinen bytegleichen TAR-Export. Die aktuelle Workflow-Konfiguration setzt den oben genannten Buildx-/BuildKit-Pin, `SOURCE_DATE_EPOCH`, deaktivierte Provenance, normalisierte Export-Zeitstempel und prüft die Quellzeiten zweier Image-Dateien.
+
+Zwei unabhängige GitHub-Runner bauten Commit `83f0fb338a50dbd3dc6b4db0d87fb279759b80a2` mit identischer Image-ID `sha256:e333b4cf80ba65871b87ab8fad3c0b25c904215e0e801ccc552b4498529c868c`, 43 identischen RootFS-Layern und identischen Inventardateien. [PR-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44611627080/job/135869460410) · [Dispatch-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44611621718/job/135869445334)
+
+Für Commit `d9158701a647d5a8a43c8b227d951fa9d40591f3` stimmte auch das lokal exportierte `manifest.json` mit beiden Runnern überein. Alle drei Archive enthielten dieselbe Config-ID `sha256:224cb1b65cf25feb13fe8ab4f2719118affacdd5d5ac194390050f48d06673f2` und dieselben 43 geordneten Layer. Für diesen Vergleich ist die in `manifest.json` referenzierte Konfigurationsdatei maßgeblich. Die lokale Docker-Engine zeigte nach dem Laden den Digest des Manifests als `.Id` an. [PR-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44614092324/job/135878020924) · [Dispatch-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44614080974/job/135877982014)
 
 Das Verzeichnis enthält `sbom.cdx.json`, `THIRD-PARTY-NOTICES.txt`, `runtime-evidence.json` und `image-evidence.json`; das letzte bindet deren Hash an Image-ID, Commitlabel und Produktversion.
 
