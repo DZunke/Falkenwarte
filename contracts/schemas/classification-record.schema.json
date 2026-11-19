@@ -1,0 +1,365 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "task_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "task_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "taxonomy_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "policy_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "routing_rules_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "input_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "request_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "provider": {
+      "const": "openai_decisions"
+    },
+    "model": {
+      "type": "string",
+      "maxLength": 120,
+      "minLength": 1
+    },
+    "provider_request_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "answers": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "type": {
+                "const": "predicate"
+              },
+              "probability": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "name",
+              "type",
+              "probability"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "type": {
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "maxLength": 160,
+                      "minLength": 1
+                    },
+                    "probability": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "probability"
+                  ]
+                },
+                "minItems": 1,
+                "maxItems": 400
+              }
+            },
+            "required": [
+              "name",
+              "type",
+              "choice",
+              "confidence",
+              "probabilities"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "type": {
+                "const": "score"
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "value": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "label": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    },
+                    "probability": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "label",
+                    "probability"
+                  ]
+                },
+                "minItems": 1,
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "name",
+              "type",
+              "score",
+              "confidence",
+              "probabilities"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "type": {
+                "const": "refusal"
+              }
+            },
+            "required": [
+              "name",
+              "type"
+            ]
+          }
+        ],
+        "description": "Normalisierte Falkenwarte-Auswertung. Native OpenAI Choice kann weitere Typen; Falkenwarte verwendet ausschließlich eigene String-IDs. Unbekannte Namen/Werte, fehlende Antworten oder unplausible Verteilungen werden verworfen."
+      },
+      "minItems": 0,
+      "maxItems": 400
+    },
+    "primary_topic_label_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "suggested_label_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "minItems": 0,
+      "maxItems": 80
+    },
+    "suggested_workflow_label_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "ready",
+        "needs_information",
+        "needs_human_decision",
+        "classification_unavailable"
+      ]
+    },
+    "applied": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "input_tokens": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempt_no": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "taxonomy_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "taxonomy_snapshot": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._:-]{0,79}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "topic",
+              "workflow"
+            ]
+          }
+        },
+        "required": [
+          "label_id",
+          "key",
+          "name",
+          "description",
+          "kind"
+        ],
+        "description": "Aktive, für diese Auswertung angebotene Taxonomie. Keine frei generierten Labels und keine Attentionlabels."
+      },
+      "minItems": 0,
+      "maxItems": 300
+    }
+  },
+  "required": [
+    "id",
+    "task_id",
+    "task_revision",
+    "taxonomy_version",
+    "policy_version",
+    "routing_rules_version",
+    "input_fingerprint",
+    "request_fingerprint",
+    "provider",
+    "model",
+    "provider_request_id",
+    "answers",
+    "primary_topic_label_id",
+    "suggested_label_ids",
+    "suggested_workflow_label_id",
+    "outcome",
+    "applied",
+    "created_at",
+    "input_tokens",
+    "attempt_no",
+    "taxonomy_fingerprint",
+    "taxonomy_snapshot"
+  ],
+  "description": "Unveränderlicher Klassifikationsnachweis. applied wird beim atomaren Anlegen des Ergebnisses gesetzt. Veraltete Input-/Taxonomie-/Regelversionen werden nicht auf den aktuellen Task angewandt; keine freie KI-Autorisierung oder Abschlussentscheidung. taxonomy_snapshot und dessen Fingerprint halten die exakt angebotenen Beschreibungen fest; reine Darstellungsfarben sind kein KI-Input.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://falkenwarte.local/schemas/classification-record-v1",
+  "title": "ClassificationRecord v1"
+}

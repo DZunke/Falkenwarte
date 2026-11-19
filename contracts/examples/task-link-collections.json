@@ -1,0 +1,52 @@
+{
+  "task_id": "00000001-1111-4111-8111-111111111111",
+  "task_version": 2,
+  "items": [
+    {
+      "id": "00000005-1111-4111-8111-111111111111",
+      "task_id": "00000001-1111-4111-8111-111111111111",
+      "task_version": 2,
+      "name": "Quelle",
+      "kind": "source",
+      "links": [
+        {
+          "id": "00000006-1111-4111-8111-111111111111",
+          "title": "Teilaufgabe aus dem ursprünglichen Issue",
+          "url": "https://github.com/example/project/issues/42",
+          "kind": "source_issue",
+          "relation": "part_of",
+          "registered_by": {
+            "kind": "agent",
+            "id": "agent-research"
+          },
+          "registered_at": "2026-11-19T12:00:00Z",
+          "updated_at": "2026-11-19T12:00:00Z",
+          "provenance": "registered_reference"
+        }
+      ]
+    },
+    {
+      "id": "00000007-1111-4111-8111-111111111111",
+      "task_id": "00000001-1111-4111-8111-111111111111",
+      "task_version": 2,
+      "name": "Ergebnis",
+      "kind": "delivery",
+      "links": [
+        {
+          "id": "00000008-1111-4111-8111-111111111111",
+          "title": "Vom Agent gemeldeter Pull Request",
+          "url": "https://github.com/example/project/pull/47",
+          "kind": "pull_request",
+          "relation": "delivers",
+          "registered_by": {
+            "kind": "agent",
+            "id": "agent-implementation"
+          },
+          "registered_at": "2026-11-19T12:00:00Z",
+          "updated_at": "2026-11-19T12:00:00Z",
+          "provenance": "registered_reference"
+        }
+      ]
+    }
+  ]
+}

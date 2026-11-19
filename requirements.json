@@ -1,0 +1,387 @@
+{
+  "project": "Falkenwarte",
+  "concept_version": "2.0",
+  "status": "implementation_in_progress",
+  "requirements": [
+    {
+      "id": "R01",
+      "requirement": "Projekttrennung mit Name, Icon und Farbe",
+      "specification": "4",
+      "milestone": "M1",
+      "acceptance": [
+        "A01",
+        "A02"
+      ]
+    },
+    {
+      "id": "R02",
+      "requirement": "Agentrollen und robustes T3-Ping-Pong ohne Modellverwaltung",
+      "specification": "8; docs/T3_INTEGRATION.md",
+      "milestone": "M3",
+      "acceptance": [
+        "A09",
+        "A10",
+        "A11",
+        "A12",
+        "A29"
+      ]
+    },
+    {
+      "id": "R03",
+      "requirement": "Lokale Single-User-Anwendung mit getrennten technischen Principals",
+      "specification": "1; 12; 19",
+      "milestone": "M1",
+      "acceptance": [
+        "A02",
+        "A19"
+      ]
+    },
+    {
+      "id": "R04",
+      "requirement": "DDD und Clean Architecture",
+      "specification": "3; docs/domain/BOUNDED_CONTEXTS.md",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A03",
+        "A32"
+      ]
+    },
+    {
+      "id": "R05",
+      "requirement": "Domain und Action Event Driven",
+      "specification": "10; docs/domain/EVENTS.md",
+      "milestone": "M1–M4",
+      "acceptance": [
+        "A04",
+        "A05",
+        "A13"
+      ]
+    },
+    {
+      "id": "R06",
+      "requirement": "Domain Object History Tracking",
+      "specification": "10; docs/domain/EVENTS.md",
+      "milestone": "M1–M5",
+      "acceptance": [
+        "A04",
+        "A06"
+      ]
+    },
+    {
+      "id": "R07",
+      "requirement": "Doctrine DBAL und Migrationen ohne Doctrine ORM",
+      "specification": "11",
+      "milestone": "M0–M1",
+      "acceptance": [
+        "A03",
+        "A04"
+      ]
+    },
+    {
+      "id": "R08",
+      "requirement": "Flexible Boards mit gemeinsamen Tickets und konsistentem WIP",
+      "specification": "4",
+      "milestone": "M1",
+      "acceptance": [
+        "A07",
+        "A08",
+        "A14"
+      ]
+    },
+    {
+      "id": "R09",
+      "requirement": "MCP-Server für Aufgabenarbeit",
+      "specification": "12; contracts/mcp-tools.json",
+      "milestone": "M2",
+      "acceptance": [
+        "A02",
+        "A13",
+        "A22",
+        "A25",
+        "A28"
+      ]
+    },
+    {
+      "id": "R10",
+      "requirement": "MCP-Client zur vorhandenen T3-Instanz",
+      "specification": "8; docs/T3_INTEGRATION.md",
+      "milestone": "M3",
+      "acceptance": [
+        "A09",
+        "A10",
+        "A11"
+      ]
+    },
+    {
+      "id": "R11",
+      "requirement": "Projektmetriken mit Definition und Datenherkunft",
+      "specification": "20",
+      "milestone": "M4",
+      "acceptance": [
+        "A16"
+      ]
+    },
+    {
+      "id": "R12",
+      "requirement": "Zentrales Dashboard über alle Projekte",
+      "specification": "13; 20",
+      "milestone": "M1–M4",
+      "acceptance": [
+        "A16",
+        "A21",
+        "A27"
+      ]
+    },
+    {
+      "id": "R13",
+      "requirement": "Plugins mit Aktivierung, Drain, Datenbestand und Ablösung",
+      "specification": "15; docs/PLUGIN_SYSTEM.md",
+      "milestone": "M5",
+      "acceptance": [
+        "A17",
+        "A18"
+      ]
+    },
+    {
+      "id": "R14",
+      "requirement": "Austauschbare externe Implementierungen durch Bridges",
+      "specification": "15; docs/domain/CONTEXT_MAP.md",
+      "milestone": "M2–M5",
+      "acceptance": [
+        "A09",
+        "A17",
+        "A30"
+      ]
+    },
+    {
+      "id": "R15",
+      "requirement": "Vollständige JSON-API und typisierter Client",
+      "specification": "12; 13; contracts/openapi.yaml",
+      "milestone": "M1–M6",
+      "acceptance": [
+        "A13",
+        "A14",
+        "A21"
+      ]
+    },
+    {
+      "id": "R16",
+      "requirement": "Moderne shadcn-Oberfläche und konkrete scopekonforme Mockups",
+      "specification": "13; mockups/README.md",
+      "milestone": "M1–M6",
+      "acceptance": [
+        "A21",
+        "A23",
+        "A29"
+      ]
+    },
+    {
+      "id": "R17",
+      "requirement": "Symfony Framework mit Symfony AI",
+      "specification": "2; 6; docs/AI_DECISIONS.md",
+      "milestone": "M0–M2",
+      "acceptance": [
+        "A22",
+        "A26",
+        "A30"
+      ]
+    },
+    {
+      "id": "R18",
+      "requirement": "Genau ein produktiver Docker-Appcontainer",
+      "specification": "19; docs/OPERATIONS.md",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A19",
+        "A20"
+      ]
+    },
+    {
+      "id": "R19",
+      "requirement": "FrankenPHP und Mercure für private Live-Änderungshinweise",
+      "specification": "14; docs/LIVE_SERVICES.md",
+      "milestone": "M1–M4",
+      "acceptance": [
+        "A15",
+        "A19"
+      ]
+    },
+    {
+      "id": "R20",
+      "requirement": "Vollständiges Konzept und ausführbarer /goal-Umsetzungsauftrag",
+      "specification": "GOAL.md; README.md",
+      "milestone": "M0",
+      "acceptance": [
+        "A23"
+      ]
+    },
+    {
+      "id": "R21",
+      "requirement": "Ausschließliche E2E-Produktabdeckung ohne kleinteilige Tests",
+      "specification": "16; docs/TESTING.md",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A21",
+        "A30",
+        "A31"
+      ]
+    },
+    {
+      "id": "R22",
+      "requirement": "MCP-Trafficmocks am echten Netzwerk und Agent-Simulator",
+      "specification": "16; qa/README.md",
+      "milestone": "M0–M3",
+      "acceptance": [
+        "A09",
+        "A10",
+        "A11",
+        "A25",
+        "A30"
+      ]
+    },
+    {
+      "id": "R23",
+      "requirement": "Deterministische Fixtures und isolierte Testzustände",
+      "specification": "16; qa/fixtures/fixture-seed.json; qa/scenarios.json",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A16",
+        "A22",
+        "A30",
+        "A33"
+      ]
+    },
+    {
+      "id": "R24",
+      "requirement": "GitHub, QA-Pipelines, Conventional Commits und Release Please",
+      "specification": "17; docs/GITHUB_DELIVERY.md",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A31"
+      ]
+    },
+    {
+      "id": "R25",
+      "requirement": "Pflichtklassifikation aller nicht manuellen Ticketeingänge",
+      "specification": "6; docs/AI_DECISIONS.md",
+      "milestone": "M2",
+      "acceptance": [
+        "A22",
+        "A26",
+        "A33"
+      ]
+    },
+    {
+      "id": "R26",
+      "requirement": "Konfigurierbare Themen- und Workflowlabels mit Name/Farbe/Beschreibung",
+      "specification": "5; docs/AI_DECISIONS.md",
+      "milestone": "M1–M2",
+      "acceptance": [
+        "A24",
+        "A33"
+      ]
+    },
+    {
+      "id": "R27",
+      "requirement": "Strukturierte MCP-Rückfragen ohne erneute Ticketanlage",
+      "specification": "6; docs/AI_DECISIONS.md",
+      "milestone": "M2",
+      "acceptance": [
+        "A25",
+        "A26"
+      ]
+    },
+    {
+      "id": "R28",
+      "requirement": "Menschlicher Eingriff an Labels und persistenten Gründen erkennbar",
+      "specification": "5; 9; docs/domain/LIFECYCLES.md",
+      "milestone": "M2–M4",
+      "acceptance": [
+        "A27",
+        "A33"
+      ]
+    },
+    {
+      "id": "R29",
+      "requirement": "Link-Collections für Quell-Issues, Pull/Merge Requests und Referenzen",
+      "specification": "7; contracts/schemas/task-links.schema.json",
+      "milestone": "M1–M2",
+      "acceptance": [
+        "A28"
+      ]
+    },
+    {
+      "id": "R30",
+      "requirement": "Keine externen Issue-/Repository-/CI-Connectoren oder Codezugriffe",
+      "specification": "1; 7; 13",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A12",
+        "A21",
+        "A28",
+        "A29"
+      ]
+    },
+    {
+      "id": "R31",
+      "requirement": "Provider und Modelle werden ausschließlich in T3 verwaltet",
+      "specification": "8; docs/T3_INTEGRATION.md",
+      "milestone": "M3",
+      "acceptance": [
+        "A29"
+      ]
+    },
+    {
+      "id": "R32",
+      "requirement": "Linux als einzige Betriebssystem-Zielplattform",
+      "specification": "19; docs/OPERATIONS.md",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A19",
+        "A20"
+      ]
+    },
+    {
+      "id": "R33",
+      "requirement": "Nachhaltige Fachdokumentation mit ADRs, Domain Map und Lebenszyklen",
+      "specification": "18; docs/DOCUMENTATION.md; docs/domain; docs/adr",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A23",
+        "A32"
+      ]
+    },
+    {
+      "id": "R34",
+      "requirement": "OpenAI Decisions nativ über Symfony AI und erweiterbare PR-Anbindung",
+      "specification": "6; docs/AI_DECISIONS.md; docs/adr/0006.md",
+      "milestone": "M0–M2",
+      "acceptance": [
+        "A22",
+        "A26",
+        "A30"
+      ]
+    },
+    {
+      "id": "R35",
+      "requirement": "Background-Tasks dürfen ergänzende Backend-Funktionstests erhalten",
+      "specification": "16; docs/TESTING.md",
+      "milestone": "M2–M6",
+      "acceptance": [
+        "A05",
+        "A30"
+      ]
+    },
+    {
+      "id": "R36",
+      "requirement": "Private Umgebung und Business-Claude bleiben getrennt",
+      "specification": "1; docs/OPERATIONS.md",
+      "milestone": "M0–M6",
+      "acceptance": [
+        "A02",
+        "A19",
+        "A29"
+      ]
+    }
+  ]
+}

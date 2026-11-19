@@ -1,0 +1,71 @@
+# Live-Dienste: FrankenPHP und Mercure
+
+**Status:** Dieser Text ist der Live-Dienst-Vertrag. Implementierte Konfiguration und Browsernachweise stehen in [TRACEABILITY.md](TRACEABILITY.md) und [VALIDATION.md](VALIDATION.md). Die JSON-API und SQLite bleiben für Zustand, Berechtigungen und History maßgeblich. Mercure informiert die Oberfläche über Änderungen; es entscheidet keine fachlichen Übergänge und startet keine Agents.
+
+## 1. Laufzeit in einem Container
+
+Das App-Image enthält FrankenPHP im klassischen Modus, den Messenger-Consumer und Maintenance unter einer Prozessaufsicht. Der Mercure-Hub läuft als Caddy-Modul im FrankenPHP-Prozess. Offizielle FrankenPHP-Builds enthalten dieses Modul bereits; seine Aktivierung ist eine ausdrückliche Caddyfile-Konfiguration. Ein zusätzlicher Hub-Container, Redis oder ein Cloudvertrag sind für diesen Entwurf nicht erforderlich.
+
+Der Browser verbindet sich direkt mit dem Hub-Endpunkt. Symfony stellt keine eigene lang laufende SSE-Proxyantwort bereit. Für Veröffentlichungen aus dem CLI-Worker wird authentifiziertes HTTP verwendet: Die FrankenPHP-Funktion `mercure_publish()` steht dort nicht zur Verfügung. [FrankenPHP-Dokumentation](https://frankenphp.dev/docs/mercure/)
+
+## 2. Fixierte Versionsbasis
+
+| Bestandteil | Auswahl |
+|---|---|
+| Anwendung | PHP 8.5.x, Symfony 7.4 LTS |
+| Symfony-Integration | `symfony/mercure-bundle:0.7.0` und `symfony/mercure:0.10.0` |
+| Hub-Vertrag | Mercure-Protokoll 1.0; recherchierte Modul-Zielbasis v1.1.6 |
+| Image | Konkreter FrankenPHP-Digest mit nachgewiesenem kompatiblem Mercure-Modul |
+
+Bundle und Component unterstützen die gewählte PHP-/Symfony-Basis. Die tatsächliche eingebettete Hub-Version muss M0 aus dem Image nachweisen; ein PHP-Image-Tag beweist sie nicht. Falls erforderlich, entsteht ein gesperrter eigener xcaddy-Build. Die Paketauflösung, Konfiguration und Protokollrundläufe sind anschließend zu prüfen. In der SBOM wird die AGPL-3.0-Lizenz des Hub-Tags erfasst; die Symfony-Pakete sind MIT-lizenziert. [Bundle](https://packagist.org/packages/symfony/mercure-bundle), [Component](https://packagist.org/packages/symfony/mercure), [Hub-Release](https://github.com/dunglas/mercure/releases/tag/v1.1.6), [Hub-Lizenz](https://github.com/dunglas/mercure/blob/v1.1.6/LICENSE)
+
+## 3. Ein öffentlicher Ursprung
+
+Vorgeschlagener Standard ist **`https://localhost:8443`** für Frontend, JSON-API und `/.well-known/mercure`. Der Container lauscht ebenfalls auf HTTPS-Port 8443; der Host bindet ihn ausschließlich an `127.0.0.1`. Ein zweiter lokaler HTTP-Port kann ausschließlich auf diese HTTPS-Adresse umleiten. Gleiche innere und äußere HTTPS-Ports vereinfachen den Publisher-Aufruf aus dem Container, ersetzen aber keine Verbindungsprüfung.
+
+Die Hub-URL wird als kanonischer `resource_identifier` festgelegt. Beide JWT-Arten verwenden genau diese URL als `aud`. Als eigener, konfigurierter Issuer dient die Falkenwarte-Origin; `iss` muss exakt dem vertrauenswürdigen `issuer`-Block entsprechen. Auch bei einer später abweichenden internen Transportadresse bleiben diese Identitäten ausdrücklich konfiguriert. Ein externer OAuth-Server ist für die lokale Tokenausgabe nicht nötig. [Hub-Konfiguration](https://mercure.rocks/docs/deployment/configuration)
+
+## 4. Getrennte Berechtigungen
+
+Publisher und Subscriber erhalten getrennte Signierschlüssel und getrennte Prüfschlüsselkonfigurationen im Issuer-Block. Nur Backendprozesse besitzen Publish-Rechte. Ein Browser bekommt ausschließlich die Subscribe-Grants der freigegebenen Projekttopics. Alle fachlichen UI-Updates werden ausdrücklich als privat veröffentlicht; eine schwer erratbare Topic-URL ersetzt diese Einstellung nicht.
+
+Der moderne Tokenvertrag verwendet `typ: at+jwt`, `iss`, `aud`, `exp`, `sub`, `client_id`, `iat`, `jti` und `authorization_details`. Alte `mercure.publish`-/`mercure.subscribe`-Claims und Legacy-Kompatibilitätsoptionen werden nicht übernommen. Die geprüfte Symfony-Konfiguration unterstützt getrennte `publisher`- und `subscriber`-Factories. [Konfiguration v0.7.0](https://github.com/symfony/mercure-bundle/blob/v0.7.0/src/DependencyInjection/Configuration.php), [Tokenvertrag](https://mercure.rocks/spec)
+
+Der Subscriber-JWT wird ausschließlich als `__Secure-mercure_access_token` mit HttpOnly, Secure, SameSite=Strict und Hub-Pfad gesetzt. Für dieselbe Origin bleibt das Cookie hostgebunden. Der Name wird ausdrücklich konfiguriert, da der Bundle-Debugmodus sonst einen anderen Standard verwendet. JWTs erscheinen weder in URLs noch in JavaScript-Speichern oder API-Antwortkörpern. T3-Tokens, OpenAI-Zugänge, MCP-Bearer und Publisher-Secrets gelangen nie an das Frontend. [Cookie-Implementierung v0.10.0](https://github.com/symfony/mercure/blob/v0.10.0/src/Authorization.php)
+
+## 5. Vorgeschlagene JSON-Endpunkte
+
+Die folgenden Namen sind Falkenwarte-API-Entscheidungen, keine eingebauten Symfony-Routen:
+
+| Route | Vertrag |
+|---|---|
+| `GET /api/v1/live/config` | Liefert Hub-URL, erlaubte exakte Topic-Identifikatoren und Angaben zur Erneuerung; keine Zugangstokens. |
+| `POST /api/v1/live/authorize` | Prüft die bestehende Sitzung und CSRF-Schutz, berechnet erlaubte Grants, setzt das HttpOnly-Cookie und liefert nur Ablauf-/Erneuerungsmetadaten. |
+
+Beide Antworten sind privat und werden nicht gemeinsam gecacht. Der Client kann gewünschte Projekte angeben; das Backend berechnet die tatsächliche Berechtigung selbst. Als anfängliche Projektentscheidung gilt eine Subscriber-Laufzeit von zehn Minuten mit vorgezogener Erneuerung. Der Server kann diese Politik später ändern. Abmeldung beendet die Browserverbindung und löscht das Cookie; ein bereits ausgegebener JWT bleibt außerhalb dieser Browserinstanz höchstens bis zu seinem Ablauf gültig.
+
+## 6. Veröffentlichen nach Commit
+
+Ein fachlicher Command schreibt Domainzustand, History und Outbox atomar in derselben kurzen DBAL-Transaktion. Erst nach deren Commit verarbeitet ein separater Publisher die UI-Lieferung über Symfony `HubInterface` und HTTP-POST. Während des Netzaufrufs bleibt keine fachliche SQLite-Transaktion offen.
+
+Der Hinweis enthält eine stabile Event-ID, Projekt-/Objektkennung, Objekttyp und Version. Vollständige Prompts, Logs, Secrets und veränderliche Geschäftsdaten werden nicht mitgesendet. Der Empfänger invalidiert passende Abfragen und lädt den aktuellen Zustand über JSON.
+
+Für diese Außenwirkung gibt es einen eigenen persistenten Lieferstatus. Eine Hub-Bestätigung bedeutet nur, dass der Hub das Update angenommen hat; sie bestätigt keinen Empfang durch einen Browser und keine andere Außenwirkung derselben Outbox. Nach einem Timeout darf erneut veröffentlicht werden. Dieselbe Event-ID und versionsbewusste Clients machen Duplikate unschädlich. Bei Hub-Ausfall funktioniert die JSON-API weiter; die Oberfläche zeigt einen verzögerten Live-Status.
+
+## 7. Browser-Vertrag und Wiederaufnahme
+
+Pro Browseransicht wird eine native EventSource-Verbindung geöffnet. Exakte Topics werden mit wiederholten `match`-Parametern abonniert; für das Publizieren heißt der Parameter weiterhin `topic`. Native EventSource erlaubt keinen frei gesetzten Authorization-Header. Die Same-Origin-Verbindung verwendet das zuvor gesetzte Cookie; eine abweichende CORS-Architektur ist zunächst unnötig. [Migration zu V1](https://mercure.rocks/docs/UPGRADE)
+
+Die Oberfläche registriert zuerst die Eventhandler und synchronisiert bei **jedem `open`**, einschließlich Reconnect, ihre sichtbaren JSON-Abfragen. Ein während des Ladens eintreffender Hinweis löst nötigenfalls eine weitere Invalidierung aus; ältere Antworten dürfen keinen neueren Zustand überschreiben. Nach längerer Hintergrundpause erfolgt ebenfalls eine Synchronisation.
+
+EventSource sendet beim automatischen Reconnect den zuletzt empfangenen `Last-Event-ID`-Requestheader. Eine neue Instanz kann `last_event_id` verwenden. Diese Kennung ist ein opaker Hub-Cursor, keine Domain-History-Sequenz. Insbesondere wird kein noch unveröffentlichtes Outbox-Ereignis als bereits bekannter Hub-Cursor ausgegeben. Native EventSource kann den Responseheader `Mercure-Last-Event-ID` nicht lesen; die Anwendung verspricht daher keine darauf basierende automatische Lückenerkennung. [Reconnect und History](https://mercure.rocks/docs/concepts/reconnection-and-history)
+
+Der Hub beendet Verbindungen spätestens bei Tokenablauf. Nach einem 401 kann natives EventSource seine Versuche einstellen. Der Client erneuert das Cookie rechtzeitig anhand der erhaltenen Metadaten und öffnet bei Bedarf eine neue Instanz. Fehler führen zu begrenztem Backoff, einer Prüfung der Sitzung und erneutem Snapshot; fehlende Anmeldung beendet den Ablauf. [Autorisierung und Ablauf](https://mercure.rocks/docs/concepts/authorization)
+
+## 8. Persistenz und Abnahme
+
+Bolt speichert einen begrenzten Replaypuffer auf dem persistenten Volume. Eine positive `size` mit positiver `cleanup_frequency` verhindert die unbegrenzte Standardeinstellung; Bereinigung ist probabilistisch. Domain-History, Action-Journal und Outbox bleiben in SQLite. Verlust oder Bereinigung des Hub-Puffers darf fachliche Daten nicht beschädigen und wird durch Neuladen ausgeglichen.
+
+Caddys öffentliche lokale Root-CA wird aus dem Datenvolume exportiert; ihr privater Schlüssel bleibt geschützt. Linux-Systemvertrauen, ein gegebenenfalls eigener Browser-Zertifikatsspeicher und die tatsächlichen PHP-CLI-/T3-/Agent-Clients werden einzeln berücksichtigt. Node-Clients können `NODE_EXTRA_CA_CERTS` verwenden; die Variable wirkt ab Prozessstart. Der Symfony-HTTP-Client im PHP-CLI-Prozess benötigt Vertrauen in diese CA in seinem Zertifikatsspeicher. Zertifikatsprüfung bleibt aktiviert. [Caddy und Docker](https://caddyserver.com/docs/running#local-https-with-docker), [Node-CA-Konfiguration](https://nodejs.org/api/cli.html#node_extra_ca_certsfile), [Symfony-HTTPS-Client](https://symfony.com/doc/7.4/http_client.html#https-certificates)
+
+M0 fixiert den zusammenpassenden Vertrag und einen minimalen Publish-/Subscribe-Rundlauf. Die E2E-Meilensteine weisen anschließend Same-Origin-Cookie, private Topics, unberechtigten Zugriff, Tokenablauf, Reconnect, doppelte Zustellung, Hub-Neustart und geleerte Replay-History nach. Zusätzlich werden Worker-Publish sowie Agent-Aufrufe zum Falkenwarte-MCP-Endpunkt aus deren echtem Laufzeitkontext geprüft. `localhost` ist nicht automatisch zwischen Linux-Host, Container und einem zweiten Gerät identisch erreichbar. Erst diese Nachweise machen aus dem beschriebenen Vertrag eine funktionierende Laufzeit.

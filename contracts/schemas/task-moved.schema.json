@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://falkenwarte.local/schemas/task-moved-v1",
+  "title": "TaskMoved domain event v1",
+  "allOf": [
+    {
+      "$ref": "event-envelope.schema.json"
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "domain"
+        },
+        "event_type": {
+          "const": "work.task_moved"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "from_status_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "to_status_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "from_category": {
+              "enum": [
+                "backlog",
+                "ready",
+                "active",
+                "review",
+                "done",
+                "cancelled"
+              ]
+            },
+            "to_category": {
+              "enum": [
+                "backlog",
+                "ready",
+                "active",
+                "review",
+                "done",
+                "cancelled"
+              ]
+            },
+            "board_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "transition": {
+              "type": "object",
+              "properties": {
+                "before": {
+                  "type": "object"
+                },
+                "after": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "before",
+                "after"
+              ],
+              "additionalProperties": false,
+              "description": "Redigierte fachliche Zustandsfelder für zeitbezogene Projektionen."
+            }
+          },
+          "required": [
+            "task_id",
+            "from_status_id",
+            "to_status_id",
+            "from_category",
+            "to_category",
+            "board_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

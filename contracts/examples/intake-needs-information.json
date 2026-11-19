@@ -1,0 +1,21 @@
+{
+  "outcome": "needs_information",
+  "task_id": "00000001-1111-4111-8111-111111111111",
+  "intake_id": "00000002-1111-4111-8111-111111111111",
+  "action_id": "00000003-1111-4111-8111-111111111111",
+  "task_version": 1,
+  "missing_fields": [
+    {
+      "field_key": "expected_behavior",
+      "question": "Welches Verhalten wird stattdessen erwartet?",
+      "reason_code": "missing",
+      "addressed_to": "requester"
+    }
+  ],
+  "human_attention": {
+    "required": false,
+    "reasons": []
+  },
+  "classification_id": "00000004-1111-4111-8111-111111111111",
+  "poll_after_ms": null
+}

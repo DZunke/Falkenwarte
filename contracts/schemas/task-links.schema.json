@@ -1,0 +1,162 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "task_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "source",
+              "delivery",
+              "reference"
+            ]
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "minLength": 1
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^https?://",
+                  "maxLength": 4000
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "source_issue",
+                    "pull_request",
+                    "merge_request",
+                    "documentation",
+                    "other"
+                  ]
+                },
+                "relation": {
+                  "type": "string",
+                  "enum": [
+                    "source",
+                    "part_of",
+                    "delivers",
+                    "references"
+                  ]
+                },
+                "registered_by": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "owner",
+                        "agent",
+                        "system",
+                        "plugin"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "display_name": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                "registered_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "provenance": {
+                  "const": "registered_reference"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "url",
+                "kind",
+                "relation",
+                "registered_by",
+                "registered_at",
+                "updated_at",
+                "provenance"
+              ],
+              "description": "URL wird syntaktisch geparst: nur http(s), kein userinfo, keine Steuerzeichen. Kein Fetch, Vorschau, Webhook, Pull-Request-Status oder inhaltlicher Vertrauensnachweis."
+            },
+            "minItems": 0,
+            "maxItems": 200
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "task_version",
+          "name",
+          "kind",
+          "links"
+        ],
+        "description": "Benannte Collection mit verpflichtendem kind. links steht in stabiler Erfassungsreihenfolge; Bearbeitung eines Links ändert dessen Position nicht. Keine Reorder-Funktion."
+      },
+      "minItems": 0,
+      "maxItems": 30
+    }
+  },
+  "required": [
+    "task_id",
+    "task_version",
+    "items"
+  ],
+  "description": "items steht in stabiler Erfassungsreihenfolge der Collections. Bearbeitung verändert diese Reihenfolge nicht. Neue Collections werden angehängt; keine Reorder-Funktion.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://falkenwarte.local/schemas/task-links-v1",
+  "title": "TaskLinkCollections v1"
+}

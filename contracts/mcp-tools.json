@@ -1,0 +1,2690 @@
+{
+  "catalog_version": "0.2.0",
+  "status": "proposed_contract",
+  "title": "Falkenwarte MCP für Tickets und T3-Aufträge",
+  "description": "Vertragsentwurf. Alle Tools verwenden dieselben Application-Operationen wie JSON-HTTP. Kein Code- oder Repositoryzugriff, keine externe Issue-Synchronisierung. Eingänge werden mit OpenAI Decisions klassifiziert.",
+  "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+  "transport": {
+    "type": "streamable_http",
+    "path": "/mcp",
+    "protocol_negotiation": "Eigenständiger Falkenwarte-Servertransport mit kompatibel fixierter SDK-Version. Vom T3-Clientprofil zu unterscheiden; T3-Baseline 2025-06-18 wird in docs/T3_INTEGRATION.md festgelegt."
+  },
+  "authentication": {
+    "type": "scoped_bearer",
+    "header": "Authorization",
+    "oauth_authorization_server_required": false,
+    "project_enforcement": "Jeder Aufruf prüft ProjectBinding, Principal-Capabilities und Ressourcenzugehörigkeit serverseitig. Vom Tool gelieferte IDs sind keine Autorisierung.",
+    "secret_policy": "Keine T3-Tokens oder menschlichen Secrets an Modellkontexte weiterreichen."
+  },
+  "parity": {
+    "application_handlers": "Alle Tools verwenden exakt die in operation_id benannte HTTP-/Application-Operation.",
+    "expected_version": "Bei Mutationen entspricht expected_version dem starken If-Match-ETag des angegebenen version_resource.",
+    "client_request_id": "Wird auf den HTTP-Idempotency-Key und dieselbe dauerhafte Deduplizierung abgebildet.",
+    "input_validation": "Inline inputSchema wird zusätzlich zu Domain-Regeln validiert. output_schema_ref referenziert den öffentlichen OpenAPI-Schemaentwurf; der Laufzeitadapter löst ihn vor einer optionalen MCP-outputSchema-Ankündigung auf."
+  },
+  "errors": {
+    "structured_schema_ref": "openapi.yaml#/components/schemas/Problem",
+    "mcp_result": "Fachliche Fehler liefern isError:true, eine redigierte lesbare Kurzbeschreibung und strukturierte Problem-Daten. Kein Erfolg nur wegen HTTP 200.",
+    "codes": [
+      "forbidden",
+      "validation_failed",
+      "version_conflict",
+      "precondition_required",
+      "idempotency_conflict",
+      "resource_not_found",
+      "capability_unavailable",
+      "run_context_mismatch",
+      "completion_policy_unsatisfied",
+      "classification_stale",
+      "workflow_route_conflict",
+      "system_label_immutable",
+      "intake_field_not_requested"
+    ]
+  },
+  "default_policy": {
+    "recursive_run_start": false,
+    "human_approval_tools": false,
+    "secret_administration_tools": false,
+    "plugin_administration_tools": false,
+    "project_scope": "Nur ausdrücklich dem technischen Principal zugewiesene Projekte.",
+    "tool_visibility": "Tools nach aktiven Plugins und Principal-Capabilities filtern; direkte verborgene Aufrufe bleiben serverseitig verweigert.",
+    "asynchronous_receipts": "Das Standard-Agentprofil enthält actions.read für eigene Actions. Ein 202-Ergebnis kann damit über actions_get beobachtet werden.",
+    "technical_intake": "Jeder MCP-Eingang ist klassifikationspflichtig; kein manual-Origin-Feld.",
+    "human_decisions": "Owner-Bestätigungen und Attentionauflösung können nicht durch technische Labels ersetzt werden.",
+    "passive_links": "Registrierte Links werden nicht abgerufen."
+  },
+  "tools": [
+    {
+      "name": "projects_list",
+      "description": "Projekte suchen",
+      "operation_id": "projects_list",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/projects"
+      },
+      "required_capabilities": [
+        "projects.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Opaque Cursor; nicht selbst zusammensetzen."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          },
+          "q": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "name",
+              "updated_at",
+              "created_at"
+            ]
+          }
+        },
+        "required": []
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/ProjectPage"
+    },
+    {
+      "name": "projects_get",
+      "description": "Projekt lesen",
+      "operation_id": "projects_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/projects/{project_id}"
+      },
+      "required_capabilities": [
+        "projects.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "project_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Project"
+    },
+    {
+      "name": "boards_list",
+      "description": "Projektboards lesen",
+      "operation_id": "boards_list",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/projects/{project_id}/boards"
+      },
+      "required_capabilities": [
+        "boards.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Opaque Cursor; nicht selbst zusammensetzen."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          },
+          "archived": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "project_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/BoardPage"
+    },
+    {
+      "name": "boards_get",
+      "description": "Boardkonfiguration lesen",
+      "operation_id": "boards_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/boards/{board_id}"
+      },
+      "required_capabilities": [
+        "boards.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "board_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Board"
+    },
+    {
+      "name": "tasks_list",
+      "description": "Projektübergreifend erlaubte Aufgaben suchen",
+      "operation_id": "tasks_list",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/tasks"
+      },
+      "required_capabilities": [
+        "tasks.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Opaque Cursor; nicht selbst zusammensetzen."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "q": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "status_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 40
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "maxItems": 40
+          },
+          "agent_profile_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "blocked": {
+            "type": "boolean"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "updated_at",
+              "created_at",
+              "priority",
+              "due_at",
+              "title"
+            ]
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          }
+        },
+        "required": []
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskPage"
+    },
+    {
+      "name": "tasks_get",
+      "description": "Aufgabe mit Kriterien und Zuweisung lesen",
+      "operation_id": "tasks_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/tasks/{task_id}"
+      },
+      "required_capabilities": [
+        "tasks.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "tasks_create",
+      "description": "Owner-UI/JSON kann händisch anlegen. Jeder MCP-Aufruf und jeder technische API-Principal wird zwingend klassifiziert; source/manual sind keine beschreibbaren Eingabefelder. 201 liefert finalen aktuellen Receipt, 202 einen dauerhaft nachverfolgbaren accepted Receipt. Bei needs_information bleibt dasselbe Ticket bestehen. Anfragen warten höchstens prefer_wait_ms, Worker bleibt Besitzer der Klassifikation.",
+      "operation_id": "tasks_create",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/projects/{project_id}/tasks",
+        "client_request_id_header": "Idempotency-Key"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 50000
+          },
+          "task_type": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ]
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "is_required": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "text",
+                "is_required"
+              ]
+            },
+            "maxItems": 100
+          },
+          "requested_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent_profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "custom_fields": {
+            "type": "object",
+            "description": "Einziger typisierter Erweiterungspunkt an Aufgaben. Jeder namespaced Key benötigt eine aktive oder historisch lesbare Definition.",
+            "propertyNames": {
+              "pattern": "^[a-z][a-z0-9_.-]*\\.[a-z][a-z0-9_-]*$"
+            },
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "text"
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 10000
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "number"
+                    },
+                    "value": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "boolean"
+                    },
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "date"
+                    },
+                    "value": {
+                      "type": "string",
+                      "format": "date"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "choice"
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 100
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "multi_choice"
+                    },
+                    "value": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      "maxItems": 40
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                }
+              ]
+            },
+            "maxProperties": 50
+          },
+          "suggested_label_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 0,
+            "maxItems": 80
+          },
+          "link_collections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "source",
+                    "delivery",
+                    "reference"
+                  ]
+                },
+                "links": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "maxLength": 300,
+                        "minLength": 1
+                      },
+                      "url": {
+                        "type": "string",
+                        "format": "uri",
+                        "pattern": "^https?://",
+                        "maxLength": 4000
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "source_issue",
+                          "pull_request",
+                          "merge_request",
+                          "documentation",
+                          "other"
+                        ]
+                      },
+                      "relation": {
+                        "type": "string",
+                        "enum": [
+                          "source",
+                          "part_of",
+                          "delivers",
+                          "references"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "url",
+                      "kind",
+                      "relation"
+                    ],
+                    "description": "kind und relation sind Pflichtfelder; other ist der neutrale Linktyp. Links werden in stabiler Erfassungsreihenfolge angezeigt. Keine Umordnung und kein position-/before_id-Feld im Konzeptumfang."
+                  },
+                  "minItems": 0,
+                  "maxItems": 100
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "links"
+              ]
+            },
+            "minItems": 0,
+            "maxItems": 30
+          },
+          "prefer_wait_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1500,
+            "default": 1000
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "client_request_id",
+          "project_id",
+          "title"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TicketReceipt"
+    },
+    {
+      "name": "tasks_update",
+      "description": "Aufgabeninhalt ändern",
+      "operation_id": "tasks_update",
+      "http_mapping": {
+        "method": "PATCH",
+        "path": "/api/v1/tasks/{task_id}",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "path aggregate"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 50000
+          },
+          "task_type": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ]
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "custom_fields": {
+            "type": "object",
+            "description": "Einziger typisierter Erweiterungspunkt an Aufgaben. Jeder namespaced Key benötigt eine aktive oder historisch lesbare Definition.",
+            "propertyNames": {
+              "pattern": "^[a-z][a-z0-9_.-]*\\.[a-z][a-z0-9_-]*$"
+            },
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "text"
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 10000
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "number"
+                    },
+                    "value": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "boolean"
+                    },
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "date"
+                    },
+                    "value": {
+                      "type": "string",
+                      "format": "date"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "choice"
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 100
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "multi_choice"
+                    },
+                    "value": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 100
+                      },
+                      "maxItems": 40
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ]
+                }
+              ]
+            },
+            "maxProperties": 50
+          },
+          "suggested_label_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 0,
+            "maxItems": 80
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "expected_version",
+          "task_id"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "title"
+            ]
+          },
+          {
+            "required": [
+              "description"
+            ]
+          },
+          {
+            "required": [
+              "task_type"
+            ]
+          },
+          {
+            "required": [
+              "priority"
+            ]
+          },
+          {
+            "required": [
+              "due_at"
+            ]
+          },
+          {
+            "required": [
+              "custom_fields"
+            ]
+          },
+          {
+            "required": [
+              "suggested_label_ids"
+            ]
+          }
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "tasks_move",
+      "description": "CompletionPolicy, WIP und Projektzugehörigkeit serverseitig prüfen. Kein freies Status-PATCH.",
+      "operation_id": "tasks_move",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/move",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "board_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "before_task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after_task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "expected_version",
+          "status_id",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "tasks_assign",
+      "description": "Zuweisung startet keinen Agent. Das Profil muss das Projekt erlauben.",
+      "operation_id": "tasks_assign",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/assignment",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agent_profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requested_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "agent_profile_id",
+          "client_request_id",
+          "expected_version",
+          "requested_role",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "criteria_update",
+      "description": "Definitionsänderungen invalidieren passende menschliche Bestätigungen. Technische Agents können kein human_confirmed setzen.",
+      "operation_id": "criteria_update",
+      "http_mapping": {
+        "method": "PUT",
+        "path": "/api/v1/tasks/{task_id}/criteria",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "is_required": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "text",
+                "is_required"
+              ]
+            },
+            "maxItems": 100
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "criteria",
+          "expected_version",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "task_dependencies_update",
+      "description": "Nur gleiches Projekt; Zyklen und Selbstabhängigkeit sind 409.",
+      "operation_id": "task_dependencies_update",
+      "http_mapping": {
+        "method": "PUT",
+        "path": "/api/v1/tasks/{task_id}/dependencies",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "depends_on_task_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 100
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "depends_on_task_ids",
+          "expected_version",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "tasks_report_blocker",
+      "description": "Blockade setzen oder beenden",
+      "operation_id": "tasks_report_blocker",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/blocker",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+        "blocked": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "expected_version",
+          "task_id"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "blocked": {
+                "const": true
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "blocked",
+              "reason"
+            ]
+          },
+          {
+            "properties": {
+              "blocked": {
+                "const": false
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "blocked"
+            ]
+          }
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "task_handoff_get",
+      "description": "Kuratierten Übergabekontext lesen",
+      "operation_id": "task_handoff_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/tasks/{task_id}/handoff"
+      },
+      "required_capabilities": [
+        "tasks.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskHandoff"
+    },
+    {
+      "name": "runs_get",
+      "description": "Run, Versuche und externe Beobachtung lesen",
+      "operation_id": "runs_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/runs/{run_id}"
+      },
+      "required_capabilities": [
+        "runs.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "run_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Run"
+    },
+    {
+      "name": "runs_request",
+      "description": "Neue fachliche Ausführung. Actor-Policy, Budgets, Tiefe und Workflowgrenzen prüfen. Technische Agent-Principals besitzen runs.request standardmäßig nicht.",
+      "operation_id": "runs_request",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/runs",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "runs.request"
+      ],
+      "default_enabled": false,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agent_profile_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "task_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "workflow_instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "agent_profile_id",
+          "client_request_id",
+          "expected_version",
+          "stage",
+          "task_id",
+          "task_revision"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/ActionAccepted"
+    },
+    {
+      "name": "runs_report_result",
+      "description": "Report-ID dedupliziert zusätzlich zum Idempotency-Key. Principal, Attempt, Taskrevision und Referenzen müssen passen. Erfolgsmeldung setzt nicht succeeded.",
+      "operation_id": "runs_report_result",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/runs/{run_id}/result-reports",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "run"
+      },
+      "required_capabilities": [
+        "runs.report"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "report_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "task_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "reported_success",
+              "needs_changes",
+              "blocked",
+              "failed"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30000
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "test_report",
+                        "document",
+                        "review",
+                        "note"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]*(?:[.][a-z][a-z0-9_-]*)+$",
+                      "maxLength": 160
+                    }
+                  ],
+                  "description": "Art einer gemeldeten Information oder eines Links; keine von Falkenwarte ausgeführte Codeprüfung."
+                },
+                "label": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "minLength": 1
+                },
+                "link_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "minItems": 0,
+                  "maxItems": 100
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "label"
+              ],
+              "description": "Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. Die Anwendung lädt keinen Linkinhalt.",
+              "anyOf": [
+                {
+                  "required": [
+                    "text"
+                  ]
+                },
+                {
+                  "required": [
+                    "link_ids"
+                  ],
+                  "properties": {
+                    "link_ids": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "maxItems": 100
+          },
+          "open_questions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "maxItems": 50
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "artifacts",
+          "attempt_no",
+          "client_request_id",
+          "expected_version",
+          "outcome",
+          "report_id",
+          "run_id",
+          "summary",
+          "task_revision"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/ActionAccepted"
+    },
+    {
+      "name": "evidence_register",
+      "description": "If-Match prüft Task. task_id im Body muss dem Pfad entsprechen. Notizen und registrierte Links erzeugen ausschließlich reported; keine Datei- oder Codeprüfung.",
+      "operation_id": "evidence_register",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/evidence",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "evidence.report"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt_no": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "artifact": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "test_report",
+                      "document",
+                      "review",
+                      "note"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]*(?:[.][a-z][a-z0-9_-]*)+$",
+                    "maxLength": 160
+                  }
+                ],
+                "description": "Art einer gemeldeten Information oder eines Links; keine von Falkenwarte ausgeführte Codeprüfung."
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "link_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "minItems": 0,
+                "maxItems": 100
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 10000,
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "description": "Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. Die Anwendung lädt keinen Linkinhalt.",
+            "anyOf": [
+              {
+                "required": [
+                  "text"
+                ]
+              },
+              {
+                "required": [
+                  "link_ids"
+                ],
+                "properties": {
+                  "link_ids": {
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
+          },
+          "criterion_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 0,
+            "maxItems": 100
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "artifact",
+          "client_request_id",
+          "expected_version",
+          "task_id",
+          "task_revision"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "run_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "run_id"
+              ]
+            },
+            "then": {
+              "required": [
+                "attempt_no"
+              ],
+              "properties": {
+                "attempt_no": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "attempt_no": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Evidence"
+    },
+    {
+      "name": "evidence_get",
+      "description": "Einzelnen Nachweis lesen",
+      "operation_id": "evidence_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/evidence/{evidence_id}"
+      },
+      "required_capabilities": [
+        "evidence.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "evidence_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "evidence_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Evidence"
+    },
+    {
+      "name": "history_get",
+      "description": "Redigierte Objektgeschichte lesen",
+      "operation_id": "history_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/history"
+      },
+      "required_capabilities": [
+        "history.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Opaque Cursor; nicht selbst zusammensetzen."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resource_type": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "resource_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "action_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": []
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/RevisionPage"
+    },
+    {
+      "name": "metrics_get",
+      "description": "Definierte Kennzahlen samt Datenqualität lesen",
+      "operation_id": "metrics_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/metrics"
+      },
+      "required_capabilities": [
+        "metrics.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "grain": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "total"
+            ],
+            "default": "total"
+          },
+          "metric_keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "maxItems": 50
+          }
+        },
+        "required": []
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Metrics"
+    },
+    {
+      "name": "agent_profiles_list",
+      "description": "Private Profile für erlaubte Projekte lesen",
+      "operation_id": "agent_profiles_list",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/agent-profiles"
+      },
+      "required_capabilities": [
+        "agents.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Opaque Cursor; nicht selbst zusammensetzen."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/AgentProfilePage"
+    },
+    {
+      "name": "tasks_link_evidence",
+      "description": "Nachweise einem Kriterium als reported zuordnen",
+      "operation_id": "tasks_link_evidence",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/criteria/{criterion_id}/evidence",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "evidence.report"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "criterion_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "criterion_id",
+          "evidence_ids",
+          "expected_version",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "actions_get",
+      "description": "Eigentümer oder derselbe authentifizierte Action-Ersteller innerhalb seiner Projektrechte. Keine rohen Command-Payloads oder Secrets. succeeded beschreibt lokale Command-Wirkung, nicht externen Runabschluss.",
+      "operation_id": "actions_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/actions/{action_id}"
+      },
+      "required_capabilities": [
+        "actions.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "action_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Action"
+    },
+    {
+      "name": "labels_list",
+      "description": "Projektlabels und Themenkategorien lesen",
+      "operation_id": "labels_list",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/projects/{project_id}/labels"
+      },
+      "required_capabilities": [
+        "tasks.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "project_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/LabelCollection"
+    },
+    {
+      "name": "tasks_intake_get",
+      "description": "Originalmelder und berechtigte Projektakteure dürfen den Zustand lesen; Agentinformationen werden nicht mit einer Ownerentscheidung verwechselt.",
+      "operation_id": "tasks_intake_get",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/tasks/{task_id}/intake"
+      },
+      "required_capabilities": [
+        "tasks.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/IntakeStatus"
+    },
+    {
+      "name": "tasks_supply_information",
+      "description": "Fehlende Angaben zum bestehenden Ticket nachreichen",
+      "operation_id": "tasks_supply_information",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/intake/information",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "answers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "field_key": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "field_key",
+                "value"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 40
+          },
+          "prefer_wait_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1500
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "answers",
+          "client_request_id",
+          "expected_version",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TicketReceipt"
+    },
+    {
+      "name": "tasks_reclassify",
+      "description": "Erneute Einordnung anfordern",
+      "operation_id": "tasks_reclassify",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/intake/reclassify",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.classify"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1
+          },
+          "prefer_wait_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1500
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "expected_version",
+          "reason",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TicketReceipt"
+    },
+    {
+      "name": "tasks_links_list",
+      "description": "Alle Link-Collections eines Tickets lesen",
+      "operation_id": "tasks_links_list",
+      "http_mapping": {
+        "method": "GET",
+        "path": "/api/v1/tasks/{task_id}/link-collections"
+      },
+      "required_capabilities": [
+        "tasks.read"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskLinkCollections"
+    },
+    {
+      "name": "tasks_link_collection_create",
+      "description": "Link-Collection anlegen",
+      "operation_id": "tasks_link_collection_create",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/link-collections",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.links.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "source",
+              "delivery",
+              "reference"
+            ]
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "expected_version",
+          "kind",
+          "name",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskLinkCollection"
+    },
+    {
+      "name": "tasks_link_collection_update",
+      "description": "Name oder Zweck einer Link-Collection ändern",
+      "operation_id": "tasks_link_collection_update",
+      "http_mapping": {
+        "method": "PATCH",
+        "path": "/api/v1/tasks/{task_id}/link-collections/{collection_id}",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.links.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "collection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "source",
+              "delivery",
+              "reference"
+            ]
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "collection_id",
+          "expected_version",
+          "kind",
+          "name",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskLinkCollection"
+    },
+    {
+      "name": "tasks_link_collection_remove",
+      "description": "Historie bleibt erhalten. Link-Collections erzeugen keine externe Wirkung. Referenzierte Nachweise behalten ihren eingefrorenen link_snapshot. Inhaltsrelevante Änderungen oder Entfernen machen alte menschliche Bestätigungen für aktuelle Abschlussregeln unbrauchbar; erneutes Review erforderlich.",
+      "operation_id": "tasks_link_collection_remove",
+      "http_mapping": {
+        "method": "DELETE",
+        "path": "/api/v1/tasks/{task_id}/link-collections/{collection_id}",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.links.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "collection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "collection_id",
+          "expected_version",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/Task"
+    },
+    {
+      "name": "tasks_link_register",
+      "description": "Link zu Quelle oder Ergebnis registrieren",
+      "operation_id": "tasks_link_register",
+      "http_mapping": {
+        "method": "POST",
+        "path": "/api/v1/tasks/{task_id}/link-collections/{collection_id}/links",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.links.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "collection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://",
+            "maxLength": 4000
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "source_issue",
+              "pull_request",
+              "merge_request",
+              "documentation",
+              "other"
+            ]
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "source",
+              "part_of",
+              "delivers",
+              "references"
+            ]
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "collection_id",
+          "expected_version",
+          "kind",
+          "relation",
+          "task_id",
+          "title",
+          "url"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskLinkCollection"
+    },
+    {
+      "name": "tasks_link_update",
+      "description": "Referenzierte Nachweise behalten ihren eingefrorenen link_snapshot. Inhaltsrelevante Änderungen oder Entfernen machen alte menschliche Bestätigungen für aktuelle Abschlussregeln unbrauchbar; erneutes Review erforderlich.",
+      "operation_id": "tasks_link_update",
+      "http_mapping": {
+        "method": "PATCH",
+        "path": "/api/v1/tasks/{task_id}/link-collections/{collection_id}/links/{link_id}",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.links.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "collection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://",
+            "maxLength": 4000
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "source_issue",
+              "pull_request",
+              "merge_request",
+              "documentation",
+              "other"
+            ]
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "source",
+              "part_of",
+              "delivers",
+              "references"
+            ]
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "collection_id",
+          "expected_version",
+          "kind",
+          "link_id",
+          "relation",
+          "task_id",
+          "title",
+          "url"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskLinkCollection"
+    },
+    {
+      "name": "tasks_link_remove",
+      "description": "Task-Historie bleibt erhalten. Kein Löschen oder Verändern im externen System. Referenzierte Nachweise behalten ihren eingefrorenen link_snapshot. Inhaltsrelevante Änderungen oder Entfernen machen alte menschliche Bestätigungen für aktuelle Abschlussregeln unbrauchbar; erneutes Review erforderlich.",
+      "operation_id": "tasks_link_remove",
+      "http_mapping": {
+        "method": "DELETE",
+        "path": "/api/v1/tasks/{task_id}/link-collections/{collection_id}/links/{link_id}",
+        "client_request_id_header": "Idempotency-Key",
+        "expected_version_header": "If-Match",
+        "version_resource": "task"
+      },
+      "required_capabilities": [
+        "tasks.links.write"
+      ],
+      "default_enabled": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "collection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "client_request_id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 256
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "client_request_id",
+          "collection_id",
+          "expected_version",
+          "link_id",
+          "task_id"
+        ]
+      },
+      "output_schema_ref": "openapi.yaml#/components/schemas/TaskLinkCollection"
+    }
+  ],
+  "business_outcomes": {
+    "schema_ref": "openapi.yaml#/components/schemas/TicketReceipt",
+    "isError": false,
+    "outcomes": [
+      "accepted",
+      "ready",
+      "needs_information",
+      "needs_human_decision",
+      "classification_unavailable"
+    ],
+    "follow_up": "tasks_intake_get auf derselben task_id; bei fehlenden Angaben tasks_supply_information. Kein erneutes tasks_create."
+  }
+}
