@@ -15,9 +15,10 @@ final readonly class ProjectSlug
     public static function fromString(string $value): self
     {
         $slug = strtolower(trim($value));
-        if (preg_match('/^[a-z][a-z0-9-]{1,62}$/D', $slug) !== 1) {
+        if (1 !== preg_match('/^[a-z][a-z0-9-]{1,62}$/D', $slug)) {
             throw new Problem(422, 'validation_failed', 'Der Projektschlüssel muss mit einem Kleinbuchstaben beginnen und darf nur Kleinbuchstaben, Zahlen und Bindestriche enthalten.');
         }
+
         return new self($slug);
     }
 }

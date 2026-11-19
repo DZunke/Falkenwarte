@@ -16,7 +16,7 @@ final class BoardWipPolicy
                 continue;
             }
             foreach ($board['columns'] as $column) {
-                if ($column['wip_limit'] === null || $column['wip_policy'] !== 'block') {
+                if (null === $column['wip_limit'] || 'block' !== $column['wip_policy']) {
                     continue;
                 }
                 $before = $this->count($board, $column, $tasks, $beforeTask);
@@ -35,7 +35,7 @@ final class BoardWipPolicy
             return;
         }
         foreach ($board['columns'] as $column) {
-            if ($column['wip_limit'] !== null && $column['wip_policy'] === 'block' && $this->count($board, $column, $tasks) > $column['wip_limit']) {
+            if (null !== $column['wip_limit'] && 'block' === $column['wip_policy'] && $this->count($board, $column, $tasks) > $column['wip_limit']) {
                 throw new Problem(409, 'wip_limit_exceeded', 'Die Boardkonfiguration würde die vorhandene WIP-Grenze überschreiten.');
             }
         }
@@ -44,13 +44,16 @@ final class BoardWipPolicy
     /** @param array<string, mixed> $board @param array<string, mixed> $column @param list<array<string, mixed>> $tasks @param array<string, mixed>|null $replacement */
     public function count(array $board, array $column, array $tasks, ?array $replacement = null): int
     {
-        if ($replacement !== null) {
+        if (null !== $replacement) {
             $replaced = false;
-            foreach ($tasks as $index => $task) {
-                if (($task['id'] ?? null) === ($replacement['id'] ?? null)) {
-                    $tasks[$index] = $replacement;
-                    $replaced = true;
-                    break;
+            $replacementId = $replacement['id'] ?? null;
+            if (is_string($replacementId)) {
+                foreach ($tasks as $index => $task) {
+                    if (($task['id'] ?? null) === $replacementId) {
+                        $tasks[$index] = $replacement;
+                        $replaced = true;
+                        break;
+                    }
                 }
             }
             if (!$replaced) {
@@ -64,6 +67,7 @@ final class BoardWipPolicy
                 ++$count;
             }
         }
+
         return $count;
     }
 
@@ -79,21 +83,22 @@ final class BoardWipPolicy
         if (($filter['priorities'] ?? []) !== [] && !in_array($task['priority'], $filter['priorities'], true)) {
             return false;
         }
-        if (isset($filter['blocked']) && $filter['blocked'] !== null && $task['blocked'] !== $filter['blocked']) {
+        if (isset($filter['blocked']) && $task['blocked'] !== $filter['blocked']) {
             return false;
         }
-        if (($filter['label_ids'] ?? []) !== [] && array_intersect($filter['label_ids'], $task['label_ids']) === []) {
+        if (($filter['label_ids'] ?? []) !== [] && [] === array_intersect($filter['label_ids'], $task['label_ids'])) {
             return false;
         }
-        if (isset($filter['human_attention_required']) && $filter['human_attention_required'] !== null && $task['human_attention']['required'] !== $filter['human_attention_required']) {
+        if (isset($filter['human_attention_required']) && $task['human_attention']['required'] !== $filter['human_attention_required']) {
             return false;
         }
         if (($filter['intake_outcomes'] ?? []) !== [] && !in_array($task['intake_outcome'], $filter['intake_outcomes'], true)) {
             return false;
         }
-        if (isset($filter['query']) && trim((string) $filter['query']) !== '' && !str_contains(mb_strtolower($task['title'].' '.$task['description']), mb_strtolower($filter['query']))) {
+        if (isset($filter['query']) && '' !== trim((string) $filter['query']) && !str_contains(mb_strtolower($task['title'].' '.$task['description']), mb_strtolower($filter['query']))) {
             return false;
         }
+
         return true;
     }
 }

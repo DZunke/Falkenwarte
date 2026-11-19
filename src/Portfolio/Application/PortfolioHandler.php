@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\Portfolio\Application;
 
+use App\Portfolio\Domain\CustomFieldPolicy;
+use App\Portfolio\Domain\ProjectSlug;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
-use App\Portfolio\Domain\ProjectSlug;
 
 final class PortfolioHandler
 {
@@ -20,7 +21,7 @@ final class PortfolioHandler
         ['name' => 'Abgebrochen', 'category' => 'cancelled', 'color' => '#64748B', 'is_default' => false],
     ];
 
-    public function __construct(public Store $store)
+    public function __construct(public Store $store, private readonly CustomFieldPolicy $customFieldPolicy)
     {
     }
 
@@ -57,15 +58,15 @@ final class PortfolioHandler
             $archived = filter_var($p['archived'], FILTER_VALIDATE_BOOLEAN);
             $projects = array_values(array_filter($projects, static fn (array $project): bool => $project['archived'] === $archived));
         }
-        if ($query !== '') {
-            $projects = array_values(array_filter($projects, static fn (array $project): bool =>
-                str_contains(mb_strtolower($project['name'].' '.$project['slug'].' '.$project['description']), $query)
+        if ('' !== $query) {
+            $projects = array_values(array_filter($projects, static fn (array $project): bool => str_contains(mb_strtolower($project['name'].' '.$project['slug'].' '.$project['description']), $query)
             ));
         }
 
         $sort = $p['sort'] ?? 'name';
         usort($projects, static function (array $left, array $right) use ($sort): int {
             $field = in_array($sort, ['updated_at', 'created_at'], true) ? $sort : 'name';
+
             return strcasecmp((string) ($left[$field] ?? ''), (string) ($right[$field] ?? ''));
         });
 
@@ -78,6 +79,7 @@ final class PortfolioHandler
     private function getProject(string $id, Actor $actor): array
     {
         $actor->requireProject($id);
+
         return $this->withCounts($this->project($id));
     }
 
@@ -85,7 +87,7 @@ final class PortfolioHandler
     private function createProject(array $body): array
     {
         $slug = ProjectSlug::fromString((string) ($body['slug'] ?? ''))->value;
-        if ($this->findBySlug($slug) !== null) {
+        if (null !== $this->findBySlug($slug)) {
             throw new Problem(409, 'slug_conflict', 'Dieser Projektschlüssel ist bereits vergeben.');
         }
 
@@ -124,7 +126,7 @@ final class PortfolioHandler
     {
         $actor->requireProject($id);
         $project = $this->project($id);
-        $this->apply($project, $body, ['name', 'description', 'icon_key', 'color', 'completion_policy']);
+        $project = $this->apply($project, $body, ['name', 'description', 'icon_key', 'color', 'completion_policy']);
         if (isset($project['color'])) {
             $project['color'] = strtoupper((string) $project['color']);
         }
@@ -138,6 +140,7 @@ final class PortfolioHandler
         $actor->requireProject($id);
         $project = $this->project($id);
         $project['archived'] = (bool) $body['archived'];
+
         return $this->withCounts($this->store->save('projects', $project, $project['archived'] ? 'project.archived' : 'project.reactivated'));
     }
 
@@ -147,6 +150,7 @@ final class PortfolioHandler
         $actor->requireProject($projectId);
         $fields = $this->store->all('custom_fields', $projectId);
         usort($fields, static fn (array $a, array $b): int => strcasecmp($a['label'], $b['label']));
+
         return $this->store->page($fields, $p);
     }
 
@@ -159,6 +163,7 @@ final class PortfolioHandler
                 throw new Problem(409, 'custom_field_key_conflict', 'Dieser Zusatzfeldschlüssel ist bereits vergeben.');
             }
         }
+
         return $this->store->save('custom_fields', [
             'project_id' => $projectId,
             'key' => $body['key'],
@@ -176,21 +181,16 @@ final class PortfolioHandler
     {
         $actor->requireProject($projectId);
         $field = $this->store->find('custom_fields', $fieldId);
-        if ($field === null || $field['project_id'] !== $projectId) {
+        if (null === $field || $field['project_id'] !== $projectId) {
             throw new Problem(404, 'resource_not_found', 'Zusatzfeld wurde nicht gefunden.');
         }
-        if ($field['value_type'] !== $body['value_type']) {
-            foreach ($this->store->all('tasks', $projectId) as $task) {
-                if (array_key_exists($field['key'], $task['custom_fields'])) {
-                    throw new Problem(409, 'custom_field_type_in_use', 'Der Feldtyp kann nicht geändert werden, solange Ticketwerte bestehen.');
-                }
-            }
-        }
+        $this->customFieldPolicy->assertUpdateAllowed($field, $body, $this->store->all('tasks', $projectId));
         foreach (['label', 'value_type', 'required', 'choices', 'active'] as $key) {
             if (array_key_exists($key, $body)) {
                 $field[$key] = $body[$key];
             }
         }
+
         return $this->store->save('custom_fields', $field, 'custom_field.updated');
     }
 
@@ -209,7 +209,7 @@ final class PortfolioHandler
     private function project(string $id): array
     {
         $project = $this->store->find('projects', $id);
-        if ($project === null) {
+        if (null === $project) {
             throw new Problem(404, 'resource_not_found', 'Projekt wurde nicht gefunden.');
         }
 
@@ -228,25 +228,26 @@ final class PortfolioHandler
         return null;
     }
 
-    /** @param array<string, mixed> $record @param array<string, mixed> $fields */
-    private function apply(array &$record, array $fields, array $allowed): void
+    /** @param array<string, mixed> $record @param array<string, mixed> $fields @param list<string> $allowed @return array<string, mixed> */
+    private function apply(array $record, array $fields, array $allowed): array
     {
         foreach ($allowed as $field) {
             if (array_key_exists($field, $fields)) {
                 $record[$field] = $fields[$field];
             }
         }
+
+        return $record;
     }
 
     /** @param array<string, mixed> $p */
     private function pathId(array $p, string $key): string
     {
         $value = $p[$key] ?? null;
-        if (!is_string($value) || $value === '') {
+        if (!is_string($value) || '' === $value) {
             throw new Problem(400, 'validation_failed', 'Pfad-ID fehlt.');
         }
 
         return $value;
     }
-
 }

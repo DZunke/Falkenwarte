@@ -19,7 +19,7 @@ final class TaskCompletionPolicy
 
         if (!empty($policy['require_human_confirmed_criteria'])) {
             foreach ($task['criteria'] as $criterion) {
-                if ($criterion['is_required'] && $criterion['state'] !== 'human_confirmed') {
+                if ($criterion['is_required'] && 'human_confirmed' !== $criterion['state']) {
                     throw new Problem(409, 'completion_policy_unsatisfied', 'Alle erforderlichen Kriterien benötigen eine menschliche Bestätigung.');
                 }
             }
@@ -29,7 +29,7 @@ final class TaskCompletionPolicy
         foreach ($policy['required_evidence_kinds'] ?? [] as $requiredKind) {
             $found = false;
             foreach ($evidence as $item) {
-                if ($item['task_id'] === $task['id'] && $item['kind'] === $requiredKind && $item['review_status'] === 'human_confirmed' && isset($valid[$item['id']])) {
+                if ($item['task_id'] === $task['id'] && $item['kind'] === $requiredKind && 'human_confirmed' === $item['review_status'] && isset($valid[$item['id']])) {
                     $found = true;
                     break;
                 }
@@ -40,15 +40,15 @@ final class TaskCompletionPolicy
         }
 
         if (!empty($policy['require_human_approval'])) {
-            $approved = array_filter($approvals, static fn (array $approval): bool => ($approval['task_id'] ?? null) === $task['id'] && $approval['status'] === 'approved');
-            if ($approved === []) {
+            $approved = array_filter($approvals, static fn (array $approval): bool => ($approval['task_id'] ?? null) === $task['id'] && 'approved' === $approval['status']);
+            if ([] === $approved) {
                 throw new Problem(409, 'completion_policy_unsatisfied', 'Für den Abschluss ist eine offene menschliche Entscheidung erforderlich.');
             }
         }
 
         if (!empty($policy['require_review'])) {
             foreach ($evidence as $item) {
-                if ($item['task_id'] === $task['id'] && $item['review_status'] === 'human_confirmed' && isset($valid[$item['id']])) {
+                if ($item['task_id'] === $task['id'] && 'human_confirmed' === $item['review_status'] && isset($valid[$item['id']])) {
                     return;
                 }
             }

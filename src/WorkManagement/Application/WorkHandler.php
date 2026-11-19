@@ -7,9 +7,11 @@ namespace App\WorkManagement\Application;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
+use App\WorkManagement\Domain\AttentionLabelCatalog;
 use App\WorkManagement\Domain\BoardWipPolicy;
 use App\WorkManagement\Domain\TaskCompletionPolicy;
 use App\WorkManagement\Domain\TaskLinkPolicy;
+use Symfony\Component\Uid\Uuid;
 
 final class WorkHandler
 {
@@ -90,7 +92,7 @@ final class WorkHandler
     private function listTasks(array $p, Actor $actor): array
     {
         $projectId = isset($p['project_id']) && is_string($p['project_id']) ? $p['project_id'] : null;
-        if ($projectId !== null) {
+        if (null !== $projectId) {
             $actor->requireProject($projectId);
         }
         $tasks = $this->store->all('tasks', $projectId);
@@ -102,35 +104,39 @@ final class WorkHandler
             'blocked' => 'blocked',
         ];
         foreach ($filters as $query => $field) {
-            if (array_key_exists($query, $p) && $p[$query] !== '' && $p[$query] !== null) {
-                $value = $query === 'blocked' ? filter_var($p[$query], FILTER_VALIDATE_BOOLEAN) : $p[$query];
+            if (array_key_exists($query, $p) && '' !== $p[$query] && null !== $p[$query]) {
+                $value = 'blocked' === $query ? filter_var($p[$query], FILTER_VALIDATE_BOOLEAN) : $p[$query];
                 $tasks = array_values(array_filter($tasks, static fn (array $task): bool => $task[$field] === $value));
             }
         }
-        if (isset($p['status_ids']) && $p['status_ids'] !== []) {
+        if (isset($p['status_ids']) && [] !== $p['status_ids']) {
             $tasks = array_values(array_filter($tasks, static fn (array $task): bool => in_array($task['status_id'], (array) $p['status_ids'], true)));
         }
-        if (isset($p['labels']) && $p['labels'] !== []) {
-            $labelIds = [];
-            foreach ($this->store->all('labels') as $label) {
-                if ($actor->canProject($label['project_id']) && in_array($label['key'], (array) $p['labels'], true)) {
-                    $labelIds[] = $label['id'];
+        if (isset($p['labels']) && [] !== $p['labels']) {
+            $requestedKeys = (array) $p['labels'];
+            $tasks = array_values(array_filter($tasks, function (array $task) use ($requestedKeys): bool {
+                $labelIds = [];
+                foreach ($this->labelsForProject($task['project_id']) as $label) {
+                    if (in_array($label['key'], $requestedKeys, true)) {
+                        $labelIds[] = $label['id'];
+                    }
                 }
-            }
-            $tasks = array_values(array_filter($tasks, static fn (array $task): bool => array_intersect($labelIds, $task['label_ids']) !== []));
+
+                return [] !== array_intersect($labelIds, $this->projectedTaskLabelIds($task));
+            }));
         }
         if (isset($p['label_id'])) {
-            $tasks = array_values(array_filter($tasks, static fn (array $task): bool => in_array($p['label_id'], $task['label_ids'], true)));
+            $tasks = array_values(array_filter($tasks, fn (array $task): bool => in_array($p['label_id'], $this->projectedTaskLabelIds($task), true)));
         }
         if (isset($p['human_attention_required'])) {
             $expected = filter_var($p['human_attention_required'], FILTER_VALIDATE_BOOLEAN);
-            $tasks = array_values(array_filter($tasks, static fn (array $task): bool => $task['human_attention']['required'] === $expected));
+            $tasks = array_values(array_filter($tasks, fn (array $task): bool => ([] !== $this->openAttentionReasons($task['id'], $task['project_id'], 'owner')) === $expected));
         }
         if (isset($p['intake_outcome'])) {
             $tasks = array_values(array_filter($tasks, static fn (array $task): bool => $task['intake_outcome'] === $p['intake_outcome']));
         }
         $query = trim((string) ($p['q'] ?? ''));
-        if ($query !== '') {
+        if ('' !== $query) {
             $needle = mb_strtolower($query);
             $tasks = array_values(array_filter($tasks, static fn (array $task): bool => str_contains(mb_strtolower($task['title'].' '.$task['description'].' '.$task['key']), $needle)));
         }
@@ -140,6 +146,7 @@ final class WorkHandler
         usort($tasks, static function (array $left, array $right) use ($field, $direction): int {
             $a = $left[$field] ?? '';
             $b = $right[$field] ?? '';
+
             return ($a <=> $b) * $direction;
         });
 
@@ -159,6 +166,7 @@ final class WorkHandler
         $project = $this->project($projectId);
         $statuses = $this->store->all('statuses', $projectId);
         usort($statuses, static fn (array $a, array $b): int => $a['position'] <=> $b['position']);
+
         return ['project_id' => $projectId, 'project_version' => $project['version'], 'items' => array_map($this->presentStatus(...), $statuses)];
     }
 
@@ -190,14 +198,14 @@ final class WorkHandler
                 $seenIds[$status['id']] = true;
                 if (isset($oldById[$status['id']])) {
                     $this->guardUsedStatusCategory($oldById[$status['id']], $status);
-                } elseif ($this->store->find('statuses', $status['id']) !== null) {
+                } elseif (null !== $this->store->find('statuses', $status['id'])) {
                     throw new Problem(409, 'status_id_conflict', 'Die Status-ID wird bereits in einem anderen Projekt verwendet.');
                 }
             }
             $statuses[] = $status;
         }
 
-        if ($defaultCount !== 1) {
+        if (1 !== $defaultCount) {
             throw new Problem(422, 'validation_failed', 'Genau ein Projektstatus muss als Standard markiert sein.');
         }
 
@@ -220,9 +228,9 @@ final class WorkHandler
                     break;
                 }
             }
-            if ($replacementId === null || !isset($byId[$replacementId])) {
+            if (null === $replacementId || !isset($byId[$replacementId])) {
                 $used = array_filter($this->store->all('tasks', $projectId), static fn (array $task): bool => $task['status_id'] === $oldStatus['id']);
-                if ($used !== []) {
+                if ([] !== $used) {
                     throw new Problem(409, 'status_in_use', 'Verwendete Status benötigen vor dem Entfernen eine gültige Neuzuordnung.');
                 }
                 $this->store->remove('statuses', $oldStatus['id'], 'task_status.removed');
@@ -244,6 +252,7 @@ final class WorkHandler
             $this->store->save('statuses', $status, isset($status['id']) ? 'task_status.updated' : 'task_status.created');
         }
         $project = $this->store->save('projects', $project, 'project.statuses_replaced');
+
         return ['project_id' => $projectId, 'project_version' => $project['version'], 'items' => array_map($this->presentStatus(...), $this->store->all('statuses', $projectId))];
     }
 
@@ -297,14 +306,14 @@ final class WorkHandler
                 }
             }
         }
-        if ($status === null) {
+        if (null === $status) {
             throw new Problem(422, 'validation_failed', 'Der gewählte Ticketstatus gehört nicht zu diesem Projekt.');
         }
 
         $labels = $actor->owner ? $this->validateLabelIds($projectId, $body['label_ids'] ?? []) : [];
         $primaryTopic = null;
         foreach ($labels as $label) {
-            if ($label['kind'] === 'topic') {
+            if ('topic' === $label['kind']) {
                 $primaryTopic ??= $label['id'];
             }
         }
@@ -332,21 +341,21 @@ final class WorkHandler
             'workflow_label_id' => $this->workflowLabelId($labels),
             'human_attention' => ['required' => false, 'reasons' => []],
             'intake_outcome' => null,
-            'origin' => $actor->owner ? 'manual' : ($actor->transport === 'mcp' ? 'mcp' : 'technical_api'),
+            'origin' => $actor->owner ? 'manual' : ('mcp' === $actor->transport ? 'mcp' : 'technical_api'),
             'classification_required' => !$actor->owner,
             'classification_id' => null,
             'link_collection_ids' => [],
         ];
         $this->assertBoardChangeAllowed($task, null);
         $task = $this->store->save('tasks', $task, 'task.created');
-        if ($actor->owner && $task['workflow_label_id'] !== null) {
+        if ($actor->owner && null !== $task['workflow_label_id']) {
             $this->freezeWorkflowRoute($task, $task['workflow_label_id'], 'current_unstarted');
         }
         foreach (($body['link_collections'] ?? []) as $initial) {
             $this->createInitialCollection($this->store->get('tasks', $task['id']), $initial, $actor);
         }
         $task = $this->task($task['id'], $actor);
-        if ($actor->owner && $task['label_ids'] !== []) {
+        if ($actor->owner && [] !== $task['label_ids']) {
             $this->store->save('classification_controls', [
                 'id' => $task['id'], 'task_id' => $task['id'], 'project_id' => $task['project_id'],
                 'owner_override' => true, 'reason' => 'owner_task_create',
@@ -357,15 +366,16 @@ final class WorkHandler
             $suggestedLabelIds = $body['suggested_label_ids'] ?? [];
             foreach ($suggestedLabelIds as $suggestedLabelId) {
                 $suggested = $this->label((string) $suggestedLabelId, $projectId);
-                if ($suggested['kind'] !== 'topic' || !$suggested['active']) {
+                if ('topic' !== $suggested['kind'] || !$suggested['active']) {
                     throw new Problem(422, 'validation_failed', 'Vorgeschlagene Labels müssen aktive Topiclabels des Projekts sein.');
                 }
             }
+
             return $this->intake->acceptTechnicalTask($task, $actor, $this->store->actionId(), $suggestedLabelIds);
         }
 
         $manualIntake = $this->intake->acceptManualTask($task, $actor);
-        if ($manualIntake !== null) {
+        if (null !== $manualIntake) {
             return $manualIntake;
         }
 
@@ -394,17 +404,17 @@ final class WorkHandler
             if (!array_key_exists($field, $body)) {
                 continue;
             }
-            if ($field === 'label_ids') {
+            if ('label_ids' === $field) {
                 $task[$field] = array_column($this->validateLabelIds($task['project_id'], $body[$field]), 'id');
                 $task['primary_topic_label_id'] = $this->firstKindLabel($task['project_id'], $task[$field], 'topic');
                 $task['workflow_label_id'] = $this->firstKindLabel($task['project_id'], $task[$field], 'workflow');
             } else {
-                $task[$field] = $field === 'custom_fields' ? $this->validateCustomFields($task['project_id'], $body[$field]) : $body[$field];
+                $task[$field] = 'custom_fields' === $field ? $this->validateCustomFields($task['project_id'], $body[$field]) : $body[$field];
             }
         }
         $this->assertBoardChangeAllowed($task, $before);
         $task = $this->store->save('tasks', $task, 'task.updated');
-        if (isset($body['label_ids']) && $actor->owner) {
+        if (isset($body['label_ids'])) {
             if ($task['workflow_label_id'] !== $before['workflow_label_id']) {
                 $this->freezeWorkflowRoute($task, $task['workflow_label_id'], 'current_unstarted');
             }
@@ -417,6 +427,7 @@ final class WorkHandler
             $this->intake->invalidateForTaskRevision($task, $actor, 'technical_task_revision_changed', $body['suggested_label_ids'] ?? []);
             $task = $this->store->get('tasks', $task['id']);
         }
+
         return $this->presentTask($task);
     }
 
@@ -426,7 +437,7 @@ final class WorkHandler
         $task = $this->task($id, $actor);
         $before = $task;
         $status = $this->status((string) $body['status_id'], $task['project_id']);
-        if ($status['category'] === 'done') {
+        if ('done' === $status['category']) {
             $this->assertTaskCompletionPolicy($task);
         }
         $task['status_id'] = $status['id'];
@@ -451,15 +462,16 @@ final class WorkHandler
         $task = $this->task($id, $actor);
         $before = $task;
         $profileId = $body['agent_profile_id'] ?? null;
-        if ($profileId !== null) {
+        if (null !== $profileId) {
             $profile = $this->store->find('agent_profiles', (string) $profileId);
-            if ($profile === null || !in_array($task['project_id'], $profile['allowed_project_ids'] ?? [], true) || empty($profile['enabled'])) {
+            if (null === $profile || !in_array($task['project_id'], $profile['allowed_project_ids'] ?? [], true) || empty($profile['enabled'])) {
                 throw new Problem(409, 'invalid_assignment', 'Das Rollenprofil ist für dieses Projekt nicht freigegeben.');
             }
         }
         $task['agent_profile_id'] = $profileId;
         $task['requested_role'] = $body['requested_role'] ?? null;
         $this->assertBoardChangeAllowed($task, $before);
+
         return $this->presentTask($this->store->save('tasks', $task, 'task.assigned'));
     }
 
@@ -474,6 +486,7 @@ final class WorkHandler
         }
         $task['criteria'] = $this->normalizeCriteria($body['criteria'], $oldById);
         $this->assertBoardChangeAllowed($task, $before);
+
         return $this->presentTask($this->store->save('tasks', $task, 'task.criteria_replaced'));
     }
 
@@ -487,7 +500,7 @@ final class WorkHandler
         }
         foreach ($dependencies as $dependencyId) {
             $dependency = $this->store->find('tasks', $dependencyId);
-            if ($dependency === null || $dependency['project_id'] !== $task['project_id']) {
+            if (null === $dependency || $dependency['project_id'] !== $task['project_id']) {
                 throw new Problem(409, 'project_mismatch', 'Abhängigkeiten müssen zu Tickets desselben Projekts führen.');
             }
             if ($this->dependencyReachable((string) $dependencyId, $id, [])) {
@@ -495,6 +508,7 @@ final class WorkHandler
             }
         }
         $task['depends_on_task_ids'] = $dependencies;
+
         return $this->presentTask($this->store->save('tasks', $task, 'task.dependencies_replaced'));
     }
 
@@ -506,6 +520,7 @@ final class WorkHandler
         $task['blocked'] = (bool) $body['blocked'];
         $task['blocker_reason'] = $task['blocked'] ? trim((string) $body['reason']) : (trim((string) ($body['reason'] ?? '')) ?: null);
         $this->assertBoardChangeAllowed($task, $before);
+
         return $this->presentTask($this->store->save('tasks', $task, $task['blocked'] ? 'task.blocked' : 'task.unblocked'));
     }
 
@@ -519,6 +534,7 @@ final class WorkHandler
             $boards = array_values(array_filter($boards, static fn (array $board): bool => $board['archived'] === $archived));
         }
         usort($boards, static fn (array $a, array $b): int => strcasecmp($a['name'], $b['name']));
+
         return $this->store->page(array_map(fn (array $board): array => $this->presentBoard($board), $boards), $p);
     }
 
@@ -543,6 +559,7 @@ final class WorkHandler
             'archived' => false,
         ], 'board.created');
         $this->assertBoardConfigurationWithinLimits($board);
+
         return $this->presentBoard($board);
     }
 
@@ -561,6 +578,7 @@ final class WorkHandler
             $board['archived'] = (bool) $body['archived'];
         }
         $this->assertBoardConfigurationWithinLimits($board);
+
         return $this->presentBoard($this->store->save('boards', $board, 'board.updated'));
     }
 
@@ -570,6 +588,7 @@ final class WorkHandler
         $board = $this->board($id, $actor);
         $board['columns'] = $this->normalizeColumns($board['project_id'], $body['columns']);
         $this->assertBoardConfigurationWithinLimits($board);
+
         return $this->presentBoard($this->store->save('boards', $board, 'board.columns_replaced'));
     }
 
@@ -583,17 +602,16 @@ final class WorkHandler
         $columns = [];
         $allTasks = $this->store->all('tasks', $board['project_id']);
         foreach ($board['columns'] as $column) {
-            if ($selectedColumn !== null && $selectedColumn !== $column['id']) {
+            if (null !== $selectedColumn && $selectedColumn !== $column['id']) {
                 continue;
             }
-            $tasks = array_values(array_filter($allTasks, fn (array $task): bool =>
-                in_array($task['status_id'], $column['status_ids'], true) && $this->matchesBoardFilter($task, $board['config']['filter'])
+            $tasks = array_values(array_filter($allTasks, fn (array $task): bool => in_array($task['status_id'], $column['status_ids'], true) && $this->matchesBoardFilter($task, $board['config']['filter'])
             ));
             $this->sortBoardTasks($tasks, $board, $column);
             $total = count($tasks);
             $items = array_slice($tasks, 0, min($limit, $initialRemaining));
             $cursor = $p['cursor'] ?? null;
-            if (is_string($cursor) && $cursor !== '') {
+            if (is_string($cursor) && '' !== $cursor) {
                 $offset = max(0, (int) base64_decode($cursor, true));
                 $items = array_slice($tasks, $offset, $limit);
                 $nextOffset = $offset + count($items);
@@ -606,7 +624,7 @@ final class WorkHandler
                 'items' => array_map(fn (array $task): array => $this->presentTask($task), $items),
                 'next_cursor' => $nextOffset < $total ? base64_encode((string) $nextOffset) : null,
                 'total' => $total,
-                'wip_exceeded' => $column['wip_limit'] !== null && $total > $column['wip_limit'],
+                'wip_exceeded' => null !== $column['wip_limit'] && $total > $column['wip_limit'],
             ];
         }
 
@@ -617,10 +635,10 @@ final class WorkHandler
     private function listLabels(string $projectId, Actor $actor): array
     {
         $actor->requireProject($projectId);
-        $labels = $this->store->all('labels', $projectId);
-        usort($labels, static fn (array $a, array $b): int => [$a['kind'], $a['name']] <=> [$b['kind'], $b['name']]);
-        $taxonomy = $this->taxonomy($projectId);
-        return ['project_id' => $projectId, 'taxonomy_version' => $taxonomy['taxonomy_version'], 'items' => $labels];
+        $labels = $this->labelsForProject($projectId);
+        $taxonomy = $this->store->find('label_taxonomies', $projectId);
+
+        return ['project_id' => $projectId, 'taxonomy_version' => $taxonomy['taxonomy_version'] ?? 1, 'items' => $labels];
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -628,6 +646,9 @@ final class WorkHandler
     {
         $actor->requireOwner();
         $actor->requireProject($projectId);
+        if (str_starts_with((string) $body['key'], 'attention:')) {
+            throw new Problem(422, 'system_label_immutable', 'Der Schlüsselbereich attention: ist systemverwalteten Labels vorbehalten.');
+        }
         foreach ($this->store->all('labels', $projectId) as $existing) {
             if ($existing['key'] === $body['key']) {
                 throw new Problem(409, 'label_key_conflict', 'Dieser Labelschlüssel ist bereits vergeben.');
@@ -644,6 +665,7 @@ final class WorkHandler
             'active' => true,
         ], 'label.created');
         $this->incrementTaxonomy($projectId);
+
         return $label;
     }
 
@@ -666,10 +688,10 @@ final class WorkHandler
         if (isset($body['color'])) {
             $label['color'] = strtoupper($body['color']);
         }
-        if (!empty($label['system_managed']) && isset($body['active']) && $body['active'] === false) {
+        if (!empty($label['system_managed']) && isset($body['active']) && false === $body['active']) {
             throw new Problem(409, 'system_label_immutable', 'Systemlabels können nicht deaktiviert werden.');
         }
-        if ($label['kind'] === 'workflow' && isset($body['active']) && $body['active'] === false) {
+        if ('workflow' === $label['kind'] && isset($body['active']) && false === $body['active']) {
             $routing = $this->store->find('routing_rules', $projectId);
             foreach ($routing['rules'] ?? [] as $rule) {
                 if ($rule['workflow_label_id'] === $labelId) {
@@ -677,10 +699,17 @@ final class WorkHandler
                 }
             }
         }
+        $visibleVersion = $label['version'];
         $label = $this->store->save('labels', $label, 'label.updated');
-        if ($taxonomicChange) {
+        if ('attention' === $label['kind']) {
+            // Synthetic definitions start at version 1. Materializing the first edit in Store also
+            // starts its managed version at 1, so expose a distinct post-edit version to If-Match.
+            $label['version'] = $visibleVersion + 1;
+        }
+        if ($taxonomicChange && 'attention' !== $label['kind']) {
             $this->incrementTaxonomy($projectId);
         }
+
         return $label;
     }
 
@@ -692,19 +721,19 @@ final class WorkHandler
         $before = $task;
         $labels = $this->validateLabelIds($task['project_id'], $body['label_ids']);
         $primary = $body['primary_topic_label_id'] ?? null;
-        if ($primary !== null) {
+        if (null !== $primary) {
             $primaryLabel = $this->label((string) $primary, $task['project_id']);
-            if ($primaryLabel['kind'] !== 'topic' || !in_array($primary, array_column($labels, 'id'), true)) {
+            if ('topic' !== $primaryLabel['kind'] || !in_array($primary, array_column($labels, 'id'), true)) {
                 throw new Problem(422, 'validation_failed', 'Das primäre Thema muss ein zugeordnetes Topiclabel sein.');
             }
         }
-        $workflowLabels = array_values(array_filter($labels, static fn (array $label): bool => $label['kind'] === 'workflow'));
+        $workflowLabels = array_values(array_filter($labels, static fn (array $label): bool => 'workflow' === $label['kind']));
         if (count($workflowLabels) > 1) {
             throw new Problem(409, 'workflow_route_conflict', 'Eine Aufgabe kann höchstens ein Workflowlabel erhalten.');
         }
-        if ($primary === null) {
+        if (null === $primary) {
             foreach ($labels as $label) {
-                if ($label['kind'] === 'topic') {
+                if ('topic' === $label['kind']) {
                     $primary = $label['id'];
                     break;
                 }
@@ -720,6 +749,7 @@ final class WorkHandler
             'id' => $task['id'], 'task_id' => $task['id'], 'project_id' => $task['project_id'],
             'owner_override' => true, 'reason' => trim($body['reason']), 'routing_application' => $body['routing_application'],
         ], 'classification.owner_override_set');
+
         return $this->presentTask($task);
     }
 
@@ -727,6 +757,7 @@ final class WorkHandler
     private function listLinkCollections(string $taskId, Actor $actor): array
     {
         $task = $this->task($taskId, $actor);
+
         return ['task_id' => $taskId, 'task_version' => $task['version'], 'items' => array_map(fn (array $collection): array => $this->presentCollection($collection, $task['version']), $this->collectionsForTask($taskId))];
     }
 
@@ -745,6 +776,7 @@ final class WorkHandler
         $task = $this->store->save('tasks', $task, 'task.link_collection_added');
         $collection['task_version'] = $task['version'];
         $collection = $this->store->save('link_collections', $collection, 'task.link_collection_versioned');
+
         return $this->presentCollection($collection, $task['version']);
     }
 
@@ -758,6 +790,7 @@ final class WorkHandler
         $task = $this->store->save('tasks', $task, 'task.link_collection_updated');
         $collection['task_version'] = $task['version'];
         $collection = $this->store->save('link_collections', $collection, 'task.link_collection_updated');
+
         return $this->presentCollection($collection, $task['version']);
     }
 
@@ -771,6 +804,7 @@ final class WorkHandler
         $task = $this->store->save('tasks', $task, 'task.link_collection_removed');
         $this->invalidateEvidenceForLinks($removedLinkIds);
         $this->store->remove('link_collections', $collectionId, 'task.link_collection_removed');
+
         return $this->presentTask($this->store->get('tasks', $taskId));
     }
 
@@ -786,7 +820,8 @@ final class WorkHandler
         $collection['links'][] = $link;
         $task = $this->store->save('tasks', $task, 'task.link_registered');
         $collection['task_version'] = $task['version'];
-        $collection = $this->store->save('link_collections', $collection, 'task.link_registered');
+        $collection = $this->store->save('link_collections', $collection, 'work.link_registered');
+
         return $this->presentCollection($collection, $task['version']);
     }
 
@@ -814,13 +849,14 @@ final class WorkHandler
         $task = $this->store->find('tasks', $taskId);
         $task = $this->store->save('tasks', $task, 'task.link_updated');
         $collection['task_version'] = $task['version'];
-        $collection = $this->store->save('link_collections', $collection, 'task.link_updated');
+        $collection = $this->store->save('link_collections', $collection, 'work.link_updated');
         $this->invalidateEvidenceForLinks([$linkId]);
         $task = $this->store->get('tasks', $taskId);
         if ($collection['task_version'] !== $task['version']) {
             $collection['task_version'] = $task['version'];
             $collection = $this->store->save('link_collections', $collection, 'task.link_version_refreshed');
         }
+
         return $this->presentCollection($collection, $task['version']);
     }
 
@@ -837,13 +873,14 @@ final class WorkHandler
         $task = $this->store->find('tasks', $taskId);
         $task = $this->store->save('tasks', $task, 'task.link_removed');
         $collection['task_version'] = $task['version'];
-        $collection = $this->store->save('link_collections', $collection, 'task.link_removed');
+        $collection = $this->store->save('link_collections', $collection, 'work.link_removed');
         $this->invalidateEvidenceForLinks([$linkId]);
         $task = $this->store->get('tasks', $taskId);
         if ($collection['task_version'] !== $task['version']) {
             $collection['task_version'] = $task['version'];
             $collection = $this->store->save('link_collections', $collection, 'task.link_version_refreshed');
         }
+
         return $this->presentCollection($collection, $task['version']);
     }
 
@@ -851,7 +888,7 @@ final class WorkHandler
     private function listEvidence(array $p, Actor $actor): array
     {
         $projectId = isset($p['project_id']) ? (string) $p['project_id'] : null;
-        if ($projectId !== null) {
+        if (null !== $projectId) {
             $actor->requireProject($projectId);
         }
         $items = $this->store->all('evidence', $projectId);
@@ -859,6 +896,7 @@ final class WorkHandler
         if (isset($p['task_id'])) {
             $items = array_values(array_filter($items, static fn (array $item): bool => $item['task_id'] === $p['task_id']));
         }
+
         return $this->store->page($items, $p);
     }
 
@@ -866,10 +904,11 @@ final class WorkHandler
     private function getEvidence(string $id, Actor $actor): array
     {
         $evidence = $this->store->find('evidence', $id);
-        if ($evidence === null) {
+        if (null === $evidence) {
             throw new Problem(404, 'resource_not_found', 'Nachweis wurde nicht gefunden.');
         }
         $actor->requireProject($evidence['project_id']);
+
         return $evidence;
     }
 
@@ -885,7 +924,7 @@ final class WorkHandler
         $linkSnapshot = [];
         foreach ($linkIds as $linkId) {
             $link = $this->findLink($taskId, $linkId);
-            if ($link === null) {
+            if (null === $link) {
                 throw new Problem(409, 'evidence_link_missing', 'Nachweise dürfen nur bereits registrierte Ticketlinks referenzieren.');
             }
             $linkSnapshot[] = $link;
@@ -895,7 +934,7 @@ final class WorkHandler
         $run = null;
         if (($body['run_id'] ?? null) !== null) {
             $run = $this->store->find('runs', (string) $body['run_id']);
-            if ($run === null || ($run['task_id'] ?? null) !== $taskId || $run['project_id'] !== $task['project_id']) {
+            if (null === $run || ($run['task_id'] ?? null) !== $taskId || $run['project_id'] !== $task['project_id']) {
                 throw new Problem(409, 'run_context_mismatch', 'Der Run gehört nicht zu diesem Ticket.');
             }
             if (($body['attempt_no'] ?? null) !== ($run['attempt_no'] ?? null)) {
@@ -922,16 +961,17 @@ final class WorkHandler
         ], 'evidence.reported');
         foreach ($criterionIds as $criterionId) {
             $index = $this->criterionIndex($task, $criterionId);
-            if ($task['criteria'][$index]['state'] !== 'human_confirmed') {
+            if ('human_confirmed' !== $task['criteria'][$index]['state']) {
                 $task['criteria'][$index]['state'] = 'reported';
             }
             $task['criteria'][$index]['evidence_ids'] = array_values(array_unique([...$task['criteria'][$index]['evidence_ids'], $evidence['id']]));
         }
-        if ($criterionIds !== []) {
+        if ([] !== $criterionIds) {
             $task = $this->store->save('tasks', $task, 'task.evidence_reported');
             $evidence['task_revision'] = $task['version'];
             $evidence = $this->store->save('evidence', $evidence, 'evidence.revision_bound');
         }
+
         return $evidence;
     }
 
@@ -940,24 +980,26 @@ final class WorkHandler
     {
         $actor->requireOwner();
         $evidence = $this->store->find('evidence', $id);
-        if ($evidence === null) {
+        if (null === $evidence) {
             throw new Problem(404, 'resource_not_found', 'Nachweis wurde nicht gefunden.');
         }
         $actor->requireProject($evidence['project_id']);
-        if ($evidence['review_status'] !== 'reported') {
+        $task = $this->task($evidence['task_id'], $actor);
+        if ('reported' !== $evidence['review_status']) {
             throw new Problem(409, 'evidence_already_reviewed', 'Der Nachweis wurde bereits bewertet.');
         }
-        if (!$this->evidenceLinksCurrent($evidence)) {
-            throw new Problem(409, 'evidence_stale', 'Mindestens ein registrierter Link wurde seit der Nachweismeldung geändert.');
+        if ($evidence['task_revision'] !== $task['version'] || !$this->evidenceLinksCurrent($evidence)) {
+            throw new Problem(409, 'evidence_stale', 'Der Nachweis bezieht sich nicht mehr auf die aktuelle Ticketrevision und Linkfassung.');
         }
         $evidence['review_status'] = $body['decision'];
         $evidence['reviewed_at'] = $this->store->now();
         $evidence['reviewed_by'] = $this->actorRef($actor);
         $evidence['review_reason'] = trim($body['reason']);
         $evidence = $this->store->save('evidence', $evidence, 'evidence.reviewed');
-        if ($body['decision'] === 'rejected') {
+        if ('rejected' === $body['decision']) {
             $this->setCriterionEvidenceRejected($evidence);
         }
+
         return $evidence;
     }
 
@@ -968,7 +1010,7 @@ final class WorkHandler
         $criterionIndex = $this->criterionIndex($task, $criterionId);
         foreach ($body['evidence_ids'] as $evidenceId) {
             $evidence = $this->store->find('evidence', $evidenceId);
-            if ($evidence === null || $evidence['task_id'] !== $taskId || $evidence['project_id'] !== $task['project_id']) {
+            if (null === $evidence || $evidence['task_id'] !== $taskId || $evidence['project_id'] !== $task['project_id']) {
                 throw new Problem(409, 'evidence_task_mismatch', 'Ein Nachweis gehört nicht zu diesem Ticket.');
             }
             if ($evidence['task_revision'] !== $task['version'] || !$this->evidenceLinksCurrent($evidence)) {
@@ -977,7 +1019,7 @@ final class WorkHandler
         }
         $criterion = $task['criteria'][$criterionIndex];
         $criterion['evidence_ids'] = array_values(array_unique(array_merge($criterion['evidence_ids'], $body['evidence_ids'])));
-        if ($criterion['state'] !== 'human_confirmed') {
+        if ('human_confirmed' !== $criterion['state']) {
             $criterion['state'] = 'reported';
         }
         $criterion['reviewed_at'] = null;
@@ -990,6 +1032,7 @@ final class WorkHandler
             $evidence['task_revision'] = $task['version'];
             $this->store->save('evidence', $evidence, 'evidence.revision_bound');
         }
+
         return $this->presentTask($task);
     }
 
@@ -1001,14 +1044,14 @@ final class WorkHandler
         $index = $this->criterionIndex($task, $criterionId);
         foreach ($body['evidence_ids'] as $evidenceId) {
             $evidence = $this->store->find('evidence', $evidenceId);
-            if ($evidence === null || $evidence['task_id'] !== $taskId || $evidence['project_id'] !== $task['project_id'] || $evidence['review_status'] === 'rejected' || !$this->evidenceLinksCurrent($evidence)) {
+            if (null === $evidence || $evidence['task_id'] !== $taskId || $evidence['project_id'] !== $task['project_id'] || $evidence['task_revision'] !== $task['version'] || 'rejected' === $evidence['review_status'] || !$this->evidenceLinksCurrent($evidence)) {
                 throw new Problem(409, 'evidence_unavailable', 'Die Entscheidung referenziert einen fehlenden, abgelehnten oder veralteten Nachweis.');
             }
             if (!in_array($criterionId, $evidence['criterion_ids'], true) && !in_array($evidenceId, $task['criteria'][$index]['evidence_ids'], true)) {
                 throw new Problem(409, 'evidence_criterion_mismatch', 'Der Nachweis wurde diesem Kriterium nicht zugeordnet.');
             }
         }
-        if ($body['decision'] === 'human_confirmed' && $task['criteria'][$index]['is_required'] && $body['evidence_ids'] === [] && $task['criteria'][$index]['evidence_ids'] === []) {
+        if ('human_confirmed' === $body['decision'] && $task['criteria'][$index]['is_required'] && [] === $body['evidence_ids'] && [] === $task['criteria'][$index]['evidence_ids']) {
             throw new Problem(409, 'criterion_evidence_required', 'Ein erforderliches Kriterium kann ohne gemeldete Informationen nicht bestätigt werden.');
         }
         $task['criteria'][$index]['state'] = $body['decision'];
@@ -1016,14 +1059,23 @@ final class WorkHandler
         $task['criteria'][$index]['reviewed_at'] = $this->store->now();
         $task['criteria'][$index]['reviewed_by'] = $this->actorRef($actor);
         $task['criteria'][$index]['review_reason'] = trim($body['reason']);
-        return $this->presentTask($this->store->save('tasks', $task, 'task.criterion_reviewed'));
+        $task = $this->store->save('tasks', $task, 'task.criterion_reviewed');
+        foreach ($task['criteria'][$index]['evidence_ids'] as $evidenceId) {
+            $evidence = $this->store->find('evidence', $evidenceId);
+            if (null !== $evidence && $evidence['task_id'] === $taskId) {
+                $evidence['task_revision'] = $task['version'];
+                $this->store->save('evidence', $evidence, 'evidence.revision_bound');
+            }
+        }
+
+        return $this->presentTask($task);
     }
 
     /** @param array<string, mixed> $p @return array<string, mixed> */
     private function listHistory(array $p, Actor $actor): array
     {
         $projectId = isset($p['project_id']) ? (string) $p['project_id'] : null;
-        if ($projectId !== null) {
+        if (null !== $projectId) {
             $actor->requireProject($projectId);
         }
         $revisions = $this->store->all('revisions', $projectId);
@@ -1036,10 +1088,11 @@ final class WorkHandler
         if (isset($p['action_id'])) {
             $revisions = array_values(array_filter($revisions, static fn (array $revision): bool => $revision['action_id'] === $p['action_id']));
         }
-        $revisions = array_values(array_filter($revisions, static fn (array $revision): bool =>
-            $revision['project_id'] === null ? $actor->owner : $actor->canProject($revision['project_id'])
+        $revisions = array_values(array_filter($revisions, static fn (array $revision): bool => null === $revision['project_id'] ? $actor->owner : $actor->canProject($revision['project_id'])
         ));
         usort($revisions, static fn (array $a, array $b): int => strcmp($b['recorded_at'], $a['recorded_at']));
+        $revisions = array_map($this->presentRevision(...), $revisions);
+
         return $this->store->page($revisions, $p);
     }
 
@@ -1047,16 +1100,17 @@ final class WorkHandler
     private function getRevision(string $id, Actor $actor): array
     {
         $revision = $this->store->find('revisions', $id);
-        if ($revision === null) {
+        if (null === $revision) {
             throw new Problem(404, 'resource_not_found', 'Revision wurde nicht gefunden.');
         }
-        if ($revision['project_id'] === null && !$actor->owner) {
+        if (null === $revision['project_id'] && !$actor->owner) {
             throw new Problem(404, 'resource_not_found', 'Revision wurde nicht gefunden.');
         }
-        if ($revision['project_id'] !== null) {
+        if (null !== $revision['project_id']) {
             $actor->requireProject($revision['project_id']);
         }
-        return $revision;
+
+        return $this->presentRevision($revision);
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -1073,9 +1127,9 @@ final class WorkHandler
         if (!is_string($resourceId) || !is_string($type)) {
             throw new Problem(409, 'revision_not_restorable', 'Die Zielressource der Revision ist unvollständig.');
         }
-        if ($type === 'task') {
+        if ('task' === $type) {
             $current = $this->task($resourceId, $actor);
-            $restorableFields = ['title', 'description', 'task_type', 'priority', 'due_at', 'criteria', 'custom_fields', 'label_ids', 'primary_topic_label_id', 'workflow_label_id'];
+            $restorableFields = ['title', 'description', 'task_type', 'priority', 'due_at', 'criteria', 'custom_fields', 'label_ids'];
             $before = $current;
             foreach ($restorableFields as $field) {
                 if (array_key_exists($field, $snapshot)) {
@@ -1083,27 +1137,73 @@ final class WorkHandler
                 }
             }
             $current['criteria'] = $this->normalizeRestoredCriteria($current['criteria']);
-            $this->validateLabelIds($current['project_id'], $current['label_ids']);
+            $labels = $this->validateLabelIds($current['project_id'], $current['label_ids']);
+            $current['label_ids'] = array_column($labels, 'id');
+            $current['primary_topic_label_id'] = $this->firstKindLabel($current['project_id'], $current['label_ids'], 'topic');
+            $current['workflow_label_id'] = $this->firstKindLabel($current['project_id'], $current['label_ids'], 'workflow');
             $this->assertBoardChangeAllowed($current, $before);
             $restored = $this->store->save('tasks', $current, 'task.history_restored');
-            return [
-                'action_id' => $this->store->actionId(),
-                'status' => 'succeeded',
-                'action_url' => '/api/v1/actions/'.$this->store->actionId(),
-                'resource' => ['resource_type' => 'task', 'id' => $restored['id'], 'version' => $restored['version'], 'url' => '/api/v1/tasks/'.$restored['id']],
-                'run_id' => null,
-            ];
+            if ($restored['workflow_label_id'] !== $before['workflow_label_id']) {
+                $this->freezeWorkflowRoute($restored, $restored['workflow_label_id'], 'current_unstarted');
+            }
+            $this->recordRestoreReason('task', $restored['id'], $restored['project_id'], (string) $body['reason']);
+
+            return $this->store->accepted([
+                'resource_type' => 'task',
+                'id' => $restored['id'],
+                'version' => $restored['version'],
+            ]);
         }
-        if ($type === 'project') {
+        if ('project' === $type) {
             $current = $this->project($resourceId);
             foreach (['name', 'description', 'icon_key', 'color', 'completion_policy'] as $field) {
                 if (array_key_exists($field, $snapshot)) {
                     $current[$field] = $snapshot[$field];
                 }
             }
-            return $this->presentProject($this->store->save('projects', $current, 'project.history_restored'));
+            $restored = $this->store->save('projects', $current, 'project.history_restored');
+            $this->recordRestoreReason('project', $restored['id'], $restored['id'], (string) $body['reason']);
+
+            return $this->store->accepted([
+                'resource_type' => 'project',
+                'id' => $restored['id'],
+                'version' => $restored['version'],
+            ]);
         }
         throw new Problem(409, 'revision_not_restorable', 'Diese Ressourcenart unterstützt keine fachliche Wiederherstellung.');
+    }
+
+    private function recordRestoreReason(string $resourceType, string $resourceId, string $projectId, string $reason): void
+    {
+        $revisions = array_reverse($this->store->all('revisions', $projectId));
+        foreach ($revisions as $revision) {
+            if (($revision['resource']['resource_type'] ?? null) !== $resourceType
+                || ($revision['resource']['id'] ?? null) !== $resourceId
+                || ($revision['action_id'] ?? null) !== $this->store->actionId()
+            ) {
+                continue;
+            }
+            $this->store->save('history_restore_notes', [
+                'id' => $revision['id'],
+                'project_id' => $projectId,
+                'revision_id' => $revision['id'],
+                'reason' => trim($reason),
+            ], 'history.restore_reason_recorded');
+
+            return;
+        }
+        throw new Problem(500, 'history_revision_missing', 'Die Wiederherstellungsrevision konnte nicht zugeordnet werden.');
+    }
+
+    /** @param array<string, mixed> $revision @return array<string, mixed> */
+    private function presentRevision(array $revision): array
+    {
+        $note = $this->store->find('history_restore_notes', $revision['id']);
+        if (null !== $note) {
+            $revision['reason'] = $note['reason'];
+        }
+
+        return $revision;
     }
 
     /** @param array<string, mixed> $task @return array<string, mixed> */
@@ -1112,14 +1212,32 @@ final class WorkHandler
         $task['allowed_actions'] = [];
         $task['latest_run'] = null;
         $task['custom_fields'] = (object) ($task['custom_fields'] ?? []);
+        $ownerReasons = $this->openAttentionReasons($task['id'], $task['project_id'], 'owner');
+        $task['human_attention'] = [
+            'required' => [] !== $ownerReasons,
+            'reasons' => array_values(array_unique(array_column($ownerReasons, 'code'))),
+        ];
+        $task['label_ids'] = $this->projectedTaskLabelIds($task);
         if (($task['latest_run_id'] ?? null) !== null) {
             $run = $this->store->find('runs', $task['latest_run_id']);
-            $task['latest_run'] = $run === null ? null : [
-                'id' => $run['id'], 'state' => $run['state'], 'attempt_no' => $run['attempt_no'] ?? 1,
-                'updated_at' => $run['updated_at'], 'requested_role' => $task['requested_role'],
-            ];
+            if (null !== $run) {
+                $profileId = $run['snapshot']['agent_profile_id'] ?? $task['agent_profile_id'] ?? null;
+                $profile = is_string($profileId) ? $this->store->find('agent_profiles', $profileId) : null;
+                $task['latest_run'] = [
+                    'id' => $run['id'],
+                    'project_id' => $run['project_id'],
+                    'task_id' => $run['task_id'],
+                    'task_key' => $task['key'],
+                    'title' => (string) ($run['snapshot']['title'] ?? $task['title']),
+                    'agent_profile_name' => (string) ($profile['name'] ?? $task['requested_role'] ?? 'Agent'),
+                    'stage' => (string) ($run['stage'] ?? 'task'),
+                    'state' => $run['state'],
+                    'last_observed_at' => $run['last_observed_at'] ?? null,
+                ];
+            }
         }
-        $task['link_collection_ids'] = array_values(array_filter($task['link_collection_ids'] ?? [], fn (string $collectionId): bool => $this->store->find('link_collections', $collectionId) !== null));
+        $task['link_collection_ids'] = array_values(array_filter($task['link_collection_ids'] ?? [], fn (string $collectionId): bool => null !== $this->store->find('link_collections', $collectionId)));
+
         return $task;
     }
 
@@ -1127,6 +1245,7 @@ final class WorkHandler
     private function presentBoard(array $board): array
     {
         $board['allowed_actions'] = [];
+
         return $board;
     }
 
@@ -1143,23 +1262,14 @@ final class WorkHandler
         ];
     }
 
-    /** @param array<string, mixed> $project @return array<string, mixed> */
-    private function presentProject(array $project): array
-    {
-        $project['allowed_actions'] = [];
-        $project['open_task_count'] = count(array_filter($this->store->all('tasks', $project['id']), static fn (array $task): bool => !in_array($task['status_category'], ['done', 'cancelled'], true)));
-        $project['active_run_count'] = count(array_filter($this->store->all('runs', $project['id']), static fn (array $run): bool => in_array($run['state'], ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'cancel_requested'], true)));
-        return $project;
-    }
-
     /** @param array<string, mixed> $task @param array<string, mixed>|null $before */
     private function assertBoardChangeAllowed(array $task, ?array $before): void
     {
         $this->wipPolicy->assertTaskChangeAllowed(
             $this->store->all('boards', $task['project_id']),
-            $this->store->all('tasks', $task['project_id']),
-            $before,
-            $task,
+            array_map($this->withProjectedTaskLabels(...), $this->store->all('tasks', $task['project_id'])),
+            null === $before ? null : $this->withProjectedTaskLabels($before),
+            $this->withProjectedTaskLabels($task),
         );
     }
 
@@ -1169,20 +1279,21 @@ final class WorkHandler
         if ($board['archived']) {
             return;
         }
-        $this->wipPolicy->assertConfigurationAllowed($board, $this->store->all('tasks', $board['project_id']));
+        $tasks = array_map($this->withProjectedTaskLabels(...), $this->store->all('tasks', $board['project_id']));
+        $this->wipPolicy->assertConfigurationAllowed($board, $tasks);
     }
 
     /** @param array<string, mixed> $task @param array<string, mixed> $filter */
     private function matchesBoardFilter(array $task, array $filter): bool
     {
-        return $this->wipPolicy->matchesFilter($task, $filter);
+        return $this->wipPolicy->matchesFilter($this->withProjectedTaskLabels($task), $filter);
     }
 
     /** @param array<string, mixed> $board @param array<string, mixed> $column */
     private function sortBoardTasks(array &$tasks, array $board, array $column): void
     {
         $sort = $board['config']['sort'] ?? 'manual';
-        if ($sort === 'manual') {
+        if ('manual' === $sort) {
             $positions = [];
             foreach ($this->store->all('board_positions', $board['project_id']) as $position) {
                 if ($position['board_id'] === $board['id'] && $position['column_id'] === $column['id']) {
@@ -1190,11 +1301,13 @@ final class WorkHandler
                 }
             }
             usort($tasks, static fn (array $a, array $b): int => ($positions[$a['id']] ?? PHP_FLOAT_MAX) <=> ($positions[$b['id']] ?? PHP_FLOAT_MAX) ?: strcmp($a['created_at'], $b['created_at']));
+
             return;
         }
-        if ($sort === 'priority') {
+        if ('priority' === $sort) {
             $order = ['urgent' => 0, 'high' => 1, 'normal' => 2, 'low' => 3];
             usort($tasks, static fn (array $a, array $b): int => ($order[$a['priority']] ?? 4) <=> ($order[$b['priority']] ?? 4));
+
             return;
         }
         $field = $sort;
@@ -1211,7 +1324,7 @@ final class WorkHandler
                 break;
             }
         }
-        if ($column === null) {
+        if (null === $column) {
             throw new Problem(409, 'board_column_mismatch', 'Der Status gehört zu keiner Boardspalte.');
         }
         $positions = $this->store->all('board_positions', $board['project_id']);
@@ -1223,16 +1336,16 @@ final class WorkHandler
         }
         $this->assertPositionNeighbor($beforeId, $task, $column, $board);
         $this->assertPositionNeighbor($afterId, $task, $column, $board);
-        $beforeRank = $beforeId === null ? null : ($rankByTask[$beforeId] ?? null);
-        $afterRank = $afterId === null ? null : ($rankByTask[$afterId] ?? null);
-        if ($beforeRank !== null && $afterRank !== null && $beforeRank >= $afterRank) {
+        $beforeRank = null === $beforeId ? null : ($rankByTask[$beforeId] ?? null);
+        $afterRank = null === $afterId ? null : ($rankByTask[$afterId] ?? null);
+        if (null !== $beforeRank && null !== $afterRank && $beforeRank >= $afterRank) {
             throw new Problem(409, 'invalid_position', 'Die Reihenfolge der Nachbartickets ist ungültig.');
         }
-        if ($beforeRank !== null && $afterRank !== null) {
+        if (null !== $beforeRank && null !== $afterRank) {
             $rank = ($beforeRank + $afterRank) / 2;
-        } elseif ($beforeRank !== null) {
+        } elseif (null !== $beforeRank) {
             $rank = $beforeRank + 1.0;
-        } elseif ($afterRank !== null) {
+        } elseif (null !== $afterRank) {
             $rank = $afterRank - 1.0;
         } else {
             $rank = max(array_values($rankByTask) ?: [0.0]) + 1.0;
@@ -1254,14 +1367,14 @@ final class WorkHandler
     /** @param array<string, mixed> $task @param array<string, mixed> $column @param array<string, mixed> $board */
     private function assertPositionNeighbor(?string $neighborId, array $task, array $column, array $board): void
     {
-        if ($neighborId === null) {
+        if (null === $neighborId) {
             return;
         }
         if ($neighborId === $task['id']) {
             throw new Problem(409, 'invalid_position', 'Ein Ticket kann nicht sein eigener Nachbar sein.');
         }
         $neighbor = $this->store->find('tasks', $neighborId);
-        if ($neighbor === null || $neighbor['project_id'] !== $task['project_id'] || !in_array($neighbor['status_id'], $column['status_ids'], true) || !$this->matchesBoardFilter($neighbor, $board['config']['filter'])) {
+        if (null === $neighbor || $neighbor['project_id'] !== $task['project_id'] || !in_array($neighbor['status_id'], $column['status_ids'], true) || !$this->matchesBoardFilter($neighbor, $board['config']['filter'])) {
             throw new Problem(409, 'invalid_position', 'Nachbartickets müssen zur Zielspalte und zum Zielboard gehören.');
         }
     }
@@ -1281,7 +1394,7 @@ final class WorkHandler
                 $seenStatusIds[$status['id']] = true;
             }
             $defaultDrop = $column['default_drop_status_id'] ?? null;
-            if ($defaultDrop !== null && !in_array($defaultDrop, $statusIds, true)) {
+            if (null !== $defaultDrop && !in_array($defaultDrop, $statusIds, true)) {
                 throw new Problem(422, 'validation_failed', 'Der Dropstatus muss zu den Status der Spalte gehören.');
             }
             $result[] = [
@@ -1290,6 +1403,7 @@ final class WorkHandler
                 'wip_limit' => $column['wip_limit'] ?? null, 'wip_policy' => $column['wip_policy'], 'position' => $position,
             ];
         }
+
         return $result;
     }
 
@@ -1300,31 +1414,78 @@ final class WorkHandler
         $evidence = $this->store->all('evidence', $task['project_id']);
         $currentEvidenceIds = [];
         foreach ($evidence as $item) {
-            if ($item['task_id'] === $task['id'] && $this->evidenceLinksCurrent($item)) {
+            if ($item['task_id'] === $task['id'] && $item['task_revision'] === $task['version'] && $this->evidenceLinksCurrent($item)) {
                 $currentEvidenceIds[] = $item['id'];
             }
         }
+        $runs = $this->store->all('runs', $task['project_id']);
+        $approvals = $this->currentCompletionApprovals($task, $runs, $this->store->all('approvals', $task['project_id']));
         $this->completionPolicy->assertSatisfied(
             $project['completion_policy'],
             $task,
             $evidence,
-            $this->store->all('approvals', $task['project_id']),
-            $this->store->all('runs', $task['project_id']),
+            $approvals,
+            $runs,
             $currentEvidenceIds,
         );
+    }
+
+    /** @param list<array<string, mixed>> $runs @param list<array<string, mixed>> $approvals @return list<array<string, mixed>> */
+    private function currentCompletionApprovals(array $task, array $runs, array $approvals): array
+    {
+        $runsById = [];
+        foreach ($runs as $run) {
+            $runsById[$run['id']] = $run;
+        }
+
+        $valid = [];
+        foreach ($approvals as $approval) {
+            if ('approved' !== $approval['status'] || 'completion' !== $approval['kind']) {
+                continue;
+            }
+            $run = $runsById[$approval['run_id']] ?? null;
+            if (null === $run || $run['task_id'] !== $task['id'] || $run['id'] !== ($task['latest_run_id'] ?? null)
+                || (int) $run['attempt_no'] !== (int) $approval['attempt_no']
+                || (int) $approval['task_revision'] !== (int) $task['version']
+                || (int) ($run['snapshot']['task_revision'] ?? 0) !== (int) $task['version']
+                || !is_string($run['result_digest'] ?? null)
+                || !hash_equals((string) $run['result_digest'], (string) $approval['result_digest'])) {
+                continue;
+            }
+
+            $reportIsCurrent = false;
+            foreach (array_reverse($run['report_ids'] ?? []) as $reportId) {
+                $report = $this->store->find('run_reports', (string) $reportId);
+                if (null !== $report && (int) $report['attempt_no'] === (int) $run['attempt_no']
+                    && (int) $report['task_revision'] === (int) $task['version']
+                    && !empty($report['accepted_for_reconciliation'])) {
+                    $reportIsCurrent = true;
+                    break;
+                }
+            }
+            if (!$reportIsCurrent) {
+                continue;
+            }
+
+            $approval['task_id'] = $task['id'];
+            $valid[] = $approval;
+        }
+
+        return $valid;
     }
 
     private function freezeWorkflowRoute(array $task, ?string $workflowLabelId, string $application): void
     {
         $current = $this->store->find('task_routing_snapshots', $task['id']);
-        if ($workflowLabelId === null) {
-            if ($current !== null) {
+        if (null === $workflowLabelId) {
+            if (null !== $current) {
                 $this->store->remove('task_routing_snapshots', $task['id'], 'task.workflow_route_cleared');
             }
+
             return;
         }
 
-        if ($application === 'current_unstarted') {
+        if ('current_unstarted' === $application) {
             foreach ($this->store->all('workflow_instances', $task['project_id']) as $instance) {
                 if ($instance['task_id'] === $task['id'] && in_array($instance['state'], ['queued', 'running', 'paused'], true)) {
                     throw new Problem(409, 'workflow_already_started', 'Eine laufende Workflowinstanz kann nicht durch eine neue Labelroute ersetzt werden.');
@@ -1334,12 +1495,12 @@ final class WorkHandler
 
         $routing = $this->store->find('routing_rules', $task['project_id']);
         $matches = array_values(array_filter($routing['rules'] ?? [], static fn (array $rule): bool => $rule['workflow_label_id'] === $workflowLabelId));
-        if (count($matches) !== 1) {
+        if (1 !== count($matches)) {
             throw new Problem(409, 'workflow_route_conflict', 'Das Workflowlabel benötigt genau eine aktive, versionierte Route.');
         }
         $route = $matches[0];
         $workflow = $this->store->find('workflows', $route['workflow_id']);
-        if ($workflow === null || $workflow['project_id'] !== $task['project_id'] || ($workflow['definition_version'] ?? $workflow['version']) !== $route['workflow_definition_version']) {
+        if (null === $workflow || $workflow['project_id'] !== $task['project_id'] || ($workflow['definition_version'] ?? $workflow['version']) !== $route['workflow_definition_version']) {
             throw new Problem(409, 'workflow_route_conflict', 'Die gewählte Workflowversion ist nicht mehr verfügbar.');
         }
         $this->store->save('task_routing_snapshots', [
@@ -1366,7 +1527,7 @@ final class WorkHandler
         }
         foreach ($filter['agent_profile_ids'] ?? [] as $profileId) {
             $profile = $this->store->find('agent_profiles', (string) $profileId);
-            if ($profile === null || !in_array($projectId, $profile['allowed_project_ids'] ?? [], true)) {
+            if (null === $profile || !in_array($projectId, $profile['allowed_project_ids'] ?? [], true)) {
                 throw new Problem(422, 'validation_failed', 'Ein Rollenfilter verweist nicht auf ein für dieses Projekt zugelassenes Profil.');
             }
         }
@@ -1384,7 +1545,7 @@ final class WorkHandler
         }
         foreach ($values as $key => $typedValue) {
             $definition = $byKey[$key] ?? null;
-            if ($definition === null || !is_array($typedValue) || ($typedValue['type'] ?? null) !== $definition['value_type'] || !array_key_exists('value', $typedValue)) {
+            if (null === $definition || !is_array($typedValue) || ($typedValue['type'] ?? null) !== $definition['value_type'] || !array_key_exists('value', $typedValue)) {
                 throw new Problem(422, 'validation_failed', 'Ein Zusatzfeld ist unbekannt oder hat einen unpassenden Werttyp.');
             }
             $value = $typedValue['value'];
@@ -1392,9 +1553,9 @@ final class WorkHandler
                 'text' => is_string($value),
                 'number' => is_int($value) || is_float($value),
                 'boolean' => is_bool($value),
-                'date' => is_string($value) && \DateTimeImmutable::createFromFormat('!Y-m-d', $value) !== false,
+                'date' => is_string($value) && false !== \DateTimeImmutable::createFromFormat('!Y-m-d', $value),
                 'choice' => is_string($value) && in_array($value, $definition['choices'], true),
-                'multi_choice' => is_array($value) && array_is_list($value) && array_diff($value, $definition['choices']) === [],
+                'multi_choice' => is_array($value) && array_is_list($value) && [] === array_diff($value, $definition['choices']),
                 default => false,
             };
             if (!$valid) {
@@ -1406,10 +1567,11 @@ final class WorkHandler
                 throw new Problem(422, 'validation_failed', 'Das erforderliche Zusatzfeld '.$definition['label'].' fehlt.');
             }
         }
+
         return $values;
     }
 
-    /** @param array<string, mixed> $task */
+    /** @param array<string, mixed> $project */
     private function nextTaskKey(array $project): string
     {
         $tasks = $this->store->all('tasks', $project['id']);
@@ -1421,6 +1583,7 @@ final class WorkHandler
             ++$sequence;
             $key = $prefix.'-'.str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
         }
+
         return $key;
     }
 
@@ -1436,7 +1599,7 @@ final class WorkHandler
             }
             $seen[$criterionId] = true;
             $old = $oldById[$criterionId] ?? null;
-            $sameDefinition = $old !== null && $old['text'] === trim($input['text']) && $old['is_required'] === (bool) $input['is_required'];
+            $sameDefinition = null !== $old && $old['text'] === trim($input['text']) && $old['is_required'] === (bool) $input['is_required'];
             $criteria[] = [
                 'id' => $criterionId,
                 'text' => trim($input['text']),
@@ -1448,6 +1611,7 @@ final class WorkHandler
                 'review_reason' => $sameDefinition ? $old['review_reason'] : null,
             ];
         }
+
         return $criteria;
     }
 
@@ -1463,6 +1627,7 @@ final class WorkHandler
                 $criterion['review_reason'] = null;
             }
         }
+
         return $criteria;
     }
 
@@ -1493,7 +1658,7 @@ final class WorkHandler
     {
         $task = $this->store->find('tasks', $evidence['task_id']);
         foreach ($task['criteria'] as &$criterion) {
-            if (in_array($evidence['id'], $criterion['evidence_ids'], true) && $criterion['state'] !== 'human_confirmed') {
+            if (in_array($evidence['id'], $criterion['evidence_ids'], true) && 'human_confirmed' !== $criterion['state']) {
                 $criterion['state'] = 'rejected';
             }
         }
@@ -1506,11 +1671,12 @@ final class WorkHandler
         $current = [];
         foreach ($evidence['link_ids'] as $linkId) {
             $link = $this->findLink($evidence['task_id'], $linkId);
-            if ($link === null) {
+            if (null === $link) {
                 return false;
             }
             $current[] = $link;
         }
+
         return $current === $evidence['link_snapshot'];
     }
 
@@ -1518,7 +1684,7 @@ final class WorkHandler
     private function invalidateEvidenceForLinks(array $linkIds): void
     {
         foreach ($this->store->all('evidence') as $evidence) {
-            if (array_intersect($linkIds, $evidence['link_ids']) === [] || $evidence['review_status'] === 'reported') {
+            if ([] === array_intersect($linkIds, $evidence['link_ids']) || 'reported' === $evidence['review_status']) {
                 continue;
             }
             $evidence['review_status'] = 'reported';
@@ -1543,13 +1709,15 @@ final class WorkHandler
         $task['link_collection_ids'][] = $collection['id'];
         $task = $this->store->save('tasks', $task, 'task.link_collection_added');
         $collection['task_version'] = $task['version'];
-        return $this->store->save('link_collections', $collection, 'task.link_collection_versioned');
+
+        return $this->store->save('link_collections', $collection, [] === $links ? 'task.link_collection_versioned' : 'work.link_registered');
     }
 
     /** @param array<string, mixed> $input @param array<string, mixed>|null $existing @return array<string, mixed> */
     private function newLink(array $input, Actor $actor, ?array $existing = null): array
     {
         $url = $this->linkPolicy->validateUrl((string) $input['url']);
+
         return [
             'id' => $existing['id'] ?? $this->store->id(),
             'title' => trim((string) $input['title']),
@@ -1569,6 +1737,7 @@ final class WorkHandler
         $items = $this->store->all('link_collections');
         $items = array_values(array_filter($items, static fn (array $collection): bool => $collection['task_id'] === $taskId));
         usort($items, static fn (array $a, array $b): int => strcmp($a['created_at'], $b['created_at']));
+
         return $items;
     }
 
@@ -1589,9 +1758,10 @@ final class WorkHandler
     private function collection(string $taskId, string $collectionId): array
     {
         $collection = $this->store->find('link_collections', $collectionId);
-        if ($collection === null || $collection['task_id'] !== $taskId) {
+        if (null === $collection || $collection['task_id'] !== $taskId) {
             throw new Problem(404, 'resource_not_found', 'Link-Collection wurde nicht gefunden.');
         }
+
         return $collection;
     }
 
@@ -1605,6 +1775,7 @@ final class WorkHandler
                 }
             }
         }
+
         return null;
     }
 
@@ -1612,14 +1783,15 @@ final class WorkHandler
     private function workflowLabelId(array $labels): ?string
     {
         foreach ($labels as $label) {
-            if ($label['kind'] === 'workflow') {
+            if ('workflow' === $label['kind']) {
                 return $label['id'];
             }
         }
+
         return null;
     }
 
-    /** @param array<string, mixed> $task @param list<string> $deps @param list<string> $visited */
+    /** @param list<string> $visited */
     private function dependencyReachable(string $startId, string $targetId, array $visited): bool
     {
         if ($startId === $targetId) {
@@ -1630,7 +1802,7 @@ final class WorkHandler
         }
         $visited[] = $startId;
         $task = $this->store->find('tasks', $startId);
-        if ($task === null) {
+        if (null === $task) {
             return false;
         }
         foreach ($task['depends_on_task_ids'] as $dependencyId) {
@@ -1638,6 +1810,7 @@ final class WorkHandler
                 return true;
             }
         }
+
         return false;
     }
 
@@ -1653,14 +1826,20 @@ final class WorkHandler
             if (!$label['active']) {
                 throw new Problem(409, 'label_inactive', 'Inaktive Labels können nicht neu zugeordnet werden.');
             }
-            if ($label['kind'] === 'attention') {
-                throw new Problem(403, 'system_label_immutable', 'Attentionlabels werden vom Systemzustand abgeleitet.');
+            if ('attention' === $label['kind']) {
+                // The public Task representation includes derived attention labels. Echoing their IDs is safe;
+                // they are omitted from the persisted owner-controlled label assignment below.
+                continue;
             }
             $labels[] = $label;
         }
-        if (count(array_filter($labels, static fn (array $label): bool => $label['kind'] === 'workflow')) > 1) {
+        if (count($labels) > 80) {
+            throw new Problem(422, 'validation_failed', 'Pro Ticket können höchstens 80 bearbeitbare Labels zugeordnet werden.');
+        }
+        if (count(array_filter($labels, static fn (array $label): bool => 'workflow' === $label['kind'])) > 1) {
             throw new Problem(409, 'workflow_route_conflict', 'Eine Aufgabe kann höchstens ein Workflowlabel erhalten.');
         }
+
         return $labels;
     }
 
@@ -1672,6 +1851,7 @@ final class WorkHandler
                 return $id;
             }
         }
+
         return null;
     }
 
@@ -1679,9 +1859,20 @@ final class WorkHandler
     private function label(string $id, string $projectId): array
     {
         $label = $this->store->find('labels', $id);
-        if ($label === null || $label['project_id'] !== $projectId) {
+        if (null === $label) {
+            foreach (array_keys(AttentionLabelCatalog::definitions()) as $code) {
+                if ($this->attentionLabelId($projectId, $code) === $id) {
+                    return $this->attentionLabelDefinition($projectId, $code);
+                }
+            }
+        }
+        if (null === $label || $label['project_id'] !== $projectId) {
             throw new Problem(404, 'resource_not_found', 'Label gehört nicht zu diesem Projekt.');
         }
+        if (($label['kind'] ?? null) === 'attention') {
+            ++$label['version'];
+        }
+
         return $label;
     }
 
@@ -1700,7 +1891,105 @@ final class WorkHandler
         $this->store->save('label_taxonomies', $taxonomy, 'taxonomy.updated');
     }
 
-    /** @param array<string, mixed> $record */
+    /** @return list<array<string, mixed>> */
+    private function labelsForProject(string $projectId): array
+    {
+        $labels = [];
+        foreach ($this->store->all('labels', $projectId) as $label) {
+            $labels[$label['id']] = $label;
+        }
+        foreach (array_keys(AttentionLabelCatalog::definitions()) as $code) {
+            $label = $this->attentionLabelDefinition($projectId, $code);
+            $labels[$label['id']] = $label;
+        }
+        $labels = array_values($labels);
+        usort($labels, static fn (array $a, array $b): int => [$a['kind'], $a['name']] <=> [$b['kind'], $b['name']]);
+
+        return $labels;
+    }
+
+    /** @return array<string, mixed> */
+    private function attentionLabelDefinition(string $projectId, string $code): array
+    {
+        $id = $this->attentionLabelId($projectId, $code);
+        $stored = $this->store->find('labels', $id);
+        if (null !== $stored) {
+            // The first persisted version materializes the synthetic version-1 definition.
+            ++$stored['version'];
+
+            return $stored;
+        }
+
+        $definition = AttentionLabelCatalog::definitions()[$code];
+        $project = $this->project($projectId);
+        $createdAt = $project['created_at'];
+
+        return [
+            'id' => $id,
+            'version' => 1,
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+            'allowed_actions' => [],
+            'project_id' => $projectId,
+            'key' => 'attention:'.$code,
+            'name' => $definition['name'],
+            'color' => $definition['color'],
+            'description' => $definition['description'],
+            'kind' => 'attention',
+            'system_managed' => true,
+            'active' => true,
+        ];
+    }
+
+    private function attentionLabelId(string $projectId, string $code): string
+    {
+        return Uuid::v5(Uuid::fromString(Uuid::NAMESPACE_URL), 'https://falkenwarte.invalid/projects/'.$projectId.'/attention/'.$code)->toRfc4122();
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function openAttentionReasons(string $taskId, string $projectId, ?string $addressedTo = null): array
+    {
+        return array_values(array_filter(
+            $this->store->all('attention_reasons', $projectId),
+            static fn (array $reason): bool => ($reason['task_id'] ?? null) === $taskId
+                && ($reason['open'] ?? false) === true
+                && (null === $addressedTo || ($reason['addressed_to'] ?? null) === $addressedTo),
+        ));
+    }
+
+    /** @param array<string, mixed> $task @return list<string> */
+    private function projectedTaskLabelIds(array $task): array
+    {
+        $taskId = $task['id'] ?? null;
+        if (!is_string($taskId)) {
+            return array_values(array_unique($task['label_ids'] ?? []));
+        }
+        $attentionIds = [];
+        foreach ($this->openAttentionReasons($taskId, $task['project_id']) as $reason) {
+            $code = $reason['code'] ?? null;
+            if (is_string($code) && isset(AttentionLabelCatalog::definitions()[$code])) {
+                $attentionIds[] = $this->attentionLabelId($task['project_id'], $code);
+            }
+        }
+
+        return array_values(array_unique(array_merge($task['label_ids'] ?? [], $attentionIds)));
+    }
+
+    /** @param array<string, mixed> $task @return array<string, mixed> */
+    private function withProjectedTaskLabels(array $task): array
+    {
+        $task['label_ids'] = $this->projectedTaskLabelIds($task);
+        $taskId = $task['id'] ?? null;
+        $ownerReasons = is_string($taskId) ? $this->openAttentionReasons($taskId, $task['project_id'], 'owner') : [];
+        $task['human_attention'] = [
+            'required' => [] !== $ownerReasons,
+            'reasons' => array_values(array_unique(array_column($ownerReasons, 'code'))),
+        ];
+
+        return $task;
+    }
+
+    /** @param list<array<string, mixed>> $records */
     private function findRecord(array $records, string $id): ?array
     {
         foreach ($records as $record) {
@@ -1708,6 +1997,7 @@ final class WorkHandler
                 return $record;
             }
         }
+
         return null;
     }
 
@@ -1715,10 +2005,11 @@ final class WorkHandler
     private function task(string $id, Actor $actor): array
     {
         $task = $this->store->find('tasks', $id);
-        if ($task === null) {
+        if (null === $task) {
             throw new Problem(404, 'resource_not_found', 'Ticket wurde nicht gefunden.');
         }
         $actor->requireProject($task['project_id']);
+
         return $task;
     }
 
@@ -1726,9 +2017,10 @@ final class WorkHandler
     private function project(string $id): array
     {
         $project = $this->store->find('projects', $id);
-        if ($project === null) {
+        if (null === $project) {
             throw new Problem(404, 'resource_not_found', 'Projekt wurde nicht gefunden.');
         }
+
         return $project;
     }
 
@@ -1736,9 +2028,10 @@ final class WorkHandler
     private function status(string $id, string $projectId): array
     {
         $status = $this->store->find('statuses', $id);
-        if ($status === null || $status['project_id'] !== $projectId) {
+        if (null === $status || $status['project_id'] !== $projectId) {
             throw new Problem(409, 'project_mismatch', 'Der Ticketstatus gehört nicht zu diesem Projekt.');
         }
+
         return $status;
     }
 
@@ -1746,10 +2039,11 @@ final class WorkHandler
     private function board(string $id, Actor $actor): array
     {
         $board = $this->store->find('boards', $id);
-        if ($board === null) {
+        if (null === $board) {
             throw new Problem(404, 'resource_not_found', 'Board wurde nicht gefunden.');
         }
         $actor->requireProject($board['project_id']);
+
         return $board;
     }
 
@@ -1759,13 +2053,14 @@ final class WorkHandler
         return $actor->ref();
     }
 
-    /** @return array<string, mixed> */
+    /** @param array<string, mixed> $p */
     private function pathId(array $p, string $key): string
     {
         $value = $p[$key] ?? null;
-        if (!is_string($value) || $value === '') {
+        if (!is_string($value) || '' === $value) {
             throw new Problem(400, 'validation_failed', 'Pfad-ID fehlt.');
         }
+
         return $value;
     }
 }
