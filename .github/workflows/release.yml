@@ -49,22 +49,89 @@ jobs:
     permissions: {contents: write, packages: write, actions: read}
     env:
       GH_TOKEN: ${{ github.token }}
-      VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
       TAG: ${{ needs.release.outputs.tag }}
     steps:
+      - name: Verify the immutable QA run for this release tag
+        id: verify-release-qa
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          DIRECT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          tag_ref="$(jq -nr --arg tag "$TAG" '$tag | @uri')"
+          TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag_ref" --jq .sha)"
+          [[ "$TAG_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          verify_run() {
+            local run_id="$1"
+            local run
+            [[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || return 1
+            jq -e \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --arg sha "$TAG_SHA" \
+              --argjson run_id "$run_id" \
+              '.id == $run_id
+                and .repository.full_name == $repository
+                and .head_repository.full_name == $repository
+                and .path == ".github/workflows/quality.yml"
+                and .event == "push"
+                and .head_branch == "main"
+                and .head_sha == $sha
+                and .status == "completed"
+                and .conclusion == "success"' \
+              <<< "$run" >/dev/null || return 1
+            local gate_jobs
+            gate_jobs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" --jq '.jobs[] | select(.name == "quality-gate" and .status == "completed" and .conclusion == "success") | .id')" || return 1
+            [[ -n "$gate_jobs" ]]
+          }
+
+          VERIFIED_RUN_ID=''
+          if verify_run "$DIRECT_RUN_ID"; then
+            VERIFIED_RUN_ID="$DIRECT_RUN_ID"
+          else
+            candidate_ids="$(gh api --paginate --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/quality.yml/runs" \
+              -f branch=main \
+              -f event=push \
+              -f head_sha="$TAG_SHA" \
+              -f status=success \
+              -F per_page=100 \
+              --jq '.workflow_runs[].id')"
+            while IFS= read -r candidate_id; do
+              [[ -n "$candidate_id" && "$candidate_id" != "$DIRECT_RUN_ID" ]] || continue
+              if verify_run "$candidate_id"; then
+                VERIFIED_RUN_ID="$candidate_id"
+                break
+              fi
+            done <<< "$candidate_ids"
+          fi
+
+          if [[ -z "$VERIFIED_RUN_ID" ]]; then
+            echo "::error::No completed successful quality.yml push run on main matched release tag SHA $TAG_SHA."
+            exit 1
+          fi
+
+          printf 'verified_release_qa_run_id=%s\nverified_release_qa_sha=%s\n' "$VERIFIED_RUN_ID" "$TAG_SHA"
+          {
+            printf 'verified_release_qa_run_id=%s\n' "$VERIFIED_RUN_ID"
+            printf 'verified_release_qa_sha=%s\n' "$TAG_SHA"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: app-image
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.verify-release-qa.outputs.verified_release_qa_run_id }}
           github-token: ${{ github.token }}
       - name: Retrieve the browser observations for this release
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: acceptance
           path: acceptance
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.verify-release-qa.outputs.verified_release_qa_run_id }}
           github-token: ${{ github.token }}
       - name: Publish the tested image and release digest
+        env:
+          VERIFIED_SHA: ${{ steps.verify-release-qa.outputs.verified_release_qa_sha }}
         run: |
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)" = "$VERIFIED_SHA"
           docker load -i app-image.tar.gz
