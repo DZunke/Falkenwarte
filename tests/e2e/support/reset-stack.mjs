@@ -6,17 +6,17 @@ import { initializeOwner } from './global-setup.mjs';
 
 // The runner only signals its dedicated host harness. It never receives the
 // Docker socket, a product filesystem, or a privileged application endpoint.
-export async function resetStack(directory) {
+export async function resetStack(directory, mode = 'reset') {
   const id = randomUUID();
   const request = path.join(directory, id);
-  await writeFile(request + '.tmp', id);
+  await writeFile(request + '.tmp', mode);
   await rename(request + '.tmp', request + '.request');
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
       const outcome = (await readFile(request + '.result', 'utf8')).trim();
       if (outcome !== 'ready') throw new Error('External fixture reset failed. See the test harness log.');
-      await initializeOwner();
+      if (mode === 'reset') await initializeOwner();
       return;
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;

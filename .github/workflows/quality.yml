@@ -29,6 +29,7 @@ env:
 jobs:
   commit-policy:
     runs-on: ubuntu-24.04
+    permissions: {contents: read, pull-requests: read}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
@@ -62,7 +63,7 @@ jobs:
       - run: php scripts/check-contracts.php && php scripts/check-architecture.php && php bin/console lint:container
       - run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
       - run: vendor/bin/php-cs-fixer check --diff
-      - run: npm --prefix frontend ci && npm --prefix frontend run generate:api && git diff --exit-code -- frontend/src/generated && npm --prefix frontend run build
+      - run: npm --prefix frontend ci && npm --prefix frontend run generate:api && git diff --exit-code -- frontend/src/generated && npm --prefix frontend run lint && npm --prefix frontend run build
 
   docs-quality:
     runs-on: ubuntu-24.04

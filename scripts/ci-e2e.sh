@@ -6,6 +6,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 project="falkenwarte-e2e-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-1}"
 runner="${project}-runner"
+reports="${project}-reports"
 compose=(docker compose --project-name "$project" -f compose.yaml -f compose.test.yaml --profile test)
 control="$(mktemp -d)"
 watcher=''
@@ -13,18 +14,21 @@ cleanup() {
     if [[ -n "$watcher" ]]; then kill "$watcher" 2>/dev/null || true; fi
     docker rm -f "$runner" >/dev/null 2>&1 || true
     "${compose[@]}" down --volumes --remove-orphans >/dev/null
+    docker volume rm "$reports" >/dev/null 2>&1 || true
     rm -rf "$control"
 }
 trap cleanup EXIT
 
 reset_stack() {
+    local mode="$1"
+    [[ "$mode" = reset || "$mode" = restart-hub ]] || return 1
     "${compose[@]}" stop --timeout 12 app &&
     "${compose[@]}" run -T --no-deps --rm --entrypoint sh app -ec '
         test "$APP_ENV" = test
         test "$FALKENWARTE_DB" = /data/falkenwarte.sqlite
-        find /data -mindepth 1 -maxdepth 1 ! -name caddy -exec rm -rf -- {} +
+        if [ "$1" = reset ]; then find /data -mindepth 1 -maxdepth 1 ! -name caddy -exec rm -rf -- {} +; fi
         rm -f /data/caddy/mercure.db
-    ' &&
+    ' qa-reset "$mode" &&
     "${compose[@]}" start app || return 1
     for ((attempt = 0; attempt < 60; attempt++)); do
         if "${compose[@]}" exec -T app php /usr/local/bin/falkenwarte-healthcheck >/dev/null 2>&1; then
@@ -40,7 +44,7 @@ watch_resets() {
     while true; do
         for request in "$control"/*.request; do
             local result="${request%.request}.result"
-            if reset_stack; then echo ready > "$result.tmp"; else echo failed > "$result.tmp"; fi
+            if reset_stack "$(<"$request")"; then echo ready > "$result.tmp"; else echo failed > "$result.tmp"; fi
             mv "$result.tmp" "$result"
             rm -f "$request"
         done
@@ -50,20 +54,28 @@ watch_resets() {
 
 mkdir -p var/ci-evidence
 "${compose[@]}" build t3-mock decisions-mock e2e
+bash scripts/ci-production.sh
 "${compose[@]}" up --no-build --wait --wait-timeout 150 app t3-mock decisions-mock
 watch_resets &
 watcher=$!
 status=0
-"${compose[@]}" run --no-deps --name "$runner" -e FALKENWARTE_STACK_CONTROL=/qa-control -v "$control:/qa-control" e2e || status=$?
+docker volume create "$reports" >/dev/null
+"${compose[@]}" run --no-deps --name "$runner" -e FALKENWARTE_STACK_CONTROL=/qa-control -v "$control:/qa-control" -v "$reports:/qa-results" e2e || status=$?
 kill "$watcher" 2>/dev/null || true
 wait "$watcher" 2>/dev/null || true
 watcher=''
 docker cp "$runner:/app/qa/results.json" var/ci-evidence/acceptance.json
-# Failure diagnostics can contain browser data. Upload only the public case
-# identifiers, assertions and observations of successfully completed cases.
-jq '(.cases[] | select(.status != "passed") | .observed_outcome) = [] | del(.cases[].error)' var/ci-evidence/acceptance.json > var/ci-evidence/acceptance.safe.json
-mv var/ci-evidence/acceptance.safe.json var/ci-evidence/acceptance.json
+docker cp "$runner:/qa-results/." "$control/reports"
+python3 scripts/prepare-evidence.py "$control/reports" var/ci-evidence
+if [[ -f "$control/reports/public/board.png" ]]; then
+    cp "$control/reports/public/board.png" var/ci-evidence/board.png
+fi
 if (( status == 0 )); then
-    jq -e '.overall_status == "passed" and (.cases | length > 0) and all(.cases[]; .status == "passed")' var/ci-evidence/acceptance.json >/dev/null
+    # A03/A23/A32 are static, A05 is checked with a terminated Messenger
+    # worker, A19 exercises the production image, A31 uses real GitHub checks.
+    jq -e '
+      .overall_status == "passed" and all(.cases[]; .status == "passed")
+      and ((["A01","A02","A04","A06","A07","A08","A09","A10","A11","A12","A13","A14","A15","A16","A17","A18","A20","A21","A22","A24","A25","A26","A27","A28","A29","A30","A33"] - [.cases[].acceptance_id]) | length == 0)
+    ' var/ci-evidence/acceptance.json >/dev/null
 fi
 exit "$status"

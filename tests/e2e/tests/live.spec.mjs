@@ -1,8 +1,9 @@
+import { resetStack } from '../support/reset-stack.mjs';
 import { randomUUID } from 'node:crypto';
 import { test, expect, recordEvidence } from '../support/fixtures.mjs';
 
 test('A15 two private live subscribers, scoped hints, reconnect and expiring credentials', async ({ ownerApi, ownerPage, browser, baseURL }) => {
-  test.setTimeout(135_000);
+  test.setTimeout(180_000);
   const project = await ownerApi.createProject({ name: 'Live Board' });
   const other = await ownerApi.createProject({ name: 'Privates zweites Board' });
   await ownerApi.ensureDefaultBoard(project.id);
@@ -53,7 +54,7 @@ test('A15 two private live subscribers, scoped hints, reconnect and expiring cre
     }, { hub, topics: [topic(project.id), topic(other.id)] });
     await expect.poll(() => subscriber.evaluate(() => window.limitedStream.readyState)).toBe(1);
     const deniedPublish = await restricted.request.post(hub, {
-      headers: { Origin: new URL(baseURL).origin }, form: { topic: topic(project.id), data: '{}', private: 'on' },
+      headers: { Authorization: 'Bearer ' + limitedCookie.value, Cookie: '' }, form: { topic: topic(project.id), data: '{}', private: 'on' },
     });
     expect([401, 403]).toContain(deniedPublish.status());
     await ownerApi.createTask(other.id, { title: 'Diese Änderung bleibt im anderen Projekt' });
@@ -84,6 +85,9 @@ test('A15 two private live subscribers, scoped hints, reconnect and expiring cre
     await ownerPage.context().setOffline(true);
     const offlineTitle = 'Während der Unterbrechung aktualisiert';
     await mutation(initial.id, offlineTitle);
+    if (process.env.FALKENWARTE_STACK_CONTROL) {
+      await resetStack(process.env.FALKENWARTE_STACK_CONTROL, 'restart-hub');
+    }
     await ownerPage.context().setOffline(false);
     await renewal;
     await expect(ownerPage.getByText(offlineTitle, { exact: true })).toBeVisible();
