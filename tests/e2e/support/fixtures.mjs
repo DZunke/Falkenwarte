@@ -237,6 +237,21 @@ export class AgentSimulator {
   }
 }
 
+export async function authorizeT3InBrowser(ownerPage, baseURL, t3URL) {
+  const callback = new URL('/auth/t3/callback', baseURL);
+  const [callbackResponse] = await Promise.all([
+    ownerPage.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === callback.origin && url.pathname === callback.pathname && response.request().isNavigationRequest();
+    }),
+    ownerPage.waitForRequest((request) => request.url().startsWith(`${t3URL}/authorize?`)),
+    ownerPage.getByRole('button', { name: /Bei T3 anmelden/ }).click(),
+  ]);
+  expect(callbackResponse.status()).toBe(302);
+  await ownerPage.waitForURL((url) => url.origin === callback.origin && url.hash === '#/agents', { waitUntil: 'domcontentloaded' });
+  await expect(ownerPage.getByRole('heading', { name: 'T3-Verbindung' })).toBeVisible();
+}
+
 export async function createAgentSimulator(baseURL, token) {
   const context = await playwrightRequest.newContext({ baseURL });
   const agent = new AgentSimulator(context, token, baseURL);
