@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import { test, expect, recordEvidence } from '../support/fixtures.mjs';
 
 const apiPrefix = process.env.FALKENWARTE_API_PREFIX ?? '/api/v1';
@@ -69,8 +71,20 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
   const history = await historyResponse.json();
   expect(history.items.length).toBeGreaterThanOrEqual(3);
 
+  await ownerPage.keyboard.press('Escape');
+  await expect(ownerPage.getByRole('button', { name: 'Neues Ticket' })).toBeVisible();
+  await expect(ownerPage.getByText('Ein bearbeiteter Browserablauf', { exact: true })).toBeVisible();
+  await ownerPage.locator('.falkenwarte-scrollbar').evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  await expect(ownerPage.getByRole('heading', { name: 'Erledigt', exact: true })).toBeVisible();
+  await expect(ownerPage.getByText('Ein bearbeiteter Browserablauf', { exact: true })).toBeVisible();
+  const publicResults = process.env.FALKENWARTE_QA_RESULTS_DIR ?? path.resolve('tests/e2e/results');
+  const publicDirectory = path.join(publicResults, 'public');
+  await mkdir(publicDirectory, { recursive: true });
+  const boardScreenshot = path.join(publicDirectory, 'board.png');
+  await ownerPage.screenshot({ path: boardScreenshot, fullPage: true });
+
   recordEvidence(
     'Der Eigentümer kann Projekt, Board und Ticket ohne Agentenlauf über die Oberfläche anlegen, bearbeiten und abschließen. Änderungen bleiben im Ticketverlauf nachvollziehbar.',
-    `Chromium erstellte Projekt Browser Bedienbarkeit ${projectSuffix}, richtete das Board ein, legte Ticket ${taskId} mit einem Kriterium an, änderte Titel und Beschreibung über das Ticket-Sheet, registrierte eine manuelle Meldung, bestätigte das Kriterium mit Begründung und setzte den Status über die sichtbare Auswahl auf done. Die öffentliche API bestätigte origin=manual und ${history.items.length} Verlaufsrevisionen.`,
+    `Chromium erstellte Projekt Browser Bedienbarkeit ${projectSuffix}, richtete das Board ein, legte Ticket ${taskId} mit einem Kriterium an, änderte Titel und Beschreibung über das Ticket-Sheet, registrierte eine manuelle Meldung, bestätigte das Kriterium mit Begründung und setzte den Status über die sichtbare Auswahl auf done. Die öffentliche API bestätigte origin=manual und ${history.items.length} Verlaufsrevisionen. Ein unkritischer Browserboard-Screenshot liegt unter public/board.png.`,
   );
 });

@@ -1,6 +1,6 @@
 # Live-Dienste: FrankenPHP und Mercure
 
-**Status:** Dieser Text ist der Live-Dienst-Vertrag. Implementierte Konfiguration und Browsernachweise stehen in [TRACEABILITY.md](TRACEABILITY.md) und [VALIDATION.md](VALIDATION.md). Die JSON-API und SQLite bleiben für Zustand, Berechtigungen und History maßgeblich. Mercure informiert die Oberfläche über Änderungen; es entscheidet keine fachlichen Übergänge und startet keine Agents.
+**Status:** Dieser Text beschreibt den Live-Dienst-Vertrag und die implementierte Grant-Auswahl. Browser- und Container-Nachweise stehen in [TRACEABILITY.md](TRACEABILITY.md) und [VALIDATION.md](VALIDATION.md). Die JSON-API und SQLite bleiben für Zustand, Berechtigungen und History maßgeblich. Mercure informiert die Oberfläche über Änderungen; es entscheidet keine fachlichen Übergänge und startet keine Agents.
 
 ## 1. Laufzeit in einem Container
 
@@ -21,17 +21,21 @@ Bundle und Component unterstützen die gewählte PHP-/Symfony-Basis. Die tatsäc
 
 ## 3. Ein öffentlicher Ursprung
 
-Vorgeschlagener Standard ist **`https://localhost:8443`** für Frontend, JSON-API und `/.well-known/mercure`. Der Container lauscht ebenfalls auf HTTPS-Port 8443; der Host bindet ihn ausschließlich an `127.0.0.1`. Ein zweiter lokaler HTTP-Port kann ausschließlich auf diese HTTPS-Adresse umleiten. Gleiche innere und äußere HTTPS-Ports vereinfachen den Publisher-Aufruf aus dem Container, ersetzen aber keine Verbindungsprüfung.
+Konfigurierter lokaler Standard ist **`https://localhost:8443`** für Frontend, JSON-API und `/.well-known/mercure`. Der Container lauscht ebenfalls auf HTTPS-Port 8443; der Host bindet ihn ausschließlich an `127.0.0.1`. Ein zweiter lokaler HTTP-Port kann ausschließlich auf diese HTTPS-Adresse umleiten. Gleiche innere und äußere HTTPS-Ports vereinfachen den Publisher-Aufruf aus dem Container, ersetzen aber keine Verbindungsprüfung.
 
 Die Hub-URL wird als kanonischer `resource_identifier` festgelegt. Beide JWT-Arten verwenden genau diese URL als `aud`. Als eigener, konfigurierter Issuer dient die Falkenwarte-Origin; `iss` muss exakt dem vertrauenswürdigen `issuer`-Block entsprechen. Auch bei einer später abweichenden internen Transportadresse bleiben diese Identitäten ausdrücklich konfiguriert. Ein externer OAuth-Server ist für die lokale Tokenausgabe nicht nötig. [Hub-Konfiguration](https://mercure.rocks/docs/deployment/configuration)
 
 ## 4. Getrennte Berechtigungen
 
-Publisher und Subscriber erhalten getrennte Signierschlüssel und getrennte Prüfschlüsselkonfigurationen im Issuer-Block. Nur Backendprozesse besitzen Publish-Rechte. Ein Browser bekommt ausschließlich die Subscribe-Grants der freigegebenen Projekttopics. Alle fachlichen UI-Updates werden ausdrücklich als privat veröffentlicht; eine schwer erratbare Topic-URL ersetzt diese Einstellung nicht.
+Publisher und Subscriber erhalten getrennte Signierschlüssel und getrennte Prüfschlüsselkonfigurationen im Issuer-Block. Nur Backendprozesse besitzen Publish-Rechte. Der Eigentümer erhält in der Gesamtsicht ausschließlich einen Subscribe-Grant für `urn:falkenwarte:owner`; jede Änderung wird zusätzlich zu ihrem Projekttopic an dieses Owner-Topic veröffentlicht. Dadurch muss das Browser-Cookie nicht jedes Projekt einzeln aufzählen.
+
+Ein ausdrücklicher Projektgrant enthält nur die in `project_ids` angeforderten Projekte und erhält keinen Owner-Grant. Der Server prüft jede Projekt-ID gegen das Eigentümerrecht und die Existenz des Projekts. Der API-Vertrag begrenzt sowohl die angeforderten Projekt-IDs als auch die ausgegebenen Topics auf höchstens 200; diese Obergrenze hält die Topicliste und das signierte Cookie begrenzt.
+
+Alle fachlichen UI-Updates werden ausdrücklich als privat veröffentlicht; eine schwer erratbare Topic-URL ersetzt diese Einstellung nicht.
 
 Der moderne Tokenvertrag verwendet `typ: at+jwt`, `iss`, `aud`, `exp`, `sub`, `client_id`, `iat`, `jti` und `authorization_details`. Alte `mercure.publish`-/`mercure.subscribe`-Claims und Legacy-Kompatibilitätsoptionen werden nicht übernommen. Die geprüfte Symfony-Konfiguration unterstützt getrennte `publisher`- und `subscriber`-Factories. [Konfiguration v0.7.0](https://github.com/symfony/mercure-bundle/blob/v0.7.0/src/DependencyInjection/Configuration.php), [Tokenvertrag](https://mercure.rocks/spec)
 
-Der Subscriber-JWT wird ausschließlich als `__Secure-mercure_access_token` mit HttpOnly, Secure, SameSite=Strict und Hub-Pfad gesetzt. Für dieselbe Origin bleibt das Cookie hostgebunden. Der Name wird ausdrücklich konfiguriert, da der Bundle-Debugmodus sonst einen anderen Standard verwendet. JWTs erscheinen weder in URLs noch in JavaScript-Speichern oder API-Antwortkörpern. T3-Tokens, OpenAI-Zugänge, MCP-Bearer und Publisher-Secrets gelangen nie an das Frontend. [Cookie-Implementierung v0.10.0](https://github.com/symfony/mercure/blob/v0.10.0/src/Authorization.php)
+Der Subscriber-JWT wird ausschließlich als `__Secure-mercure_access_token` mit HttpOnly, Secure, SameSite=Strict und Hub-Pfad gesetzt. Für dieselbe Origin bleibt das Cookie hostgebunden. Der Produkt-TTL beträgt 600 Sekunden; nur das isolierte Testprofil kann ihn über `MERCURE_SUBSCRIBER_TTL` auf 60 bis 600 Sekunden überschreiben und setzt ihn im Compose-Testprofil auf 60 Sekunden. Der API-Vertrag begrenzt die Topics auf höchstens 200, damit die Cookie-Nutzlast nicht unbeschränkt mit der Projektzahl wächst. JWTs erscheinen weder in URLs noch in JavaScript-Speichern oder API-Antwortkörpern. T3-Tokens, OpenAI-Zugänge, MCP-Bearer und Publisher-Secrets gelangen nie an das Frontend. [Cookie-Implementierung v0.10.0](https://github.com/symfony/mercure/blob/v0.10.0/src/Authorization.php)
 
 ## 5. Vorgeschlagene JSON-Endpunkte
 
@@ -39,10 +43,10 @@ Die folgenden Namen sind Falkenwarte-API-Entscheidungen, keine eingebauten Symfo
 
 | Route | Vertrag |
 |---|---|
-| `GET /api/v1/live/config` | Liefert Hub-URL, erlaubte exakte Topic-Identifikatoren und Angaben zur Erneuerung; keine Zugangstokens. |
-| `POST /api/v1/live/authorize` | Prüft die bestehende Sitzung und CSRF-Schutz, berechnet erlaubte Grants, setzt das HttpOnly-Cookie und liefert nur Ablauf-/Erneuerungsmetadaten. |
+| `GET /api/v1/live/config` | Liefert Hub-URL, Owner-Topic oder aktuell erlaubte Projekt-Topics und Angaben zur Erneuerung; keine Zugangstokens. |
+| `POST /api/v1/live/authorize` | Prüft die Eigentümersitzung und CSRF-Schutz, ermittelt das Owner-Topic oder die ausdrücklich angeforderten Projekt-Topics, setzt das HttpOnly-Cookie und liefert Ablauf-/Erneuerungsmetadaten. |
 
-Beide Antworten sind privat und werden nicht gemeinsam gecacht. Der Client kann gewünschte Projekte angeben; das Backend berechnet die tatsächliche Berechtigung selbst. Als anfängliche Projektentscheidung gilt eine Subscriber-Laufzeit von zehn Minuten mit vorgezogener Erneuerung. Der Server kann diese Politik später ändern. Abmeldung beendet die Browserverbindung und löscht das Cookie; ein bereits ausgegebener JWT bleibt außerhalb dieser Browserinstanz höchstens bis zu seinem Ablauf gültig.
+Beide Antworten sind privat und werden nicht gemeinsam gecacht. Für die Gesamtsicht wird keine Projektliste benötigt; der Eigentümer abonniert das einzelne Owner-Topic. Ein bewusst begrenzter Projektgrant wird aus den angeforderten Projekt-IDs gebildet; das Backend prüft deren Gültigkeit und fügt keine weiteren Projekte hinzu. Der Produkt-TTL beträgt zehn Minuten, das isolierte QA-Profil verwendet 60 Sekunden. Abmeldung beendet die Browserverbindung und löscht das Cookie; ein bereits ausgegebener JWT bleibt außerhalb dieser Browserinstanz höchstens bis zu seinem Ablauf gültig.
 
 ## 6. Veröffentlichen nach Commit
 

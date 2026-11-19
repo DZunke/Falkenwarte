@@ -42,6 +42,8 @@ Eine offene Frage an den technischen Melder setzt `waiting_for=requester`. Die U
 
 Kommt eine Antwort für eine inzwischen veränderte Ticketrevision zurück, wird sie als veraltet gespeichert und nicht blind angewendet. Eine neue Bewertung fixiert erneut Input, Taxonomie und Regeln. Ein manueller Labelwechsel überschreibt nicht still die Herkunft einer bereits angewandten Klassifikation.
 
+Eine neue Bewertung ersetzt erst beim fachlichen Commit die offenen `source=intake`-Gründe älterer Intake-Generationen derselben Aufgabe; ein neu notwendiger Grund wird danach für das aktuelle Ergebnis geöffnet. Während der neuen Bewertung bleiben die bisherigen Gründe sichtbar, und Gründe aus Run-, Approval- oder Authentifizierungsquellen bleiben unabhängig offen. Ein Ergebnis, dessen fixierte Revision oder Konfigurationsversion nicht mehr aktuell ist, bleibt als nicht angewandter Klassifikationsnachweis erhalten; der neueste Intake bewertet den aktuellen Stand erneut.
+
 ## 4. Run
 
 | Zustand | Bedeutung | Typische zulässige Fortsetzung |

@@ -88,6 +88,27 @@ function validateManifest(array $manifest, string $databasePath): void
     if (!is_array($manifest['plugin_versions'])) {
         failRestore('Die Pluginversionen im Backupmanifest sind ungültig.');
     }
+    $backupPlugins = [];
+    foreach ($manifest['plugin_versions'] as $plugin) {
+        if (!is_array($plugin)
+            || array_diff(array_keys($plugin), ['plugin_id', 'version']) !== []
+            || !is_string($plugin['plugin_id'] ?? null)
+            || preg_match('/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/D', $plugin['plugin_id']) !== 1
+            || !is_string($plugin['version'] ?? null)
+            || preg_match('/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/D', $plugin['version']) !== 1
+            || isset($backupPlugins[$plugin['plugin_id']])) {
+            failRestore('Die Pluginversionen im Backupmanifest sind ungültig.');
+        }
+        $backupPlugins[$plugin['plugin_id']] = $plugin['version'];
+    }
+
+    $installedPlugins = installedPluginManifests();
+    foreach ($backupPlugins as $pluginId => $backupVersion) {
+        $installed = $installedPlugins[$pluginId] ?? null;
+        if (!is_array($installed) || version_compare((string) $installed['version'], $backupVersion, '<')) {
+            failRestore('Ein im Backup enthaltener Pluginstand wird von diesem Image nicht unterstützt.');
+        }
+    }
 
     $currentVersion = trim((string) @file_get_contents(dirname(__DIR__).'/version.txt'));
     if ($currentVersion === '' || version_compare($manifest['app_version'], $currentVersion, '>')) {
@@ -104,19 +125,102 @@ function validateManifest(array $manifest, string $databasePath): void
         if ($versions === false) {
             failRestore('Der Datenbank-Migrationsstand fehlt.');
         }
-        $lastVersion = null;
-        while ($row = $versions->fetchArray(SQLITE3_ASSOC)) {
-            $lastVersion = (string) ($row['version'] ?? '');
-            if ($lastVersion === '' || !class_exists($lastVersion)) {
-                failRestore('Das Backup enthält einen Migrationsstand, der in diesem Image nicht unterstützt wird.');
+        $applicationVersions = [];
+        $pluginVersions = [];
+        $pluginNamespaces = [];
+        foreach ($installedPlugins as $pluginId => $plugin) {
+            $namespace = trim((string) ($plugin['migrations']['namespace'] ?? ''), '\\');
+            if ($namespace !== '') {
+                $pluginNamespaces[$namespace.'\\'] = $pluginId;
             }
         }
-        if ($lastVersion === null || $lastVersion !== $manifest['schema_version']) {
+        $seen = [];
+        while ($row = $versions->fetchArray(SQLITE3_ASSOC)) {
+            $migration = ltrim((string) ($row['version'] ?? ''), '\\');
+            if ($migration === '' || isset($seen[$migration]) || !class_exists($migration)) {
+                failRestore('Das Backup enthält einen Migrationsstand, der in diesem Image nicht unterstützt wird.');
+            }
+            $seen[$migration] = true;
+            if (str_starts_with($migration, 'DoctrineMigrations\\')) {
+                $applicationVersions[] = $migration;
+                continue;
+            }
+            $matchedPlugin = false;
+            foreach ($pluginNamespaces as $namespace => $pluginId) {
+                if (str_starts_with($migration, $namespace)) {
+                    $matchedPlugin = true;
+                    if (!array_key_exists($pluginId, $backupPlugins)) {
+                        failRestore('Ein Pluginmigrationsstand fehlt im Backupmanifest.');
+                    }
+                    $pluginVersions[$pluginId][] = $migration;
+                    break;
+                }
+            }
+            if (!$matchedPlugin) {
+                failRestore('Das Backup enthält eine Pluginmigration ohne kompatibles Pluginmanifest.');
+            }
+        }
+        $latestApplicationVersion = $applicationVersions === [] ? null : end($applicationVersions);
+        if ($latestApplicationVersion === null || $latestApplicationVersion !== $manifest['schema_version']) {
             failRestore('Der Datenbank-Migrationsstand stimmt nicht mit dem Backupmanifest überein.');
+        }
+        assertMigrationFilesPresent(dirname(__DIR__).'/migrations', 'DoctrineMigrations', $applicationVersions, $latestApplicationVersion);
+        foreach ($pluginVersions as $pluginId => $applied) {
+            $plugin = $installedPlugins[$pluginId];
+            $package = (string) ($plugin['backend']['composer_package'] ?? '');
+            if (preg_match('#^[a-z0-9_.-]+/[a-z0-9_.-]+$#D', $package) !== 1) {
+                failRestore('Das Backup verweist auf ein Plugin ohne vertrauenswürdigen Paketpfad.');
+            }
+            $namespace = trim((string) $plugin['migrations']['namespace'], '\\');
+            assertMigrationFilesPresent(dirname(__DIR__).'/vendor/'.$package.'/src/Migrations', $namespace, $applied, (string) end($applied));
         }
     } finally {
         $database->close();
     }
+}
+
+/** @param list<string> $applied @param string $latestApplied */
+function assertMigrationFilesPresent(string $directory, string $namespace, array $applied, string $latestApplied): void
+{
+    $appliedSet = array_fill_keys($applied, true);
+    $expectedPrefix = trim($namespace, '\\').'\\';
+    foreach (glob(rtrim($directory, '/').'/*.php') ?: [] as $path) {
+        $name = pathinfo($path, PATHINFO_FILENAME);
+        if (preg_match('/^Version\d+$/D', $name) !== 1) {
+            continue;
+        }
+        $version = $expectedPrefix.$name;
+        if (strcmp($version, $latestApplied) <= 0 && !isset($appliedSet[$version])) {
+            failRestore('Der Backup-Migrationsstand ist unvollständig; eine ältere App- oder Pluginmigration fehlt.');
+        }
+    }
+}
+
+/** @return array<string, array<string, mixed>> */
+function installedPluginManifests(): array
+{
+    $root = dirname(__DIR__);
+    $manifests = [];
+    foreach (glob($root.'/vendor/falkenwarte/*/manifest.json') ?: [] as $path) {
+        $bytes = @file_get_contents($path);
+        if ($bytes === false || strlen($bytes) > MAX_MANIFEST_BYTES) {
+            continue;
+        }
+        try {
+            $manifest = json_decode($bytes, true, 32, JSON_THROW_ON_ERROR);
+        } catch (Throwable) {
+            continue;
+        }
+        if (!is_array($manifest)
+            || !is_string($manifest['id'] ?? null)
+            || !is_string($manifest['version'] ?? null)
+            || !is_array($manifest['migrations'] ?? null)) {
+            continue;
+        }
+        $manifests[$manifest['id']] = $manifest;
+    }
+
+    return $manifests;
 }
 
 function extractDatabase(ZipArchive $archive, string $temporaryPath, string $expectedHash, int $maximumBytes): void

@@ -32,6 +32,10 @@ Der Merge des geprüften Release-PRs löst auf `main` einen weiteren vollständi
 
 Die QA führt PR-Code ohne produktive Secrets aus. Die verwendeten Actions sind auf vollständige Commit-IDs fixiert. Das App-Image und dessen ID bleiben als kurzlebiges QA-Artefakt verfügbar. Zur Fehleranalyse enthält der Lauf die konkreten Assertion-Ergebnisse. Zugangstokens, Browser-Sitzungsdateien und rohe Netzwerkmitschnitte gehören ausschließlich in den isolierten lokalen Testlauf.
 
+Der Fork-PR-Sicherheitsnachweis ist noch offen: Ein tatsächlich ausgelöster Lauf aus einem Fork muss bestätigen, dass keine produktiven Secrets verfügbar sind.
+
+Die Lieferkettenabnahmen bleiben erforderlich, bis echte GitHub-Läufe samt Ergebnis dokumentiert sind: normaler PR, Release-PR, absichtlich fehlgeschlagene und übersprungene E2E-Probe, Fork-PR und Release-Check.
+
 ## Bedienbefehle
 
 ```bash

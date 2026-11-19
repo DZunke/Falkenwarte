@@ -37,6 +37,8 @@ Commandnamen und Beispiele sind Projektverträge, keine Symfony-Bordmittel. Symf
 
 Die Tabelle ist der fachliche Katalog. Die endgültigen serialisierten Typnamen werden im jeweiligen Schema fixiert. Öffentlich verwendete Namen werden nicht durch Refactoring einer PHP-Klasse geändert. Das Beispiel `contracts/schemas/task-moved.schema.json` zeigt einen konkreten versionierten Vertrag.
 
+Die gespeicherten Klassifikationsrevisionen trennen Bewertung und Anwendung: `classification.assessed` hält Antworten und die geprüften Ticket-, Taxonomie-, Policy- und Routingversionen fest, `classification.applied` kennzeichnet die unter Versionsprüfung übernommene Entscheidung, und `classification.assessment_stale` protokolliert eine durch zwischenzeitliche Änderungen überholte Antwort. Ein stale Nachweis überschreibt weder Ticketlabels noch den aktuellen Intake; die erneute Bewertung erzeugt einen Nachweis für die dann aktuelle Ticketrevision.
+
 ## 3. Umschlag und Datenminimierung
 
 Der Eventvertrag v1 umfasst den [gemeinsamen Umschlag](../../contracts/schemas/event-envelope.schema.json), die [Action-Ereignisse](../../contracts/schemas/action-event.schema.json), den [Ticketstatuswechsel](../../contracts/schemas/task-moved.schema.json) und die [öffentlichen Änderungshinweise](../../contracts/schemas/ui-change.schema.json).

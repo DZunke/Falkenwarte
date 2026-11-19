@@ -1,6 +1,6 @@
 # QA-Bausteine für die Umsetzung
 
-Dieses Dokument beschreibt deterministische Fixtures und externe Traffic-Mocks. Der ausführbare Playwright-Harness liegt unter `tests/e2e`; seine echten Ergebnisse stehen in `qa/results.json` und [VALIDATION.md](VALIDATION.md). Die `falkenwarte.qa.*`-Formate beschreiben ausschließlich projektspezifische Testdaten; eingebettete HTTP-/JSON-RPC-Nachrichten halten sich an die jeweiligen externen Protokolle.
+Dieses Dokument beschreibt deterministische Fixtures und externe Traffic-Mocks. Der ausführbare Playwright-Harness liegt unter `tests/e2e`; der lokale, ignorierte Entwicklerreport `qa/results.json` ist eine Debugansicht. Das CI-Wrapper-Script redigiert den Reporterbericht zu `var/ci-evidence/acceptance.json`, und GitHub Actions veröffentlicht ihn als `acceptance`-Artefakt. Die verbindlichen Abnahmestände stehen in [VALIDATION.md](VALIDATION.md) und [TRACEABILITY.md](TRACEABILITY.md).
 
 Die verbindlichen Regeln stehen in [Teststrategie](TESTING.md), die fachlichen Ergebnisse in [Abnahme](ACCEPTANCE.md). Eine statische Fixture-Prüfung ersetzt keinen E2E-Lauf.
 
@@ -8,8 +8,8 @@ Die verbindlichen Regeln stehen in [Teststrategie](TESTING.md), die fachlichen E
 
 | Datei | Zweck |
 |---|---|
-| `fixture-seed.json` | Referenz-Ausgangslage für geplante Szenarien; der aktuelle Playwright-Runner lädt diese Datei noch nicht |
-| `scenarios.json` | Katalog von 22 geplanten E2E-Szenarien mit Abnahme-IDs und externen Störungen; ausgeführte Fälle stehen separat in `qa/results.json` |
+| `fixture-seed.json` | Aktiver, optionaler Owner-Kontext mit stabilen Fixture-Schlüsseln und kontrollierter UTC-Zeit für den Metrikverlauf |
+| `scenarios.json` | Katalog von 22 E2E-Szenarien mit Abnahme-IDs und externen Störungen; ein Eintrag im Katalog allein belegt keinen Lauf |
 | `fixtures/mcp/t3-legacy-session.json` | Konkreter Legacy-Handshake, Toolkatalog, Launch, Wait und Sessionende |
 | `fixtures/mcp/t3-faults.json` | 12 zustandsbehaftete Störfälle und die erforderlichen Zustandsübergänge des T3-Testdiensts |
 | `fixtures/mcp/agent-intake.json` | Agent legt ein Ticket am echten MCP-Endpunkt an, verfolgt es und ergänzt Angaben/Links |
@@ -22,9 +22,9 @@ Die verbindlichen Regeln stehen in [Teststrategie](TESTING.md), die fachlichen E
 
 Der Browser- und Schnittstellenrunner liegt in `tests/e2e`; die externe T3- und Decisions-Kommunikation übernehmen die Node-Dienste aus `qa/mocks`. `compose.test.yaml` beschreibt ein isoliertes App-/Mock-/Runner-Profil mit internem Netzwerk, und `scripts/ci-e2e.sh` startet dieses Profil mit eigenem Compose-Projektnamen und Datenvolume. Dieser Compose-Lauf ist noch nicht als ausgeführt belegt; der aktuelle direkte Playwright-Lauf gegen lokal gestartete Prozesse steht in [VALIDATION.md](VALIDATION.md).
 
-Die tatsächlichen Tests erzeugen ihre Anwendungsdaten über öffentliche JSON-/MCP-Aufrufe. `fixture-seed.json` ist vorhanden, wird vom aktuellen Runner aber nicht eingelesen. Die T3- und Decisions-Mocks lesen ihre jeweiligen Protokoll- und Antwortfixtures direkt und protokollieren angenommene Wirkungen.
+Die Szenarien erzeugen Anwendungsdaten über öffentliche JSON-/MCP-Aufrufe. Tests, die den wiederverwendbaren Owner-Kontext benötigen, rufen `loadOwnerFixtureContext` ausdrücklich auf; der Loader verwendet für jede Mutation echte öffentliche HTTP-Operationen. `globalSetup` lädt den Seed nicht, damit leere Owner-Einrichtung und unabhängige Szenarien verfügbar bleiben. Die T3- und Decisions-Mocks lesen ihre jeweiligen Protokoll- und Antwortfixtures direkt und protokollieren angenommene Wirkungen.
 
-Playwright ist auf einen Chromium-Worker begrenzt. Ein Compose-Lauf erhält ein eigenes Datenvolume und Mockprozesse; der direkte lokale Lauf verwendet hingegen den vorhandenen lokalen App-/Mockzustand und ist kein Nachweis der Isolation durch Compose. Die derzeitige Playwright-Konfiguration lädt keine statische Seed-Datei und setzt die externen Mockdienste nicht zwischen beliebigen Testfällen zurück.
+Playwright ist auf einen Chromium-Worker begrenzt. `scripts/ci-e2e.sh` startet ein eigenes Compose-Projekt und fordert vor jedem Testfall einen Reset an: Der App-Container wird angehalten, die isolierte QA-Datenbank und Mercure-Replaydatei werden gelöscht, die Mocks werden zurückgesetzt und der Eigentümer wird neu eingerichtet. Der Runner entfernt zusätzlich den optionalen Clock-Dateiinhalt, sodass normale Tests reale Geschäftszeit erhalten. Ein direkter lokaler Playwright-Aufruf ohne Stack-Control setzt die App-Datenbank nicht automatisch zurück.
 
 Die Mockdienste werden nur in den QA-Imagezielen gebaut; das App-Testprofil erlaubt die festgelegten internen Mockadressen und verwendet nicht produktive Schlüssel. Der Produktionsbuild enthält die Mockserver nicht. Ein erfolgreiches Mock-Szenario belegt weder einen echten T3-Handshake noch den Zugriff auf ein produktives OpenAI-Konto.
 
@@ -70,6 +70,6 @@ Die Antworten unterscheiden eindeutige Klassifikation, Informationsmangel, mehrd
 
 ## Nachweis und offene Szenarien
 
-Der Playwright-Reporter schreibt pro ausgeführtem Fall Abnahme-ID, Ergebnis, erwartete und beobachtete Wirkung sowie Commit-, Image- und Fixturefelder nach `qa/results.json`. Ein fehlender Commit oder ein fehlendes Image bleibt sichtbar und verhindert die Einstufung als release-fester Abnahmenachweis. Geplante Szenarien ohne Laufbeleg bleiben offen.
+Der Playwright-Reporter schreibt pro ausgeführtem Fall Abnahme-ID, Ergebnis, erwartete und beobachtete Wirkung sowie Commit-, Image- und Fixturefelder nach `qa/results.json`. Das CI-Script entfernt Fehlermeldungen und Beobachtungstexte nicht bestandener Fälle aus dem veröffentlichten Artefakt, ohne deren Status zu verbergen. Nur ein erfolgreich abgeschlossener Gesamtworkflow mit referenziertem Commit, Image und Fixtureversion zählt als release-fester Abnahmenachweis. Geplante Szenarien ohne Laufbeleg bleiben offen.
 
 Fehlgeschlagene Abläufe behalten Traces und Playwright-Artefakte unter `tests/e2e/results/`; diese lokalen Artefakte sind nicht automatisch ein freigegebener QA-Nachweis. Architektur-, Schema- und Dokumentationsprüfungen bleiben statisch. Zulässige Background-Funktionstests stehen getrennt in `tests/BackgroundFunctional`; diese Vorgabe führt keine zusätzliche Unit- oder Controller-Testsuite ein.

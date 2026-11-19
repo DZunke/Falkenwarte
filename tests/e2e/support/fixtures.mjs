@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { resetStack } from './reset-stack.mjs';
 import { randomUUID } from 'node:crypto';
+import { clearBusinessTime } from './test-clock.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const apiPrefix = process.env.FALKENWARTE_API_PREFIX ?? '/api/v1';
@@ -58,8 +59,8 @@ export class OwnerApi {
     return this.send('PUT', route, body, { ...options, mutation: true });
   }
 
-  async createProject({ name = 'QA Project', color = '#B8914C', icon = 'bird' } = {}) {
-    const slug = `qa-${randomUUID().slice(0, 8)}`;
+  async createProject({ name = 'QA Project', color = '#B8914C', icon = 'bird', slug: requestedSlug } = {}) {
+    const slug = requestedSlug ?? `qa-${randomUUID().slice(0, 8)}`;
     const { response, data } = await this.post('/projects', {
       slug,
       name,
@@ -248,6 +249,7 @@ export async function createAgentSimulator(baseURL, token) {
 
 export const test = base.extend({
   isolatedStack: [async ({}, use) => {
+    await clearBusinessTime();
     if (process.env.FALKENWARTE_STACK_CONTROL) {
       await resetStack(process.env.FALKENWARTE_STACK_CONTROL);
       const context = await playwrightRequest.newContext();
@@ -303,6 +305,25 @@ export const test = base.extend({
           const response = await context.post(`${t3URL}/__qa/scenario`, { data: { scenario } });
           expect(response.status(), await response.text()).toBe(200);
         },
+        setT3OAuthToken: async (token) => {
+          const response = await context.post(`${t3URL}/__qa/oauth-token`, { data: { token } });
+          expect(response.status(), await response.text()).toBe(200);
+          return response.json();
+        },
+        createExternalT3Activity: async ({ threadId, runId, externalProjectId = 'qa-t3-project-1' } = {}) => {
+          const response = await context.post(`${t3URL}/__qa/external-activity`, {
+            data: { action: 'create', ...(threadId ? { thread_id: threadId } : {}), ...(runId ? { run_id: runId } : {}), external_project_id: externalProjectId },
+          });
+          expect(response.status(), await response.text()).toBe(201);
+          return response.json();
+        },
+        completeExternalT3Activity: async ({ threadId, runId, status = 'completed' }) => {
+          const response = await context.post(`${t3URL}/__qa/external-activity`, {
+            data: { action: 'complete', thread_id: threadId, run_id: runId, status },
+          });
+          expect(response.status(), await response.text()).toBe(200);
+          return response.json();
+        },
         releaseDecisions: async () => {
           const response = await context.post(`${decisionsURL}/__qa/release`, { data: {} });
           expect(response.status()).toBe(200);
@@ -326,7 +347,65 @@ export const test = base.extend({
 
 export { expect };
 
-export function recordEvidence(expected, observed) {
+function sanitizeMockJournal(name, journal) {
+  if (name === 'decisions') {
+    return {
+      service: 'decisions',
+      scenario: journal.scenario,
+      attempts: journal.attempts,
+      barrier_observed: journal.barrier_observed === true,
+      requests: journal.requests.map((entry) => ({
+        sequence: entry.sequence,
+        method: entry.method,
+        path: entry.path,
+        model: entry.model,
+        question_names: entry.question_names,
+        question_types: entry.question_types,
+        taxonomy_version: entry.taxonomy_version,
+        scenario: entry.scenario,
+        validation_error: entry.validation_error,
+        outcome: entry.outcome,
+      })),
+    };
+  }
+  if (name === 't3') {
+    return {
+      service: 't3-mcp',
+      scenario: journal.scenario,
+      unexpected: journal.unexpected.map((entry) => ({ method: entry.method, path: entry.path, tool: entry.tool, outcome: entry.outcome })),
+      requests: journal.journal.map((entry) => ({
+        sequence: entry.sequence,
+        method: entry.method,
+        tool: entry.tool ?? null,
+        external_thread_id: entry.external_thread_id ?? null,
+        external_run_id: entry.external_run_id ?? null,
+        auth_namespace: entry.auth_namespace ?? null,
+        protocol_version: entry.protocol_version ?? null,
+        arguments_hash: entry.arguments_hash ?? null,
+        outcome: entry.outcome,
+        launch_payload_hash: entry.launch_payload_hash ?? null,
+      })),
+      accepted_launches: journal.accepted_launches.map((entry) => ({
+        namespace: entry.namespace,
+        clientRequestId: entry.clientRequestId,
+        payloadHash: entry.payloadHash,
+        response: {
+          threadId: entry.response.threadId,
+          runId: entry.response.runId,
+          projectId: entry.response.projectId,
+          status: entry.response.status,
+        },
+        replays: entry.replays,
+      })),
+    };
+  }
+  throw new Error(`Unsupported mock journal type: ${name}`);
+}
+
+export function recordEvidence(expected, observed, mockJournals = {}) {
   test.info().annotations.push({ type: 'expected', description: expected });
   test.info().annotations.push({ type: 'observed', description: observed });
+  for (const [name, journal] of Object.entries(mockJournals)) {
+    test.info().annotations.push({ type: 'mock-journal', description: JSON.stringify(sanitizeMockJournal(name, journal)) });
+  }
 }

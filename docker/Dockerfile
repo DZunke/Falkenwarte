@@ -18,15 +18,11 @@ FROM ${COMPOSER_IMAGE} AS composer
 FROM ${FRANKENPHP_IMAGE} AS app
 ARG SQLITE_VERSION=3510300
 ARG SQLITE_SHA256=81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a
-ARG VCS_REF=unknown
-
-LABEL org.opencontainers.image.title="Falkenwarte" \
-      org.opencontainers.image.description="Private single-user control platform for project work and T3 Code." \
-      org.opencontainers.image.source="https://github.com/DZunke/Falkenwarte" \
-      org.opencontainers.image.revision="${VCS_REF}"
 
 USER root
 RUN install-php-extensions intl pcntl zip
+RUN setcap -r /usr/local/bin/frankenphp \
+    && test -z "$(getcap /usr/local/bin/frankenphp)"
 
 RUN set -eux; \
     archive="/tmp/sqlite-autoconf-${SQLITE_VERSION}.tar.gz"; \
@@ -58,6 +54,8 @@ ENV APP_ENV=prod \
 WORKDIR /app
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 COPY composer.json composer.lock version.txt ./
+COPY packages/link-notes/ packages/link-notes/
+COPY packages/t3-mcp-bridge/manifest.json packages/t3-mcp-bridge/manifest.json
 RUN composer install --no-dev --no-interaction --no-progress --prefer-dist --no-scripts --no-autoloader
 COPY bin/ bin/
 COPY config/ config/
@@ -71,9 +69,18 @@ COPY docker/Caddyfile /etc/frankenphp/Caddyfile
 COPY --from=frontend /workspace/public/build/ /app/public/build/
 RUN composer dump-autoload --no-dev --classmap-authoritative --no-scripts \
     && php scripts/build-docs.php \
+    && APP_ENV=prod APP_SECRET=falkenwarte-image-build-validation-secret-not-used-at-runtime php bin/console lint:container --no-interaction \
     && rm -f /usr/local/bin/composer \
     && mkdir -p /data /certs /app/var/cache /app/var/log \
     && chown -R www-data:www-data /app /data /certs
+
+ARG VCS_REF=unknown
+ARG APP_VERSION=0.1.0
+LABEL org.opencontainers.image.title="Falkenwarte" \
+      org.opencontainers.image.description="Private single-user control platform for project work and T3 Code." \
+      org.opencontainers.image.source="https://github.com/DZunke/Falkenwarte" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="${APP_VERSION}"
 
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/falkenwarte-entrypoint
 COPY --chmod=0755 docker/healthcheck.php /usr/local/bin/falkenwarte-healthcheck
@@ -95,8 +102,13 @@ COPY qa/fixtures/ ./qa/fixtures/
 ENV NODE_ENV=production
 
 FROM ${PLAYWRIGHT_IMAGE} AS e2e-runner
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libnss3-tools unzip \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+COPY scripts/run-browser-qa.sh /usr/local/bin/run-browser-qa
 COPY tests/e2e/package.json tests/e2e/package-lock.json ./tests/e2e/
 RUN npm --prefix tests/e2e ci --no-audit --no-fund
 COPY tests/e2e/ ./tests/e2e/
 COPY qa/playwright-reporter.mjs qa/scenarios.json ./qa/
+COPY qa/fixtures/fixture-seed.json ./qa/fixtures/fixture-seed.json

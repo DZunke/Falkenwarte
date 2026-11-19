@@ -167,7 +167,7 @@
     {
       "id": "R16",
       "requirement": "Moderne shadcn-Oberfläche und konkrete scopekonforme Mockups",
-      "specification": "13; mockups/README.md",
+      "specification": "13; docs/MOCKUPS.md",
       "milestone": "M1–M6",
       "acceptance": [
         "A21",

@@ -13,7 +13,7 @@ const port = Number(process.env.PORT ?? 4311);
 const statePath = process.env.T3_MOCK_STATE ?? '/tmp/falkenwarte-t3-mock-state.json';
 
 function emptyState() {
-  return { scenario: 'default', sessions: {}, acceptedLaunches: {}, runs: {}, oauthClients: {}, oauthCodes: {}, oauthTokenChoice: process.env.T3_MOCK_BEARER ?? 'qa-t3-token-A', journal: [], unexpected: [] };
+  return { scenario: 'default', sessions: {}, acceptedLaunches: {}, acceptedMessages: {}, externalActivities: {}, runs: {}, oauthClients: {}, oauthCodes: {}, oauthTokenChoice: process.env.T3_MOCK_BEARER ?? 'qa-t3-token-A', journal: [], unexpected: [] };
 }
 
 let state = emptyState();
@@ -170,9 +170,21 @@ function toolDefinitions() {
 function allTools() {
   const base = toolDefinitions();
   const schemas = {
+    orchestrator_capabilities: {
+      type: 'object', additionalProperties: false,
+      properties: {}, required: [],
+    },
+    t3_project_list: {
+      type: 'object', additionalProperties: false,
+      properties: { cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 } },
+      required: [],
+    },
     t3_thread_read: {
       type: 'object', additionalProperties: false,
-      properties: { threadId: { type: 'string' }, afterMessageId: { type: 'string' } },
+      properties: {
+        threadId: { type: 'string' }, afterPosition: { type: 'integer' }, limit: { type: 'integer' },
+        runLimit: { type: 'integer' }, maxCharsPerItem: { type: 'integer' }, itemId: { type: 'string' }, textOffset: { type: 'integer' },
+      },
       required: ['threadId'],
     },
     t3_thread_send: {
@@ -193,7 +205,7 @@ function allTools() {
   }))];
 }
 
-function launch(namespace, args) {
+function launch(namespace, args, scenario) {
   if (typeof args.title !== 'string' || args.title.trim() === '' || typeof args.message !== 'string') {
     return { result: toolError('validation_failed', 'Launch requires a title and initial message.') };
   }
@@ -216,12 +228,13 @@ function launch(namespace, args) {
   const number = Object.keys(state.acceptedLaunches).length + 1;
   const threadId = `qa-t3-thread-${number}`;
   const runId = `qa-t3-run-${number}`;
+  const runStatus = scenario === 'run_pending' ? 'running' : 'completed';
   const value = {
     threadId,
     projectId: args.projectId ?? 'qa-t3-project-1',
     modelSelection: { instanceId: 'qa-inherited-provider', model: 'qa-inherited-model' },
     runId,
-    status: 'queued',
+    status: scenario === 'run_pending' ? 'running' : 'queued',
   };
   state.acceptedLaunches[key] = {
     namespace,
@@ -231,7 +244,7 @@ function launch(namespace, args) {
     response: value,
     replays: 0,
   };
-  state.runs[runId] = { threadId, status: 'completed', result: 'reported_success', namespace };
+  state.runs[runId] = { threadId, status: runStatus, result: runStatus === 'completed' ? 'reported_success' : null, namespace };
   persist();
   return { result: toolResult(value), accepted: true };
 }
@@ -239,7 +252,16 @@ function launch(namespace, args) {
 function callTool(namespace, name, args, scenario) {
   if (scenario === 'tool_error') return { result: toolError('capability_unavailable', 'The configured T3 capability is unavailable.') };
   if (scenario === 'unknown_capability') return { result: toolError('capability_unavailable', 'T3 no longer advertises the requested capability.') };
-  if (name === 't3_thread_launch') return launch(namespace, args);
+  if (name === 'orchestrator_capabilities') {
+    return { result: toolResult({
+      serverVersion: '0.1.10',
+      providers: [{ providerInstanceId: 'qa-inherited-provider', displayName: 'QA Provider', available: true }],
+    }) };
+  }
+  if (name === 't3_project_list') {
+    return { result: toolResult({ projects: [{ id: 'qa-t3-project-1', title: 'QA T3 Project', workspaceLabel: 'QA Workspace' }], nextCursor: null }) };
+  }
+  if (name === 't3_thread_launch') return launch(namespace, args, scenario);
   if (name === 't3_thread_wait') {
     const run = state.runs[args.runId];
     if (scenario === 'wait_timeout') {
@@ -255,17 +277,35 @@ function callTool(namespace, name, args, scenario) {
   }
   if (name === 't3_thread_read') {
     const launchEntry = Object.values(state.acceptedLaunches).find((entry) => entry.response.threadId === args.threadId);
-    if (!launchEntry) return { result: toolError('resource_not_found', 'T3 thread was not found.') };
+    const externalActivity = Object.values(state.externalActivities).find((entry) => entry.threadId === args.threadId);
+    if (!launchEntry && !externalActivity) return { result: toolError('resource_not_found', 'T3 thread was not found.') };
+    const runs = Object.entries(state.runs)
+      .filter(([, run]) => run.threadId === args.threadId)
+      .map(([runId, run]) => ({ runId, status: scenario === 'unknown_run_state' ? 'future_unknown_state' : run.status, ...(run.pendingInput ? { pendingInput: run.pendingInput } : {}) }));
     return { result: toolResult({
       threadId: args.threadId,
-      projectId: launchEntry.response.projectId,
+      projectId: launchEntry?.response.projectId ?? externalActivity.externalProjectId,
       providerInstanceId: 'qa-inherited-provider',
       model: 'qa-inherited-model',
-      runs: Object.entries(state.runs).filter(([, run]) => run.threadId === args.threadId).map(([runId, run]) => ({ runId, status: run.status })),
+      runs,
     }) };
   }
   if (name === 't3_thread_send') {
-    return { result: toolResult({ threadId: args.threadId, runId: `qa-t3-run-${Object.keys(state.runs).length + 1}`, status: 'queued', clientRequestId: args.clientRequestId }) };
+    const key = `${namespace}:${args.clientRequestId}`;
+    const payloadHash = hash(args);
+    const existing = state.acceptedMessages[key];
+    if (existing) {
+      if (existing.payloadHash !== payloadHash) return { result: toolError('idempotency_conflict', 'A different message reused this clientRequestId.') };
+      return { result: toolResult(existing.response) };
+    }
+    const runId = `qa-t3-run-${Object.keys(state.runs).length + 1}`;
+    const response = { threadId: args.threadId, runId, status: 'queued', clientRequestId: args.clientRequestId };
+    state.acceptedMessages[key] = { payloadHash, response };
+    const runStatus = scenario === 'run_pending' ? 'running' : 'completed';
+    response.status = runStatus === 'running' ? 'running' : 'queued';
+    state.runs[runId] = { threadId: args.threadId, status: runStatus, result: runStatus === 'completed' ? 'reported_success' : null, namespace };
+    persist();
+    return { result: toolResult(response) };
   }
   if (name === 't3_thread_interrupt') {
     const run = state.runs[args.runId];
@@ -275,6 +315,53 @@ function callTool(namespace, name, args, scenario) {
     return { result: toolResult({ threadId: args.threadId, runId: args.runId, status: 'cancel_requested' }) };
   }
   return { result: toolError('capability_unavailable', `Unsupported T3 tool: ${name}`), unexpected: true };
+}
+
+function externalActivity(body) {
+  if (body?.action === 'create') {
+    const sequence = Object.keys(state.externalActivities).length + 1;
+    const threadId = body.thread_id ?? `qa-external-thread-${sequence}`;
+    const runId = body.run_id ?? `qa-external-run-${sequence}`;
+    const externalProjectId = body.external_project_id ?? 'qa-t3-project-1';
+    if (typeof threadId !== 'string' || threadId.trim() === '' || typeof runId !== 'string' || runId.trim() === ''
+      || typeof externalProjectId !== 'string' || externalProjectId.trim() === '') {
+      return { status: 422, body: { error: 'thread_id, run_id, and external_project_id must be non-empty strings.' } };
+    }
+    const existing = state.externalActivities[runId];
+    if (existing) {
+      if (existing.threadId !== threadId || existing.externalProjectId !== externalProjectId) {
+        return { status: 409, body: { error: 'External run identity is already used by another activity.' } };
+      }
+      return { status: 200, body: { status: existing.status, thread_id: threadId, run_id: runId, external_project_id: externalProjectId } };
+    }
+    state.externalActivities[runId] = { threadId, runId, externalProjectId, status: 'running' };
+    state.runs[runId] = { threadId, status: 'running', result: null, namespace: 'external' };
+    appendJournal({ method: 'external_activity_create', external_thread_id: threadId, external_run_id: runId, outcome: 'created_running' });
+    persist();
+    return { status: 201, body: { status: 'running', thread_id: threadId, run_id: runId, external_project_id: externalProjectId } };
+  }
+  if (body?.action === 'complete') {
+    const runId = body.run_id;
+    const activity = typeof runId === 'string' ? state.externalActivities[runId] : null;
+    const run = typeof runId === 'string' ? state.runs[runId] : null;
+    const launchEntry = runId ? Object.values(state.acceptedLaunches).find((entry) => entry.response.runId === runId) : null;
+    const threadId = activity?.threadId ?? run?.threadId;
+    if (!run || !threadId || (body.thread_id !== undefined && body.thread_id !== threadId)) {
+      return { status: 404, body: { error: 'External activity was not found.' } };
+    }
+    const terminalStatus = body.status ?? 'completed';
+    if (!['completed', 'failed', 'cancelled', 'canceled', 'interrupted', 'succeeded', 'success', 'error'].includes(terminalStatus)) {
+      return { status: 422, body: { error: 'status must be a supported terminal T3 run state.' } };
+    }
+    if (activity) activity.status = terminalStatus;
+    run.status = terminalStatus;
+    run.result = `external_activity_${terminalStatus}`;
+    const externalProjectId = activity?.externalProjectId ?? launchEntry?.response.projectId ?? 'qa-t3-project-1';
+    appendJournal({ method: 'external_activity_complete', external_thread_id: threadId, external_run_id: runId, outcome: terminalStatus });
+    persist();
+    return { status: 200, body: { status: terminalStatus, thread_id: threadId, run_id: runId, external_project_id: externalProjectId } };
+  }
+  return { status: 422, body: { error: 'action must be create or complete.' } };
 }
 
 async function mcpRequest(request, response) {
@@ -367,6 +454,17 @@ async function mcpRequest(request, response) {
       response.destroy();
       return;
     }
+    if (fault === 'lost_reply_then_hold_retry' && name === 't3_thread_launch' && outcome.accepted) {
+      state.scenario = 'hold_retry';
+      persist();
+      response.destroy();
+      return;
+    }
+    if (fault === 'hold_retry' && name === 't3_thread_launch' && !outcome.result.isError) {
+      await new Promise((resolve) => waitingLaunches.push(resolve));
+      state.scenario = 'default';
+      persist();
+    }
     if (fault === 'mismatched_structured_content' && name === 't3_thread_launch' && !outcome.result.isError) {
       const structured = outcome.result.structuredContent;
       outcome.result.structuredContent = { ...structured, threadId: `${structured.threadId}-mismatch` };
@@ -403,7 +501,7 @@ startServer(port, async (request, response) => {
   if (pathname === '/__qa/reset' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario ?? 'default';
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending'] });
     state = { ...emptyState(), scenario: next };
     waitingLaunches = [];
     agentCallback = null;
@@ -413,7 +511,7 @@ startServer(port, async (request, response) => {
   if (pathname === '/__qa/scenario' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario;
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending'] });
     state.scenario = next;
     persist();
     return sendJson(response, 200, { scenario: state.scenario });
@@ -435,6 +533,10 @@ startServer(port, async (request, response) => {
     state.oauthTokenChoice = body.token;
     persist();
     return sendJson(response, 200, { token_namespace: body.token === 'qa-t3-token-A' ? 'oauth-client-A' : 'oauth-client-B' });
+  }
+  if (pathname === '/__qa/external-activity' && request.method === 'POST') {
+    const result = externalActivity(await readJson(request));
+    return sendJson(response, result.status, result.body);
   }
   if (pathname === '/__qa/journal' && request.method === 'GET') {
     return sendJson(response, 200, { scenario: state.scenario, journal: state.journal, unexpected: state.unexpected, accepted_launches: Object.values(state.acceptedLaunches).map(({ namespace, clientRequestId, payloadHash, payload, response: launchResponse, replays }) => ({ namespace, clientRequestId, payloadHash, payload, response: launchResponse, replays })) });

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(repository, 'qa/results.json');
+const output = process.env.FALKENWARTE_EVIDENCE_PATH ?? path.join(repository, 'qa/results.json');
 
 export default class FalkenwarteEvidenceReporter {
   results = [];
@@ -16,18 +16,38 @@ export default class FalkenwarteEvidenceReporter {
       ...annotations.filter((annotation) => annotation.type === 'acceptance').flatMap((annotation) => annotation.description.split(/[ ,]+/)),
       ...(title.match(/\bA\d{2}\b/g) ?? []),
     ]);
+    const partialAcceptanceIds = new Set(
+      annotations.filter((annotation) => annotation.type === 'partial').flatMap((annotation) => annotation.description.split(/[ ,]+/)),
+    );
     if (acceptanceIds.size === 0) return;
 
     const expected = annotations.find((annotation) => annotation.type === 'expected')?.description ?? null;
     const observed = [...new Set(annotations.filter((annotation) => annotation.type === 'observed').map((annotation) => annotation.description))];
+    const mockJournals = [];
+    const seenMockJournals = new Set();
+    for (const annotation of annotations.filter((entry) => entry.type === 'mock-journal')) {
+      let journal;
+      try {
+        journal = JSON.parse(annotation.description);
+      } catch {
+        journal = { service: 'unparsed', summary: annotation.description };
+      }
+      const key = JSON.stringify(journal);
+      if (!seenMockJournals.has(key)) {
+        seenMockJournals.add(key);
+        mockJournals.push(journal);
+      }
+    }
     if (observed.length === 0 && result.error?.message) observed.push(`Abweichung beobachtet: ${result.error.message}`);
     for (const acceptanceId of acceptanceIds) {
       this.results.push({
         acceptance_id: acceptanceId,
         title,
-        status: result.status,
+        status: result.status === 'passed' && partialAcceptanceIds.has(acceptanceId) ? 'partial' : result.status,
+        coverage: partialAcceptanceIds.has(acceptanceId) ? 'partial' : 'complete',
         expected_outcome: expected,
         observed_outcome: observed,
+        mock_journals: mockJournals,
         duration_ms: result.duration,
         error: result.error?.message ?? null,
         retry: result.retry,
@@ -46,8 +66,8 @@ export default class FalkenwarteEvidenceReporter {
     let baseCommit = null;
     let worktreeDirty = null;
     try {
-      baseCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim();
-      worktreeDirty = execFileSync('git', ['status', '--porcelain'], { cwd: repository, encoding: 'utf8' }).trim().length > 0;
+      baseCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      worktreeDirty = execFileSync('git', ['status', '--porcelain'], { cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0;
     } catch {
       // The report may also be generated outside a Git checkout.
     }

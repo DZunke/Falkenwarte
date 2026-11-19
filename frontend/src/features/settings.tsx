@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import RecoveryInventoryPanel from '@/features/settings/RecoveryInventoryPanel'
 
 const capabilityOptions = [
   ['tasks.read', 'Tickets lesen'], ['tasks.write', 'Tickets bearbeiten'], ['tasks.links.write', 'Ticketlinks melden'],
@@ -33,6 +34,7 @@ export default function SettingsView() {
   const [timezone, setTimezone] = useState('')
   const [locale, setLocale] = useState('')
   const [theme, setTheme] = useState<'system' | 'light' | 'dark' | ''>('')
+  const [maintenanceMode, setMaintenanceMode] = useState<boolean | null>(null)
   const [retentionDays, setRetentionDays] = useState('')
   const [eventRetentionHours, setEventRetentionHours] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
@@ -58,11 +60,7 @@ export default function SettingsView() {
     client.invalidateQueries({ queryKey: ['backups'] }), client.invalidateQueries({ queryKey: ['exports'] }),
   ])
 
-  if ([settingsQuery, ownerQuery, projectsQuery, tokensQuery, secretsQuery, backupsQuery, exportsQuery].some((query) => query.isPending)) {
-    return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
-  }
   const pageError = settingsQuery.error ?? ownerQuery.error ?? projectsQuery.error ?? tokensQuery.error ?? secretsQuery.error ?? backupsQuery.error ?? exportsQuery.error
-  if (pageError) return <Card><CardContent className="p-6"><h2 className="font-semibold">Einstellungen konnten nicht geladen werden</h2><p className="mt-2 text-sm text-muted-foreground">{formatError(pageError)}</p><Button variant="outline" className="mt-4" onClick={() => void refresh()}>Erneut laden</Button></CardContent></Card>
 
   const ownerMutation = useMutation({
     mutationFn: () => request(api.PATCH('/owner', {
@@ -77,12 +75,13 @@ export default function SettingsView() {
       params: mutationParams(settings!.version), body: {
         timezone: timezone || settings!.timezone, locale: locale || settings!.locale, theme: theme || settings!.theme,
         default_parallel_runs: 1,
+        maintenance_mode: maintenanceMode ?? settings!.maintenance_mode,
         api_idempotency_retention_days: Number(retentionDays || settings!.api_idempotency_retention_days),
         ui_event_retention_hours: Number(eventRetentionHours || settings!.ui_event_retention_hours),
       },
     })),
-    onSuccess: async () => { await refresh(); toast.success('Einstellungen gespeichert') },
-    onError: (error) => toast.error(formatError(error)),
+    onSuccess: async () => { await refresh(); setMaintenanceMode(null); toast.success('Einstellungen gespeichert') },
+    onError: async (error) => { toast.error(formatError(error)); await client.invalidateQueries({ queryKey: ['settings'] }) },
   })
 
   const passwordMutation = useMutation({
@@ -149,6 +148,12 @@ export default function SettingsView() {
   const backups = backupsQuery.data?.items ?? []
   const exports = exportsQuery.data?.items ?? []
   const selectedBackup = backups.find((backup) => backup.id === restoreBackupId)
+  const maintenanceEnabled = maintenanceMode ?? settings?.maintenance_mode ?? false
+
+  if ([settingsQuery, ownerQuery, projectsQuery, tokensQuery, secretsQuery, backupsQuery, exportsQuery].some((query) => query.isPending)) {
+    return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
+  }
+  if (pageError) return <Card><CardContent className="p-6"><h2 className="font-semibold">Einstellungen konnten nicht geladen werden</h2><p className="mt-2 text-sm text-muted-foreground">{formatError(pageError)}</p><Button variant="outline" className="mt-4" onClick={() => void refresh()}>Erneut laden</Button></CardContent></Card>
 
   return (
     <main className="space-y-6">
@@ -164,7 +169,12 @@ export default function SettingsView() {
         <Card><CardHeader><CardTitle>Lokale Oberfläche</CardTitle></CardHeader><CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label>Farbschema</Label><Select value={theme || settings!.theme} onValueChange={(value) => setTheme(value as typeof theme)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="system">System</SelectItem><SelectItem value="light">Hell</SelectItem><SelectItem value="dark">Dunkel</SelectItem></SelectContent></Select></div><div className="space-y-1.5"><Label htmlFor="setting-timezone">Zeitzone</Label><Input id="setting-timezone" value={timezone || settings!.timezone} onChange={(event) => setTimezone(event.target.value)} /></div></div>
           <div className="grid gap-3 sm:grid-cols-3"><div className="space-y-1.5"><Label htmlFor="setting-locale">Sprache</Label><Input id="setting-locale" value={locale || settings!.locale} onChange={(event) => setLocale(event.target.value)} /></div><div className="space-y-1.5"><Label htmlFor="idempotency-retention">Idempotenz (Tage)</Label><Input id="idempotency-retention" type="number" min={30} max={3650} value={retentionDays || settings!.api_idempotency_retention_days} onChange={(event) => setRetentionDays(event.target.value)} /></div><div className="space-y-1.5"><Label htmlFor="event-retention">Live-Hinweise (Std.)</Label><Input id="event-retention" type="number" min={1} max={8760} value={eventRetentionHours || settings!.ui_event_retention_hours} onChange={(event) => setEventRetentionHours(event.target.value)} /></div></div>
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-sm"><span>Wartungsmodus</span><Badge variant={settings!.maintenance_mode ? 'outline' : 'secondary'}>{settings!.maintenance_mode ? 'Aktiv' : 'Inaktiv'}</Badge></div>
+          <div className="space-y-2 rounded-lg border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><Label htmlFor="maintenance-mode">Wartungsmodus</Label><p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">Neue Starts und automatische Ausführungen pausieren. Laufende Aufträge bleiben beobachtbar; Klärung und Wiederherstellung bleiben verfügbar.</p></div>
+              <div className="flex shrink-0 items-center gap-3"><Badge variant={maintenanceEnabled ? 'outline' : 'secondary'}>{maintenanceEnabled ? 'Aktiv' : 'Inaktiv'}</Badge><input id="maintenance-mode" type="checkbox" role="switch" aria-label="Wartungsmodus" checked={maintenanceEnabled} disabled={settingsMutation.isPending} onChange={(event) => setMaintenanceMode(event.target.checked)} className="size-5 cursor-pointer accent-amber-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50" /></div>
+            </div>
+          </div>
           <p className="text-xs text-muted-foreground">Gleichzeitige T3-Aufträge pro Projektbindung sind im aktuellen Umfang auf eins begrenzt.</p>
           <Button variant="outline" disabled={settingsMutation.isPending} onClick={() => settingsMutation.mutate()}><Save />Einstellungen speichern</Button>
         </CardContent></Card>
@@ -202,6 +212,8 @@ export default function SettingsView() {
           {selectedBackup && <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"><p className="text-sm font-medium">Wiederherstellung für Backup vom {new Date(selectedBackup.created_at).toLocaleString()}</p><p className="text-xs text-muted-foreground">Die Wiederherstellung verlangt Wartungsmodus und angehaltene Worker.</p><Label htmlFor="restore-reason">Grund</Label><Textarea id="restore-reason" value={restoreReason} onChange={(event) => setRestoreReason(event.target.value)} maxLength={2000} /><Button variant="outline" disabled={!settings!.maintenance_mode || !restoreReason.trim() || restoreBackup.isPending} onClick={() => restoreBackup.mutate()}>Wiederherstellung anfordern</Button></div>}
         </CardContent></Card>
       </section>
+
+      <RecoveryInventoryPanel />
 
       <Card><CardHeader><CardTitle>Projekt-Export</CardTitle></CardHeader><CardContent className="space-y-4">
         <fieldset className="space-y-2"><legend className="text-sm font-medium">Projekte auswählen</legend><div className="grid gap-2 sm:grid-cols-3">{projects.map((project) => <label key={project.id} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={exportProjectIds.includes(project.id)} onChange={(event) => setExportProjectIds((current) => event.target.checked ? [...current, project.id] : current.filter((id) => id !== project.id))} />{project.name}</label>)}</div></fieldset>

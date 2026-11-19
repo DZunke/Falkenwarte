@@ -2,7 +2,7 @@
 
 **Verbindlicher Testvertrag für Falkenwarte, Stand 19. November 2026.** Die fachliche Abdeckung entsteht durch End-to-End-Szenarien mit Playwright. Es werden keine Unit-, Component-, isolierten Domain-, Repository-, Controller- oder allgemeinen Symfony-Functional-Tests angelegt. Die ausdrücklich zugelassene Ausnahme sind Backend-Funktionstests für Background-Tasks.
 
-Die Playwright-Projekte liegen unter `tests/e2e`; Fixtures, externe Netzwerk-Mocks und die Szenariovorlagen liegen unter `qa/`. Tatsächliche Ergebnisse stehen in [VALIDATION.md](VALIDATION.md) und im erzeugten Laufbericht `qa/results.json`. Die Szenariobeschreibung allein ist kein Nachweis eines bestandenen Ablaufs.
+Die Playwright-Projekte liegen unter `tests/e2e`; Fixtures, externe Netzwerk-Mocks und die Szenariovorlagen liegen unter `qa/`. Lokale gezielte Läufe schreiben einen ignorierten Debugreport nach `qa/results.json`; der isolierte Workflow redigiert ihn zu `var/ci-evidence/acceptance.json` und veröffentlicht dieses Artefakt. Nur ein abgeschlossener erfolgreicher Workflow mit Commit- und Imagebezug zählt als Gate-Nachweis; Ergebnisse stehen in [VALIDATION.md](VALIDATION.md) und [TRACEABILITY.md](TRACEABILITY.md).
 
 ## 1. Was End-to-End hier bedeutet
 
@@ -31,11 +31,13 @@ Das E2E-Netz erlaubt ausschließlich die definierten Testdienste. Ein Test benö
 
 ## 3. Fixtures und Isolation
 
-Die Ausgangsdaten sind versionierte, kleine Fixtures: zwei Projekte mit verschiedenen Rechten, definierte Statuswerte, Kategorien, Topic-/Workflow-/Attention-Labels, Aufgaben mit unterschiedlichem Informationsstand, ein T3-Binding und benannte Link-Collections. IDs und fachliche Zeiten sind reproduzierbar. Berechnungen verwenden einen Test-Clock-Port; Retry-/Netzwerkfristen dürfen durch den Harness separat beschleunigt werden.
+`qa/fixtures/fixture-seed.json` beschreibt einen kleinen, versionierten Owner-Kontext mit zwei Projekten, Standardstatus, Topic-/Workflow-Labels und einem nachvollziehbaren Ticketverlauf für Metriken. Der Seed verwendet stabile Fixture-Schlüssel und Projektslugs; vom Produkt erzeugte IDs werden aus den öffentlichen API-Antworten übernommen. Der explizite Runner-Helper `loadOwnerFixtureContext` erstellt alle Objekte über JSON-HTTP und schreibt nie direkt in die Datenbank.
 
-Ein BrowserContext isoliert Cookies und lokalen Browserzustand, jedoch nicht automatisch die serverseitige Datenbank. Daher erhält jeder Playwright-Worker einen eigenen Stack beziehungsweise einen eindeutigen Satz aus Volume, Ports, Mockjournal und Fixture-Namespace. Innerhalb eines Workers werden Szenarien seriell mit vollständigem Reset ausgeführt. Parallelisierung erfolgt erst, wenn diese serverseitige Isolation nachgewiesen ist. [Playwright Isolation](https://playwright.dev/docs/browser-contexts), [Fixtures](https://playwright.dev/docs/test-fixtures)
+Der Seed ist optional und wird nicht in Playwright-`globalSetup` geladen. Ein Szenario muss `loadOwnerFixtureContext` ausdrücklich aufrufen; damit bleiben Owner-Bootstrap, Login und bestehende Szenarien mit leerem Datenbestand möglich. Der Runner enthält das Seed-Manifest und den Loader, die Produkt-App-Image-Ziele enthalten weder Loader noch Fixture-Datei.
 
-Der Test-Harness hält Worker an, setzt die Datenbank über den ausschließlich im QA-Image verfügbaren Fixture-Loader zurück, leert Inbox/Outbox und Mockzustand, lädt das Szenario und startet die Prozesse wieder. Der spätere Commandname wird bei Implementierung festgelegt; das Konzept behauptet keinen bereits vorhandenen Symfony-Command.
+Der Owner-Test-Clock-Port steuert nur Zeitstempel fachlicher Ereignisse, die über `Store::now()` entstehen. Im Testprofil teilen App und Runner dafür ein eigenes Clock-Volume; die App hat nur Lesezugriff. Der Runner löscht die Clock-Datei vor jedem Test, sodass alle normalen Szenarien echte Systemzeit verwenden, und der optionale Seed schreibt feste UTC-Instants für den Metrikverlauf. Die Datei wird atomar mit Leserechten für den App-Prozess geschrieben; eine vorhandene, aber unlesbare Datei gilt als Fehler, eine fehlende Datei bedeutet Echtzeit. Login-Rate-Limits, Sitzungs- und Tokenablauf, Lease-/Retry-Fristen sowie Prozessplanung verwenden weiterhin die echte Systemuhr.
+
+`scripts/ci-e2e.sh` ist der Host-Harness für vollständige Isolation. Er hält die App an, leert das Testdatenvolume und Mercure-Replaydaten, startet die App wieder und wartet auf Readiness. Der Playwright-Runner richtet danach den Owner über den öffentlichen Bootstrap ein und setzt Mocks zurück. Das optionale Seed läuft erst innerhalb eines einzelnen Szenarios über öffentliche APIs.
 
 Fixtures sind fachlich zusammenhängend. Ein Szenario zum Intake enthält einen unvollständigen Titel-/Beschreibungskontext und erwartete Rückfragen. Ein Szenario zur Linkregistrierung enthält einen gültigen Agent-Principal und eine vorhandene Collection. Es gibt keine riesige zufällige Datenbank, von deren zufälliger Reihenfolge Tests abhängen.
 

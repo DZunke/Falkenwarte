@@ -86,6 +86,12 @@ Schwellwerte berücksichtigen gewählte Wahrscheinlichkeit, Confidence und Absta
 
 Vor dem Commit prüft Falkenwarte per CAS, ob die fachliche Ticketrevision, Taxonomie, Policy, Routingdefinition und geschützte menschliche Einordnung noch dieselben sind. Ein verspätetes Ergebnis bleibt als nicht angewandter Nachweis erhalten und wird als veraltet behandelt. Ein neuer Hintergrundauftrag wertet den aktuellen Stand aus. Der fachliche Commit verbindet Labels, Intakezustand, Historie, Domain Events und Outbox atomar.
 
+Jeder `ClassificationRecord` bleibt über `GET /api/v1/tasks/{task_id}/classifications/{classification_id}` projektgebunden lesbar und weist Eingangsrevision, Regelversionen, Fingerprints, normalisierte Antworten, Ergebnis und `applied` aus. `applied=true` bedeutet, dass genau dieser Nachweis die Versionsprüfung bestanden hat und auf den damaligen aktuellen Taskstand angewandt wurde; es behauptet nicht, dass er nach späteren Änderungen noch der aktuelle Stand ist. Der Task verweist mit `classification_id` auf den seiner Darstellung zugeordneten Nachweis; `classification_required` und der aktuelle Intake zeigen, ob eine Neubewertung läuft oder nötig ist. Ältere Nachweise und ihre History-Einträge bleiben erhalten.
+
+Beim Commit eines neueren Intake-Ergebnisses werden offene Intake-Gründe früherer Generationen derselben Aufgabe superseded; ein durch das neue Ergebnis erforderlicher Grund wird anschließend mit der aktuellen Intake-ID eröffnet. Der vorherige Grund bleibt während der laufenden Neubewertung offen. Eine passende Eigentümerentscheidung schließt die Intake-Gründe, die sie ersetzt, aber weder ein Approval noch einen unabhängigen Run-, Auth- oder Reconciliation-Grund.
+
+Die Playwright-Abnahme übt die Supersession mit `classification_unavailable` gefolgt von einer mehrdeutigen neuen Bewertung in A26/A27 und prüft die erhaltene, nicht angewandte verspätete Klassifikation sowie die neue aktuelle Revision in A33 ([E2E-Szenarien](../tests/e2e/tests/decisions-intake.spec.mjs)).
+
 Manuell gesetzte Einordnungen werden geschützt. Eine KI-Antwort kann sie nicht überschreiben. Notwendige Änderungen werden vorgeschlagen und mit ihrer Ursache sichtbar gemacht. Ein Workflowlabel ist kein Ausführungsrecht; vor jedem Start werden Projektregeln, Rollenrechte, T3-Fähigkeiten, offene menschliche Entscheidungen und Parallelitätsgrenzen erneut geprüft.
 
 ## 7. MCP-Response und Rückfragezyklus

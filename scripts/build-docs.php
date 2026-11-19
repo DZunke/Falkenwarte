@@ -75,7 +75,7 @@ foreach ($iterator as $file) {
         'path' => $relativePath,
         'sourcePath' => '/docs/content/'.str_replace(DIRECTORY_SEPARATOR, '/', $relativePath),
         'title' => $title,
-        'headings' => array_values(array_map('trim', $headingMatches[1] ?? [])),
+        'headings' => array_map('trim', $headingMatches[1]),
         'markdown' => $markdown,
         'searchText' => trim($plainText),
     ];
@@ -134,7 +134,7 @@ fwrite(STDOUT, sprintf("Built documentation index for %d Markdown files.\n", cou
 $renderer = $root.'/scripts/render-docs.php';
 if (is_file($renderer)) {
     passthru(escapeshellarg(PHP_BINARY).' '.escapeshellarg($renderer), $status);
-    if ($status !== 0) {
+    if (0 !== $status) {
         exit($status);
     }
 }

@@ -8,6 +8,7 @@ services:
       APP_SECRET_FILE: ""
       APP_SETUP_TOKEN: test-setup-token-ONLY-for-isolated-qa
       APP_SETUP_TOKEN_FILE: ""
+      FALKENWARTE_TEST_CLOCK_FILE: /qa-clock/business-time.json
       SERVER_NAME: localhost:8443
       SERVER_NAME_ALIAS: falkenwarte.test:8443
       FALKENWARTE_PUBLIC_ORIGIN: https://falkenwarte.test:8443
@@ -21,7 +22,7 @@ services:
       MERCURE_SUBSCRIBER_TTL: "60"
       DECISIONS_API_KEY: ""
       DECISIONS_API_KEY_FILE: ""
-      DECISIONS_TEST_ENDPOINT: http://decisions-mock:4310/v1/decisions
+      DECISIONS_TEST_ENDPOINT: http://decisions-mock:4310
       T3_MOCK_URL: http://t3-mock:4311
       DECISIONS_MOCK_BEARER: qa-decisions-token
       T3_MOCK_BEARER: qa-t3-token-A
@@ -29,6 +30,8 @@ services:
       - falkenwarte-test-data:/data
       - falkenwarte-test-certs:/certs
       - falkenwarte-test-secrets:/run/secrets:ro
+      - falkenwarte-test-clock:/qa-clock:ro
+      - ./tests/Fixtures/Plugins:/app/tests/Fixtures/Plugins:ro
     networks:
       app:
         aliases:
@@ -69,6 +72,12 @@ services:
     environment:
       PORT: "4311"
       T3_MOCK_BEARER: qa-t3-token-A
+      NODE_EXTRA_CA_CERTS: /certificates/root.crt
+    depends_on:
+      app:
+        condition: service_healthy
+    volumes:
+      - falkenwarte-test-certs:/certificates:ro
     networks:
       - app
     healthcheck:
@@ -106,33 +115,24 @@ services:
       NODE_EXTRA_CA_CERTS: /certificates/root.crt
       FALKENWARTE_QA_RESULTS_DIR: /qa-results
       FALKENWARTE_PRIVATE_DIR: /run/falkenwarte-private
+      FALKENWARTE_TEST_CLOCK_FILE: /qa-clock/business-time.json
       QA_DECISIONS_MOCK_URL: http://decisions-mock:4310
       QA_T3_MOCK_URL: http://t3-mock:4311
     volumes:
       - ${QA_RESULTS_DIR:-./qa/results}:/qa-results
       - falkenwarte-test-certs:/certificates:ro
+      - falkenwarte-test-clock:/qa-clock
     tmpfs:
       - /run/falkenwarte-private:rw,noexec,nosuid,nodev,size=1m,mode=0700
     networks:
       - app
-    command:
-      - bash
-      - -euc
-      - |
-        install -m 0644 /certificates/root.crt /usr/local/share/ca-certificates/falkenwarte.crt
-        update-ca-certificates
-        mkdir -p "$$FALKENWARTE_QA_RESULTS_DIR" "$$FALKENWARTE_PRIVATE_DIR"
-        chmod 0700 "$$FALKENWARTE_PRIVATE_DIR"
-        set +e
-        npm --prefix tests/e2e test
-        result=$$?
-        if [ -f qa/results.json ]; then cp qa/results.json "$$FALKENWARTE_QA_RESULTS_DIR/acceptance-evidence.json"; fi
-        exit "$$result"
+    command: ["bash", "/usr/local/bin/run-browser-qa"]
 
 volumes:
   falkenwarte-test-data:
   falkenwarte-test-certs:
   falkenwarte-test-secrets:
+  falkenwarte-test-clock:
 
 networks:
   app:

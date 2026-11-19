@@ -1,7 +1,7 @@
 {
   "format": "falkenwarte.qa.scenario-catalog.v1",
-  "status": "implementation-template",
-  "seed": "fixture-seed.json",
+  "status": "active",
+  "seed": "fixtures/fixture-seed.json",
   "runtime_runner": "playwright",
   "assertions_via": [
     "browser",
@@ -39,7 +39,10 @@
       ],
       "fault_ids": [],
       "expected_flow": [
-        "Agent A kann Projekt A bearbeiten und sieht keine Daten von Projekt B."
+        "Owner legt in Projekt B ein technisches Intake und Link-Collections an; ein technischer Principal bleibt auf Projekt A begrenzt.",
+        "Task, Intake-Antwort und Link-Collections aus B werden über JSON und MCP verweigert, ohne Version, Antworten oder Links zu verändern.",
+        "Ungefilterte Task-/Historylisten, Live-Topics und Cursor-Recovery geben B für Agent A nicht aus; direkte B-Filter werden verweigert.",
+        "Owner liest Task, Intake, Links und History in B über öffentliche API und Browser und widerruft das technische Token."
       ]
     },
     {
@@ -323,7 +326,8 @@
         "A20"
       ],
       "fault_ids": [
-        "lost_reply_after_accept"
+        "lost_reply_after_accept",
+        "run_pending"
       ],
       "expected_flow": [
         "Echter Linux-Runtime-Neustart mit vorhandenem Volume.",

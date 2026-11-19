@@ -7,6 +7,7 @@ Diese Dokumentation enthält den Fachvertrag aus Konzeptfassung 2.0 und die Bedi
 | Anliegen | Dokument |
 |---|---|
 | Produktumfang und Zuständigkeiten | [Produktkonzept](PRODUCT_CONCEPT.md) |
+| Visuelle Referenzen des Konzepts | [Layoutbilder](MOCKUPS.md) |
 | Projekte, Tickets, Rückfragen und Links bedienen | [Benutzerhandbuch](USER_GUIDE.md) |
 | Begriffe und Modulverantwortung | [Glossar](domain/GLOSSARY.md), [Bounded Contexts](domain/BOUNDED_CONTEXTS.md), [Context Map](domain/CONTEXT_MAP.md) |
 | Zustandsübergänge nachvollziehen | [Lebenszyklen](domain/LIFECYCLES.md) |

@@ -11,13 +11,20 @@ SQLite liegt im lokalen persistenten Docker-Volume `falkenwarte-data`; dieses Vo
 Vor dem ersten Start werden die Secretdateien aus `secrets/README.md` in `secrets/` abgelegt oder die entsprechenden Compose-Variablen im geschützten Runtime-Environment gesetzt.
 
 ```bash
-docker compose pull
-docker compose up -d --wait
+docker compose up --build -d --wait
 docker compose ps
 docker compose logs --tail=100 app
 ```
 
-Ein lokal gebautes Image lässt sich über `FALKENWARTE_IMAGE=falkenwarte:local` auswählen; in einer Installation mit einem veröffentlichten Image wird die geprüfte Version samt Digest in `FALKENWARTE_IMAGE` eingetragen.
+Dieser Startpfad baut das Appimage aus dem aktuellen Checkout und verwendet den Compose-Standardtag `falkenwarte:local`.
+
+Für ein veröffentlichtes Release wird zuerst die Release-Datei `image-manifest.json` aus [GitHub Releases](https://github.com/DZunke/Falkenwarte/releases/latest) geprüft und der dort verzeichnete GHCR-Digest verwendet:
+
+```bash
+FALKENWARTE_IMAGE=ghcr.io/dzunke/falkenwarte@sha256:<digest-aus-image-manifest.json> docker compose up -d --wait
+```
+
+Das Release-Manifest nennt Tag, Commit, Image-ID und Registry-Digest; der Digest wird unverändert in `FALKENWARTE_IMAGE` übernommen.
 
 Der Service bindet HTTPS nur an `127.0.0.1:8443`; `https://localhost:8443` ist die lokale Adresse für Oberfläche, JSON-API, MCP und Mercure.
 
@@ -70,6 +77,8 @@ Ein Backup wird über die owner-only Betriebsoberfläche oder den API-Vertrag `P
 
 Das Ergebnis ist erst nach `status: ready` herunterladbar und enthält `database.sqlite` sowie ein Manifest mit Appversion, Schema-Version, Pluginversionen und SHA-256-Prüfsumme.
 
+`schema_version` nennt die letzte ausgeführte Appmigration aus `DoctrineMigrations`; jede ausgeführte Migration wird zusätzlich gegen die Klassen im Image geprüft, während Pluginversionen getrennt über die installierten Manifeste validiert werden.
+
 Backupdateien werden mit eingeschränkten Dateirechten in `/data/backups` gespeichert; sie enthalten keine Secretwerte und die Aufbewahrung beziehungsweise zusätzliche Offlinekopie bleibt eine Betreiberentscheidung.
 
 Das ausgelieferte Format führt derzeit `artifact_count: 0`; vor einer Erweiterung um Dateianhänge muss der Backup- und Restoreumfang dafür gemeinsam ergänzt werden.
@@ -83,6 +92,8 @@ Ein Restore wird für einen fertigen Backupdatensatz mit dessen Datenbank-Prüfs
 Die Prozessaufsicht beendet daraufhin HTTP, Worker und Maintenance, während die Datenbankdatei aus dem geprüften Archiv ersetzt wird.
 
 Vor dem Austausch werden Datenbankintegrität, Datei- und Manifestsumme, Appversion, Schema-Migrationen und unterstützter Dateiumfang geprüft; das vorherige Datenbankfile wird im geschützten Verzeichnis `/data/restore-previous/` aufbewahrt.
+
+Die Prüfung vergleicht den App-Migrationsstand separat vom Plugin-Migrationsstand und lehnt unbekannte Migrationen, nicht vorhandene Pluginpakete sowie einen neueren inkompatiblen Pluginstand vor dem Datenbanktausch ab.
 
 Beim folgenden Start liest `app:restore:finalize` den Restoremarker ein und ruft den Wiederherstellungsabgleich auf, bevor die überwachten Prozesse wieder laufen.
 

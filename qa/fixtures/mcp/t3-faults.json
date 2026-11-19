@@ -163,6 +163,18 @@
       "expected": "Beobachtung bleibt laufend/ungeklärt und beendet nicht das fachliche Ticket."
     },
     {
+      "id": "run_pending",
+      "match": {
+        "tool": "t3_thread_launch"
+      },
+      "steps": [
+        "Persistiere Thread- und Run-Identität mit status=running.",
+        "Liefere t3_thread_read und t3_thread_wait mit dem aktuellen Status.",
+        "Nur die QA-Steuerroute external-activity action=complete setzt einen terminalen T3-Status wie completed oder failed."
+      ],
+      "expected": "Der externe Lauf bleibt nach Falkenwarte-Restore beobachtbar, bis die Teststeuerung ihn ausdrücklich beendet."
+    },
+    {
       "id": "mismatched_structured_content",
       "mutation": "Nur structuredContent.threadId ändern; content.text unverändert lassen.",
       "expected": "Adapter meldet widersprüchliche externe Antwort und verwendet keinen beliebigen Wert."

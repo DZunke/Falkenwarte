@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-$origin = rtrim(getenv('FALKENWARTE_PUBLIC_ORIGIN') ?: 'https://localhost:8443', '/');
+$origin = 'https://localhost:8443';
 $caFile = '/certs/root.crt';
 if (!is_file($caFile) || !is_readable($caFile)) {
     exit(1);

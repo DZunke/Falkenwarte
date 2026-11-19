@@ -1,6 +1,8 @@
 {
 	admin 127.0.0.1:2019
 	storage file_system /data/caddy
+	persist_config off
+	skip_install_trust
 }
 
 {$SERVER_NAME:localhost:8443}, {$SERVER_NAME_ALIAS:127.0.0.1:8443} {
@@ -16,6 +18,9 @@
 http://127.0.0.1:8080 {
 	root * /app/public
 	encode zstd gzip
+
+	@handbookIndex path /docs /docs/
+	rewrite @handbookIndex /docs/index.html
 
 	mercure {
 		transport bolt {

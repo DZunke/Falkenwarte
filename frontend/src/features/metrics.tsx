@@ -31,7 +31,9 @@ function dateInput(value: Date) {
 }
 
 function toDateTime(date: string, end = false) {
-  return new Date(`${date}T${end ? '23:59:59' : '00:00:00'}`).toISOString()
+  const boundary = new Date(`${date}T00:00:00`)
+  if (end) boundary.setDate(boundary.getDate() + 1)
+  return boundary.toISOString()
 }
 
 export default function MetricsView() {

@@ -9,6 +9,7 @@ services:
       target: app
       args:
         VCS_REF: ${FALKENWARTE_TEST_COMMIT:-unknown}
+        APP_VERSION: ${APP_VERSION:-0.1.0}
     environment:
       APP_ENV: prod
       APP_DEBUG: "0"
@@ -43,9 +44,9 @@ services:
     init: true
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=64m
-      - /app/var/cache:rw,noexec,nosuid,nodev,size=64m
-      - /app/var/log:rw,noexec,nosuid,nodev,size=16m
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /app/var/cache:rw,noexec,nosuid,nodev,size=64m,uid=33,gid=33,mode=0755
+      - /app/var/log:rw,noexec,nosuid,nodev,size=16m,uid=33,gid=33,mode=0755
     security_opt:
       - no-new-privileges:true
     cap_drop:
