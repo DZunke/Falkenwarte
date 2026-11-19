@@ -32,12 +32,12 @@ test('Plugin-Pläne lassen sich in der Oberfläche erstellen, prüfen, zurückne
   await ownerPage.locator('#install-plugin-id').fill(installId);
   await ownerPage.locator('#install-version').fill('1.2.3');
   await ownerPage.getByRole('button', { name: 'Installationsplan erstellen' }).click();
+  const installCard = ownerPage.locator('article').filter({ hasText: installId });
+  await expect(installCard.getByRole('button', { name: 'JSON exportieren' })).toBeVisible();
   const plansAfterInstall = (await ownerApi.get('/plugin-install-plans?limit=100')).data.items;
   const installPlan = plansAfterInstall.find((plan) => plan.plugin_id === installId);
   expect(installPlan?.operation).toBe('install');
   expect(installPlan?.status).toBe('prepared');
-  const installCard = ownerPage.locator('article').filter({ hasText: installId });
-  await expect(installCard.getByRole('button', { name: 'JSON exportieren' })).toBeVisible();
   const installExport = await exportPlanJson(ownerPage, installCard);
   expect(installExport.name).toBe(`install-${installId}-plan.json`);
   expect(installExport.data).toMatchObject({ id: installPlan.id, operation: 'install', plugin_id: installId, status: 'prepared' });
