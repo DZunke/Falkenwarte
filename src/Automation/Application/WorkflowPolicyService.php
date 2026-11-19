@@ -27,9 +27,9 @@ final readonly class WorkflowPolicyService implements WorkflowPolicy
         }
     }
 
-    /** @param list<array<string, mixed>> $transitions @param callable(list<array<string, mixed>>): bool $conditionsSatisfied @return array<string, mixed>|null */
-    public function selectTransition(array $transitions, string $fromStageId, string $outcome, callable $conditionsSatisfied): ?array
+    /** @param list<array<string, mixed>> $transitions @return array<string, mixed>|null */
+    public function selectTransition(array $transitions, string $fromStageId, string $outcome): ?array
     {
-        return $this->transitions->select($transitions, $fromStageId, $outcome, $conditionsSatisfied);
+        return $this->transitions->select($transitions, $fromStageId, $outcome);
     }
 }

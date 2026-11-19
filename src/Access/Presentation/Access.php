@@ -18,7 +18,7 @@ final class Access
     public ?Cookie $cookie = null;
     private ?array $session = null;
 
-    public function __construct(private readonly Store $store, private readonly AccessPersistence $persistence)
+    public function __construct(private readonly Store $store, private readonly AccessPersistence $persistence, private readonly string $appVersion)
     {
     }
 
@@ -65,7 +65,7 @@ final class Access
     {
         $owner = $this->store->all('owners')[0] ?? null;
         if ('bootstrap_get' === $op) {
-            return ['setup_required' => null === $owner, 'app_version' => trim(is_file(dirname(__DIR__, 3).'/version.txt') ? file_get_contents(dirname(__DIR__, 3).'/version.txt') : '0.1.0'), 'contract_version' => '0.2.0', 'login_url' => '/api/v1/session'];
+            return ['setup_required' => null === $owner, 'app_version' => $this->appVersion, 'contract_version' => '0.2.0', 'login_url' => '/api/v1/session'];
         }
         if ('session_get' === $op) {
             return $this->sessionView($a, $a?->owner ? $owner : null);

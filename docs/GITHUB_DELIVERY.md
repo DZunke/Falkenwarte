@@ -28,6 +28,8 @@ Für dieses Repository wird der im Konzept vorgesehene explizite Dispatch mit de
 
 Der Merge des geprüften Release-PRs löst auf `main` einen weiteren vollständigen QA-Lauf aus. Meldet Release Please danach `release_created`, lädt die Veröffentlichung das Image aus genau diesem Lauf. Sie prüft den Tag-Commit, die Image-ID und das OCI-Label `org.opencontainers.image.revision`, bevor sie den Versionstag in GHCR veröffentlicht. Die Datei `image-manifest.json` an der GitHub-Release enthält Commit, Tag, Image-ID und Registry-Digest. Der Betreiber kann diesen Digest für die Aktualisierung seiner Installation übernehmen. Siehe [Release-Workflow](../.github/workflows/release.yml) und [Release-Konfiguration](../release-please-config.json).
 
+Die Release enthält drei Dateien. `image-manifest.json` verknüpft Tag, Commit, lokale Image-ID und GHCR-Digest. `browser-acceptance.tar.gz` enthält die redigierten Browserbeobachtungen, darunter den ersten Start und den Neustart des Produktionscontainers. `software-inventory.tar.gz` enthält das CycloneDX-Inventar, Laufzeitversionen und Lizenzhinweise. Das Build-Skript gleicht das Inventar mit den OCI-Labels ab, bevor die QA das Image übernimmt.
+
 ## Rechte und Artefakte
 
 Die QA führt PR-Code ohne produktive Secrets aus. Die verwendeten Actions sind auf vollständige Commit-IDs fixiert. Das App-Image und dessen ID bleiben als kurzlebiges QA-Artefakt verfügbar. Zur Fehleranalyse enthält der Lauf die konkreten Assertion-Ergebnisse. Zugangstokens, Browser-Sitzungsdateien und rohe Netzwerkmitschnitte gehören ausschließlich in den isolierten lokalen Testlauf.

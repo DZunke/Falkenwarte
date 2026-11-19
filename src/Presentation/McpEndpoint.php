@@ -19,7 +19,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 final readonly class McpEndpoint
 {
-    public function __construct(private Access $access, private Gateway $gateway, private Contract $contract, private PluginRegistry $plugins)
+    public function __construct(private Access $access, private Gateway $gateway, private Contract $contract, private PluginRegistry $plugins, private string $appVersion)
     {
     }
 
@@ -27,7 +27,7 @@ final readonly class McpEndpoint
     {
         $actor = $this->access->authenticate($r, true);
         $dir = dirname(getenv('FALKENWARTE_DB') ?: dirname(__DIR__, 2).'/var/falkenwarte.sqlite').'/mcp/'.hash('sha256', $actor->id);
-        $builder = Server::builder()->setServerInfo('Falkenwarte', trim(file_get_contents(dirname(__DIR__, 2).'/version.txt')))->setProtocolVersion(ProtocolVersion::V2025_06_18)->withoutModernEra()->setSession(new FileSessionStore($dir))->setSessionLock(new FileSessionLock($dir));
+        $builder = Server::builder()->setServerInfo('Falkenwarte', $this->appVersion)->setProtocolVersion(ProtocolVersion::V2025_06_18)->withoutModernEra()->setSession(new FileSessionStore($dir))->setSessionLock(new FileSessionLock($dir));
         foreach ($this->contract->tools($this->plugins) as $spec) {
             $required = $spec['required_capabilities'] ?? [];
             // Optional tools require an explicit grant on this technical token.

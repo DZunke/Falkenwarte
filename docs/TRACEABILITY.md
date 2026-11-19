@@ -97,7 +97,7 @@ Die sichtbare Ausnahme für eine noch nicht getestete reale T3-/OpenAI-Verbindun
 | M1 | A01, A04, A06, A07, A08, A14, A21, A24, A28 | 0/9 Abnahmen mit Laufbeleg | — |
 | M2 | A02, A13, A22, A25, A26, A27, A33 | 0/7 Abnahmen mit Laufbeleg | — |
 | M3 | A05, A09, A10, A11, A12, A29, A30 | 0/7 Abnahmen mit Laufbeleg | Echte T3-/OpenAI-Verbindung mangels aktiver Konfiguration nicht geprüft; Vertrags-E2E läuft gegen isolierte Netzwerk-Mocks. |
-| M4 | A12, A16, A27, A33 | 0/4 Abnahmen mit Laufbeleg | — |
+| M4 | A12, A16, A27, A33, Übergabekette und Reparaturlimit | 0/4 Abnahmen mit Laufbeleg, Browserbeleg der vollständigen Kette offen | — |
 | M5 | A17, A18, A23, A32 | 0/4 Abnahmen mit Laufbeleg | — |
 | M6 | A15, A19, A20, A21, A31 | 0/5 Abnahmen mit Laufbeleg | Fork-Prüfung bleibt auf ausdrückliche Nutzerentscheidung zurückgestellt. |
 

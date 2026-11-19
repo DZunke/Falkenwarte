@@ -45,6 +45,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$FALKENWARTE_TEST_COMMIT"
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             test "$EXPECTED" = "$FALKENWARTE_TEST_COMMIT"
+            printf 'verified_expected_sha=%s\nverified_checkout_sha=%s\n' "$EXPECTED" "$(git rev-parse HEAD)"
             PR_TITLE="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --json title,headRefOid --jq '.[] | select(.headRefOid == env.EXPECTED) | .title')"
           fi
           title="${PR_TITLE:-$(git log -1 --pretty=%s)}"

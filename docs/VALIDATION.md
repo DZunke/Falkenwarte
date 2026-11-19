@@ -23,7 +23,7 @@ cd tests/e2e
 FALKENWARTE_BASE_URL=http://127.0.0.1:18770 FALKENWARTE_SETUP_TOKEN=test-setup-token-ONLY-for-isolated-qa npm test -- --grep 'A02|A13|A22|A24|A25|A26|A27|A28|A33'
 ```
 
-Playwright meldete 7/7 Tests bestanden. Die beobachteten Abnahme-IDs waren A02, A13, A22, A24, A25, A26, A27, A28 und A33; A27 ist ausdrücklich `partial` und bleibt offen, weil der gleichzeitige Handlungsbedarf aus `approval_pending` und `routing_ambiguous` noch nicht gemeinsam nachgewiesen ist. Das Reportobjekt nennt `commit: null` und `image: null`; der Lauf ist lokale Entwicklerevidenz, keine hosted Abnahme.
+Playwright meldete 7/7 Tests bestanden. Die beobachteten Abnahme-IDs waren A02, A13, A22, A24, A25, A26, A27, A28 und A33; Der damalige Test deckte für A27 den einzelnen Routinggrund ab. Das Reportobjekt nennt `commit: null` und `image: null`; der Lauf ist lokale Entwicklerevidenz, keine hosted Abnahme.
 
 Ein späterer isolierter Compose-Checkpoint prüfte A12 am 19. November 2026 mit Chromium: 1/1 Fall bestanden, falscher Attempt mit `isError:true` abgewiesen, wiederholter Report mit neuer Idempotency-ID ohne zweiten Report oder Evidence-Eintrag. Die lokale Datei `qa/results/a12-checkpoint5/acceptance-evidence.json` nennt Commit `f2fface8839e27685c448c59da3434f363b0e44f` und Image `sha256:64c0088dab99c79261f1e326d208ec06498bdc7c98ca2d11168f7f821a980f5f`; `qa/results/` ist ignoriert, daher ist dieser einzelne Lauf keine gehostete oder vollständige Suiteabnahme.
 
@@ -45,7 +45,7 @@ Der neuere [Workflow 44588112948](https://github.com/DZunke/Falkenwarte/actions/
 
 ## Meilensteine und offene Integrationen
 
-Kein Meilenstein ist vollständig abgenommen. M0 bleibt offen, bis A03 und A23 an einem festen, erfolgreichen QA-Artefakt belegt sind; die lokale Architekturprüfung sowie die lokalen Browserfälle ersetzen diesen Beleg nicht. M1 bis M5 bleiben offen, bis alle jeweils verpflichtenden Akzeptanzfälle in der vollständigen Suite durchlaufen sind. A27 bleibt trotz erfolgreichem Playwright-Teststatus fachlich `partial`.
+Kein Meilenstein ist vollständig abgenommen. M0 bleibt offen, bis A03 und A23 an einem festen, erfolgreichen QA-Artefakt belegt sind; die lokale Architekturprüfung sowie die lokalen Browserfälle ersetzen diesen Beleg nicht. M1 bis M5 bleiben offen, bis alle jeweils verpflichtenden Akzeptanzfälle in der vollständigen Suite durchlaufen sind. Ein isolierter Chromium-Lauf für A27 hat inzwischen beide gleichzeitig offenen Gründe, die unabhängigen Auflösungen, eine ungültig gewordene Freigabe und die neue Entscheidung am aktuellen Lauf geprüft. Der Dashboardzähler verlief dabei von eins über null und eins wieder auf null.
 
 Die M6-Forkprüfung ist auf ausdrückliche Nutzerentscheidung vertagt und bleibt als Ausnahme sichtbar; sie wird nicht als bestanden ausgegeben und blockiert die übrigen M6-Abnahmen nicht. Weiter erforderlich sind ein regulärer PR-Lauf mit wirksamer Branchregel, der exakte SHA-Dispatch des Release-PRs, die deliberate-fail- und deliberate-skip-Proben sowie der Releasepfad bis zum geprüften Image-Tag; siehe [GitHub-Auslieferung](GITHUB_DELIVERY.md).
 

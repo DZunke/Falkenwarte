@@ -68,7 +68,11 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_iterator;
 
 return static function (ContainerConfigurator $c): void {
-    $s = $c->services()->defaults()->autowire()->autoconfigure();
+    $version = trim((string) file_get_contents(dirname(__DIR__).'/version.txt'));
+    if ('' === $version) {
+        throw new RuntimeException('Die Anwendungsversion fehlt in version.txt.');
+    }
+    $s = $c->services()->defaults()->autowire()->autoconfigure()->bind('string $appVersion', $version);
     $s->set(App\Shared\Infrastructure\DbalStore::class);
     $s->set(SystemClock::class);
     $s->alias(Clock::class, SystemClock::class);

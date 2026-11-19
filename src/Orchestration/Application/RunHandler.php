@@ -188,6 +188,10 @@ final class RunHandler
                     $this->store->enqueue('run.input', ['run_id' => $run['id'], 'input_id' => $input['id']]);
                 }
                 foreach ($this->store->all('workflow_instances') as $instance) {
+                    if ('running' === $instance['state'] && $instance['deadline_at'] <= $now) {
+                        $this->advanceWorkflow($instance['id']);
+                        continue;
+                    }
                     if ('paused' !== $instance['state'] || (empty($instance['_paused_for_maintenance']) && empty($instance['_paused_for_provider_id']))) {
                         continue;
                     }
@@ -925,6 +929,8 @@ final class RunHandler
             $instance['state'] = 'running';
             $instance['pause_reason'] = null;
             unset($instance['_paused_for_maintenance']);
+            $this->resolveAttention($instance['task_id'], 'workflow_transition_required');
+            $this->resolveAttention($instance['task_id'], 'workflow_entry_condition_unmet');
             $instance = $this->store->save('workflow_instances', $instance, 'workflow.resumed');
             $this->store->enqueue('workflow.advance', ['instance_id' => $id]);
         } else {
@@ -934,6 +940,9 @@ final class RunHandler
             $instance['state'] = 'cancelled';
             $instance['pause_reason'] = trim((string) $body['reason']);
             $instance = $this->store->save('workflow_instances', $instance, 'workflow.cancelled');
+            foreach (['workflow_transition_required', 'workflow_entry_condition_unmet', 'workflow_repair_limit', 'workflow_duration_limit', 'workflow_profile_unavailable'] as $reason) {
+                $this->resolveAttention($instance['task_id'], $reason);
+            }
             foreach ($instance['run_ids'] as $runId) {
                 $run = $this->store->find('runs', (string) $runId);
                 if (null !== $run && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
@@ -1790,7 +1799,7 @@ final class RunHandler
 
             return;
         }
-        if ('running' !== $instance['state'] || strtotime((string) $instance['deadline_at']) <= time()) {
+        if ('running' !== $instance['state'] || new \DateTimeImmutable($instance['deadline_at']) <= new \DateTimeImmutable($this->store->now())) {
             if ('running' === $instance['state']) {
                 $instance['state'] = 'paused';
                 $instance['pause_reason'] = 'Die konfigurierte maximale Workflowdauer wurde erreicht.';
@@ -1850,7 +1859,6 @@ final class RunHandler
             $workflow['transitions'],
             (string) $instance['current_stage_id'],
             $outcome,
-            fn (array $conditions): bool => $this->conditionsSatisfied($conditions, $task, $instance),
         );
         if (null === $transition) {
             if ('succeeded' === $latest['state']) {
@@ -1863,6 +1871,12 @@ final class RunHandler
                 return;
             }
             $this->pauseWorkflow($instance, 'Für das gemeldete Phasenergebnis ist keine passende Übergangsregel konfiguriert.');
+            $this->openAttention($task['id'], $task['project_id'], 'workflow_transition_required', 'owner');
+
+            return;
+        }
+        if (!$this->conditionsSatisfied($transition['conditions'] ?? [], $task, $instance)) {
+            $this->pauseWorkflow($instance, 'Die Bedingungen für den nächsten Phasenübergang sind offen. Prüfe Nachweise, Kriterien und Freigaben im Ticket und setze den Workflow anschließend fort.');
             $this->openAttention($task['id'], $task['project_id'], 'workflow_transition_required', 'owner');
 
             return;

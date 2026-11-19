@@ -295,7 +295,14 @@ $gateExceptions = [
 $gateRows = ['| Meilenstein | Konzept-Gate | Abnahmen mit Laufbeleg | Sichtbare Ausnahme |', '|---|---|---|---|'];
 foreach ($gates as $milestone => $requiredCases) {
     $passedCount = count(array_filter($requiredCases, static fn (string $caseId): bool => isset($cases[$caseId])));
-    $gateRows[] = sprintf('| %s | %s | %d/%d Abnahmen mit Laufbeleg | %s |', $milestone, implode(', ', $requiredCases), $passedCount, count($requiredCases), $gateExceptions[$milestone] ?? '—');
+    $description = implode(', ', $requiredCases);
+    $proof = sprintf('%d/%d Abnahmen mit Laufbeleg', $passedCount, count($requiredCases));
+    if ('M4' === $milestone) {
+        $description .= ', Übergabekette und Reparaturlimit';
+        $scenarios = $verifiedPrimary ? array_column(array_filter($results['cases'], static fn (array $case): bool => 'passed' === $case['status'] && !empty($case['observed_outcome'])), 'scenario_id') : [];
+        $proof .= [] === array_diff(['E23', 'E24', 'E25'], $scenarios) ? ', Übergänge und Ticketabschluss im Browser belegt' : ', Browserbeleg der vollständigen Kette offen';
+    }
+    $gateRows[] = sprintf('| %s | %s | %s | %s |', $milestone, $description, $proof, $gateExceptions[$milestone] ?? '—');
 }
 
 $reportPath = $root.'/docs/TRACEABILITY.md';

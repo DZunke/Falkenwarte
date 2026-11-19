@@ -10,6 +10,6 @@ interface WorkflowPolicy
     /** @param array<string, mixed> $definition */
     public function validateDefinition(array $definition): void;
 
-    /** @param list<array<string, mixed>> $transitions @param callable(list<array<string, mixed>>): bool $conditionsSatisfied @return array<string, mixed>|null */
-    public function selectTransition(array $transitions, string $fromStageId, string $outcome, callable $conditionsSatisfied): ?array;
+    /** @param list<array<string, mixed>> $transitions @return array<string, mixed>|null */
+    public function selectTransition(array $transitions, string $fromStageId, string $outcome): ?array;
 }

@@ -301,7 +301,7 @@ test('A22 A24 A25 A28 technical MCP intake asks and resolves missing information
   }
 });
 
-test('A26 A27 unclear Decisions result keeps an explicit human decision open', async ({ ownerApi, qaMocks }) => {
+test('A26 unclear Decisions result keeps an explicit human decision open', async ({ ownerApi, qaMocks }) => {
   test.info().annotations.push({ type: 'expected', description: 'Überholte Intake-Gründe werden beim neuen Assessment geschlossen; ein offener Attention-Grund bleibt trotz Labelentfernung bestehen und wird nur durch die konkrete Entscheidung aufgelöst.' });
   const project = await ownerApi.createProject({ name: 'Mehrdeutige Entscheidung', color: '#C17778' });
   const { topic, workflowLabels } = await configureIntake(ownerApi, project, { expectedInformation: false });
@@ -394,13 +394,12 @@ test('A26 A27 unclear Decisions result keeps an explicit human decision open', a
     expect(settledTask.response.status(), JSON.stringify(settledTask.data)).toBe(200);
     expect(settledTask.data.human_attention).toEqual({ required: false, reasons: [] });
     expect(settledTask.data.label_ids).not.toContain(attention.id);
-    test.info().annotations.push({ type: 'partial', description: 'A27' });
 
     const decisionsJournal = await qaMocks.decisionsJournal();
     expect(decisionsJournal.requests.length).toBeGreaterThanOrEqual(3);
     expect(decisionsJournal.requests.every((entry) => entry.validation_error === null)).toBe(true);
     recordEvidence(
-      'Mehrdeutige Klassifikation zeigt ein systemverwaltetes Attentionlabel. Die Entfernung dieses Labels kann den fachlichen Grund nicht verbergen; erst die passende Eigentümerentscheidung schließt ihn. Gründe aus früheren Intake-Generationen werden beim neuen Assessment nicht weiter angezeigt. Die gleichzeitige Auflösung mehrerer Gründe verschiedener Quellen bleibt in dieser Spec offen.',
+      'Mehrdeutige Klassifikation zeigt ein systemverwaltetes Attentionlabel. Die Entfernung dieses Labels kann den fachlichen Grund nicht verbergen; erst die passende Eigentümerentscheidung schließt ihn. Gründe aus früheren Intake-Generationen werden beim neuen Assessment nicht weiter angezeigt.',
       `Ticket ${taskId} erreichte zuerst classification_unavailable und nach einem neuen validierten Decisions-Assessment needs_human_decision. Der frühere Intake-Grund wurde durch die neue Assessment-Generation geschlossen; nur routing_ambiguous blieb offen und dessen systemverwaltetes Label war auf Projekt- und Ticketebene sichtbar. Name und Farbe ließen sich bei stabiler Label-ID aktualisieren; ein veralteter Versionsschreibversuch erhielt 412 version_conflict, die Deaktivierung 409 system_label_immutable. Ein Owner-Schreibvorgang, der nur das Attentionlabel aus der Labelzuordnung entfernte, erhielt Grund und Label. Erst tasks_intake_decide führte zu ready, human_attention.required=false und entfernte die abgeleitete Ticketzuordnung.`,
       { decisions: decisionsJournal },
     );

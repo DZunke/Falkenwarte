@@ -68,6 +68,8 @@ Ein früher Agentbericht kann eintreffen, bevor die Launchantwort gespeichert is
 
 Beim Übergang zu einer weiteren Rolle speichert der neue Run die ID des Ausgangslaufs und dessen Übergabe in seinem Snapshot. Die Übergabe benennt Versuch, Ticketrevision, T3-Thread und Ergebnisbericht samt Digest. Sie enthält die Agentenmeldung, offene Fragen, die zu diesem Bericht gehörenden Nachweis-IDs und die im Ticket registrierten Link-Collections. Die zweite Rolle erhält diesen Stand in ihrer ersten T3-Nachricht. Bei einem erneuten Zustellversuch verwendet Falkenwarte dieselbe gespeicherte Nachricht. Der erfolgreiche Review beendet die Workflowinstanz. Für das Ticket gelten weiterhin die eigenen Abschlusskriterien.
 
+Eine erfolgreich beendete Phase kann auf eine Übergangsbedingung warten, etwa die Bestätigung eines gemeldeten Nachweises. Der Workflow pausiert an der Ausgangsphase. Nach der Entscheidung setzt der Eigentümer ihn fort. Falkenwarte wertet die Bedingungen erneut aus und legt den Folgelauf erst an, wenn sie erfüllt sind. Für einen Review mit Änderungsbedarf zählt nur der tatsächliche Übergang in eine Reparaturrunde gegen das konfigurierte Limit.
+
 ## 5. Menschliche Entscheidung und Attention
 
 Ein Approval durchläuft `pending` → `approved` oder `rejected`. Ändern sich relevante Ticketrevision, Versuch oder Ergebnisdigest, wird ein nicht mehr passendes Approval `invalidated`. Eine ältere Zustimmung darf nicht ein neues Ergebnis freigeben.

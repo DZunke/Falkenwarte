@@ -424,6 +424,24 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
 
       {selectedRun && <section className="space-y-4 rounded-lg border p-4">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold">{selectedRun.stage} · Versuch {selectedRun.attempt_no}</h3><p className="mt-1 text-xs text-muted-foreground">Aufgabenrevision {selectedRun.snapshot.task_revision} · Rollenprofilversion {selectedRun.snapshot.agent_profile_version} · {runSource(selectedRun.snapshot.execution_target)}</p></div><Badge variant={selectedRun.state === 'failed' ? 'destructive' : selectedRun.state === 'succeeded' ? 'secondary' : 'outline'}>{runStateNames[selectedRun.state]}</Badge></div>
+        {selectedRun.snapshot.handoff_snapshot && selectedRun.snapshot.handoff_source_run_id && (
+          <details className="rounded-md border p-3 text-sm">
+            <summary className="cursor-pointer font-medium">Übergabe aus der vorigen Phase</summary>
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-muted-foreground">Agentenmeldung · Ticketrevision {selectedRun.snapshot.handoff_snapshot.task_revision_id} · Versuch {selectedRun.snapshot.handoff_snapshot.source_attempt_no}</p>
+              <p className="whitespace-pre-wrap break-words">{selectedRun.snapshot.handoff_snapshot.summary}</p>
+              {selectedRun.snapshot.handoff_snapshot.open_questions.length > 0 && (
+                <div><h4 className="font-medium">Offene Fragen</h4><ul className="list-disc space-y-1 pl-5">{selectedRun.snapshot.handoff_snapshot.open_questions.map((question, index) => <li key={index}>{question}</li>)}</ul></div>
+              )}
+              {selectedRun.snapshot.handoff_snapshot.link_collections.filter((collection) => collection.links.length > 0).map((collection) => (
+                <div key={collection.id}><h4 className="font-medium">{collection.name}</h4><ul className="list-disc space-y-1 pl-5">
+                  {collection.links.map((link) => <li key={link.id}><a className="break-words text-primary underline" href={link.url} target="_blank" rel="noreferrer">{link.title}</a></li>)}
+                </ul></div>
+              ))}
+              <Button variant="outline" size="sm" onClick={() => setSelectedRunId(selectedRun.snapshot.handoff_source_run_id!)}>Ausgangslauf und Nachweise ansehen</Button>
+            </div>
+          </details>
+        )}
         {selectedRun.status_reason && <div role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{selectedRun.status_reason}</div>}
         {runQuery.isError && <p role="alert" className="text-sm text-destructive">{formatError(runQuery.error)}</p>}
         <div className="grid gap-2 rounded-md bg-muted/40 p-3 text-xs sm:grid-cols-2"><p>Rollenprofil: {profiles.find((profile) => profile.id === selectedRun.snapshot.agent_profile_id)?.name ?? selectedRun.snapshot.agent_profile_id}</p><p>Projektbindung: {selectedRun.snapshot.project_binding_id}</p><p>Workflowversion: {selectedRun.snapshot.workflow_version ?? 'Kein versionierter Workflow'}</p><p>Routingversion: {selectedRun.snapshot.routing_rules_version ?? 'Keine Workflowroute'}</p><p>Startrevision: {selectedRun.snapshot.task_revision}</p><p>Letzte Beobachtung: {selectedRun.last_observed_at ? new Date(selectedRun.last_observed_at).toLocaleString('de-DE') : 'Noch keine T3-Beobachtung'}</p>{selectedRun.snapshot.execution_target.mode === 't3_reference_thread' && <p>Referenzthread: {selectedRun.snapshot.execution_target.reference_thread_id}</p>}</div>

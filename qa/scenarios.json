@@ -80,8 +80,7 @@
       "name": "Mehrdeutige Workflowwahl",
       "milestone": "M2",
       "acceptance_ids": [
-        "A26",
-        "A27"
+        "A26"
       ],
       "fault_ids": [
         "decisions_ambiguous"
@@ -353,6 +352,45 @@
       "expected_flow": [
         "Dieselben erlaubten Aktionen über beide öffentlichen Kanäle durchführen.",
         "Technischer JSON-Principal kann manuelle Herkunft nicht behaupten."
+      ]
+    },
+    {
+      "id": "E23",
+      "name": "Bedingungsgebundener Workflowübergang",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A12"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Ein konfigurierter akzeptierter Übergang bleibt pausiert, solange sein erforderlicher Nachweis nur gemeldet ist.",
+        "Owner bestätigt den Nachweis über die öffentliche API und setzt den Workflow fort; genau ein Folgerun wird gestartet."
+      ]
+    },
+    {
+      "id": "E24",
+      "name": "Übergabe von Umsetzung zu Review und menschlicher Ticketabschluss",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A12"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Die zweite Rolle erhält den Bericht, die offenen Fragen und die Referenzen aus dem ersten Lauf.",
+        "Der Eigentümer bestätigt Nachweise und Kriterien und schließt das Ticket im Browser ab."
+      ]
+    },
+    {
+      "id": "E25",
+      "name": "Begrenzte Reparaturrunde",
+      "milestone": "M4",
+      "acceptance_ids": [
+        "A12"
+      ],
+      "fault_ids": [],
+      "expected_flow": [
+        "Die Agentenmeldung verlangt eine Überarbeitung. Die konfigurierte Reparaturrunde übernimmt den vorherigen Bericht.",
+        "Eine weitere Änderungsanforderung pausiert den Workflow am Limit. Der T3-Mock verzeichnet keinen zusätzlichen Start."
       ]
     }
   ]

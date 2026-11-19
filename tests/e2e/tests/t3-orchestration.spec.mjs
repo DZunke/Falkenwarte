@@ -488,7 +488,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'cancelled');
 
     task = (await ownerApi.get(`/tasks/${task.id}`)).data;
-    const freshRunId = await requestRun(ownerApi, task, profile);
+    const freshRunId = await requestRun(ownerApi, task, profile, 'work');
     const freshRun = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => ['running', 'verifying'].includes(run.state));
     await reportThroughMcp(reporter.agent, freshRun, task, ownerApi);
     const freshResult = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => ['result_reported', 'verifying', 'succeeded'].includes(run.state) && run.result_digest !== null);

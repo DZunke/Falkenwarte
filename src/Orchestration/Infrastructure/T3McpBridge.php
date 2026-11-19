@@ -19,7 +19,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
 {
     public const PROTOCOL_VERSION = '2025-06-18';
 
-    public function __construct(private readonly HttpClientInterface $httpClient)
+    public function __construct(private readonly HttpClientInterface $httpClient, private readonly string $appVersion)
     {
     }
 
@@ -163,7 +163,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         }
         $psr18 = new Psr18Client($this->httpClient);
         $client = Client::builder()
-            ->setClientInfo('falkenwarte', '0.1.0')
+            ->setClientInfo('falkenwarte', $this->appVersion)
             ->setProtocolVersion(ProtocolVersion::V2025_06_18)
             ->setFallbackProtocolVersion(null)
             ->setInitTimeout(15)

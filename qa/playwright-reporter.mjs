@@ -42,6 +42,7 @@ export default class FalkenwarteEvidenceReporter {
     for (const acceptanceId of acceptanceIds) {
       this.results.push({
         acceptance_id: acceptanceId,
+        scenario_id: annotations.find((entry) => entry.type === 'scenario')?.description ?? null,
         title,
         status: result.status === 'passed' && partialAcceptanceIds.has(acceptanceId) ? 'partial' : result.status,
         coverage: partialAcceptanceIds.has(acceptanceId) ? 'partial' : 'complete',

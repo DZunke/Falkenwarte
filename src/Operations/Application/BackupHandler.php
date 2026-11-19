@@ -11,7 +11,7 @@ use App\Shared\Domain\Problem;
 
 final class BackupHandler
 {
-    public function __construct(public Store $store, private readonly MigrationVersionReader $migrationVersions, private readonly PluginManifestReader $plugins)
+    public function __construct(public Store $store, private readonly MigrationVersionReader $migrationVersions, private readonly PluginManifestReader $plugins, private readonly string $appVersion)
     {
     }
 
@@ -460,7 +460,7 @@ final class BackupHandler
         $artifactManifestHash = hash('sha256', '[]');
 
         return [
-            'app_version' => trim((string) @file_get_contents(dirname(__DIR__, 3).'/version.txt')) ?: '0.1.0',
+            'app_version' => $this->appVersion,
             'schema_version' => $this->schemaVersion(),
             'plugin_versions' => $plugins,
             'database_sha256' => $databaseHash,
