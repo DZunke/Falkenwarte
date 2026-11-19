@@ -32,7 +32,7 @@ function AttentionList({ items, empty }: { items: AttentionItem[]; empty: string
   if (!items.length) return <p className="flex gap-2 py-4 text-sm text-muted-foreground"><CheckCheck className="size-4 text-primary" />{empty}</p>
   return items.map((item) => {
     const href = item.task_id && item.project_id ? `#/project/${item.project_id}/board?task=${item.task_id}` : item.resource.resource_type === 'plugin' ? '#/plugins' : item.resource.resource_type === 'connection' ? '#/agents' : undefined
-    return <div key={`${item.resource.id}/${item.kind}/${item.title}`} className="min-w-0 break-words py-3">
+    return <div key={`${item.resource.id}/${item.reason_code ?? item.kind}`} className="min-w-0 break-words py-3">
       {item.task_key && <p className="mb-1 break-all text-xs text-muted-foreground">{item.task_key}</p>}
       {href ? <a href={href} className="block max-w-full break-words font-medium hover:text-primary hover:underline">{item.task_title ?? item.title}</a> : <p className="break-words font-medium">{item.title}</p>}
       <p className="mt-1 break-words text-xs leading-relaxed text-muted-foreground">{item.task_title ? `${item.title} · ` : ''}{item.detail}</p>

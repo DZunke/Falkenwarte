@@ -1196,6 +1196,12 @@ paths:
       tags:
       - tasks
       summary: Kuratierten Übergabekontext lesen
+      parameters:
+      - name: source_run_id
+        in: query
+        required: false
+        schema:
+          $ref: '#/components/schemas/Id'
       responses:
         '200':
           $ref: '#/components/responses/TaskHandoff'
@@ -7260,6 +7266,11 @@ components:
           $ref: '#/components/schemas/RunCompletionPolicy'
         execution_target:
           $ref: '#/components/schemas/T3ExecutionTarget'
+        bridge_plugin_id:
+          anyOf:
+          - type: string
+            maxLength: 100
+          - type: 'null'
         classification_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
@@ -8421,8 +8432,30 @@ components:
       type: object
       additionalProperties: false
       properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        allowed_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllowedAction'
+          maxItems: 80
         connection_id:
           $ref: '#/components/schemas/Id'
+        status:
+          type: string
+          enum:
+          - queued
+          - succeeded
+          - failed
         checked_at:
           type: string
           format: date-time
@@ -8459,7 +8492,13 @@ components:
           - $ref: '#/components/schemas/Id'
           - type: 'null'
       required:
+      - id
+      - version
+      - created_at
+      - updated_at
+      - allowed_actions
       - connection_id
+      - status
       - checked_at
       - network
       - authentication
@@ -9343,6 +9382,9 @@ components:
       type: object
       additionalProperties: false
       properties:
+        reason_code:
+          type: string
+          description: Stable code of an open owner reason on the ticket.
         kind:
           type: string
           enum:
@@ -10436,6 +10478,11 @@ components:
         connection_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        bridge_plugin_id:
+          anyOf:
+          - type: string
+            maxLength: 100
           - type: 'null'
         external_project_id:
           type:

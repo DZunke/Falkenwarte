@@ -6,9 +6,74 @@ require dirname(__DIR__).'/vendor/autoload.php';
 const MAX_MANIFEST_BYTES = 1048576;
 const COPY_CHUNK_BYTES = 1048576;
 
+/** @var array<string, mixed>|null */
+$GLOBALS['restore_request'] = null;
+$GLOBALS['restore_data_directory'] = null;
+$GLOBALS['restore_temporary_database'] = null;
+$GLOBALS['restore_can_resume'] = false;
+$GLOBALS['restore_exchange_started'] = false;
+
 function failRestore(string $message): never
 {
     fwrite(STDERR, $message.PHP_EOL);
+
+    $request = $GLOBALS['restore_request'] ?? null;
+    $dataDirectory = $GLOBALS['restore_data_directory'] ?? null;
+    if (is_array($request)
+        && is_string($dataDirectory)
+        && ($GLOBALS['restore_can_resume'] ?? false)
+        && !($GLOBALS['restore_exchange_started'] ?? false)) {
+        $temporaryDatabase = $GLOBALS['restore_temporary_database'] ?? null;
+        if (is_string($temporaryDatabase) && is_file($temporaryDatabase) && !is_link($temporaryDatabase)) {
+            unlink($temporaryDatabase);
+        }
+
+        $failure = [
+            'request_id' => $request['request_id'],
+            'backup_id' => $request['backup_id'],
+            'reason' => $request['reason'],
+            'requested_by' => $request['requested_by'],
+            'requested_at' => $request['requested_at'],
+            'database_sha256' => strtolower((string) $request['database_sha256']),
+            'failed_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            'failure_message' => mb_substr($message, 0, 500),
+            'exchange_started' => false,
+        ];
+        $failurePath = $dataDirectory.'/restore-failure.json';
+        $failureTemporary = $failurePath.'.'.bin2hex(random_bytes(8)).'.tmp';
+        $handle = fopen($failureTemporary, 'xb');
+        if ($handle === false) {
+            fwrite(STDERR, 'Das fehlgeschlagene Restore konnte nicht dauerhaft protokolliert werden; der Dienst bleibt gestoppt.'.PHP_EOL);
+            exit(1);
+        }
+        chmod($failureTemporary, 0600);
+        try {
+            $contents = json_encode($failure, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            if (fwrite($handle, $contents) !== strlen($contents) || !fflush($handle)) {
+                fwrite(STDERR, 'Das fehlgeschlagene Restore konnte nicht dauerhaft protokolliert werden; der Dienst bleibt gestoppt.'.PHP_EOL);
+                exit(1);
+            }
+            if (function_exists('fsync')) {
+                fsync($handle);
+            }
+        } finally {
+            fclose($handle);
+        }
+        if (is_file($failurePath) || is_link($failurePath) || !rename($failureTemporary, $failurePath)) {
+            unlink($failureTemporary);
+            fwrite(STDERR, 'Ein vorheriger Restore-Fehler muss zuerst geprüft werden; der Dienst bleibt gestoppt.'.PHP_EOL);
+            exit(1);
+        }
+        $requestPath = $dataDirectory.'/restore-request.json';
+        if (!unlink($requestPath)) {
+            fwrite(STDERR, 'Der fehlgeschlagene Restore-Auftrag konnte nicht geschlossen werden; der Dienst bleibt gestoppt.'.PHP_EOL);
+            exit(1);
+        }
+        syncPath($dataDirectory);
+        fwrite(STDERR, 'Die bisherige Datenbank blieb unverändert; der Wartungsmodus bleibt aktiv.'.PHP_EOL);
+        exit(0);
+    }
+
     exit(1);
 }
 
@@ -106,7 +171,7 @@ function validateManifest(array $manifest, string $databasePath): void
     foreach ($backupPlugins as $pluginId => $backupVersion) {
         $installed = $installedPlugins[$pluginId] ?? null;
         if (!is_array($installed) || version_compare((string) $installed['version'], $backupVersion, '<')) {
-            failRestore('Ein im Backup enthaltener Pluginstand wird von diesem Image nicht unterstützt.');
+            failRestore(sprintf('Das Plugin "%s" in Version %s wird von diesem Image nicht unterstützt.', $pluginId, $backupVersion));
         }
     }
 
@@ -201,7 +266,21 @@ function installedPluginManifests(): array
 {
     $root = dirname(__DIR__);
     $manifests = [];
-    foreach (glob($root.'/vendor/falkenwarte/*/manifest.json') ?: [] as $path) {
+    $paths = array_merge(
+        glob($root.'/vendor/falkenwarte/*/manifest.json') ?: [],
+        glob($root.'/packages/*/manifest.json') ?: [],
+    );
+    if ((getenv('APP_ENV') ?: 'prod') === 'test') {
+        $paths = array_merge(
+            $paths,
+            glob($root.'/tests/Fixtures/Plugins/manifest.json') ?: [],
+            glob($root.'/tests/Fixtures/Plugins/*/manifest.json') ?: [],
+        );
+    }
+    foreach (array_unique($paths) as $path) {
+        if (!is_file($path) || is_link($path)) {
+            continue;
+        }
         $bytes = @file_get_contents($path);
         if ($bytes === false || strlen($bytes) > MAX_MANIFEST_BYTES) {
             continue;
@@ -276,6 +355,7 @@ function extractDatabase(ZipArchive $archive, string $temporaryPath, string $exp
 }
 
 $dataDirectory = rtrim(getenv('FALKENWARTE_DATA_DIR') ?: '/data', '/');
+$GLOBALS['restore_data_directory'] = $dataDirectory;
 $requestPath = $dataDirectory.'/restore-request.json';
 $resultPath = $dataDirectory.'/restore-result.json';
 $requestJson = @file_get_contents($requestPath);
@@ -301,8 +381,29 @@ foreach (['request_id', 'backup_id'] as $field) {
         failRestore('Der gespeicherte Wiederherstellungsauftrag enthält eine ungültige ID.');
     }
 }
+$GLOBALS['restore_request'] = $request;
 if (preg_match('/^[a-f0-9]{64}$/i', $request['database_sha256']) !== 1) {
     failRestore('Der gespeicherte Wiederherstellungsauftrag enthält eine ungültige Datenbank-Prüfsumme.');
+}
+$GLOBALS['restore_can_resume'] = true;
+
+$failurePath = $dataDirectory.'/restore-failure.json';
+if (is_file($failurePath) || is_link($failurePath)) {
+    try {
+        $previousFailure = json_decode((string) @file_get_contents($failurePath), true, 32, JSON_THROW_ON_ERROR);
+    } catch (Throwable) {
+        failRestore('Ein vorheriger Restore-Fehlernachweis ist beschädigt.');
+    }
+    if (!is_array($previousFailure)
+        || ($previousFailure['request_id'] ?? null) !== $request['request_id']
+        || ($previousFailure['exchange_started'] ?? null) !== false) {
+        failRestore('Ein vorheriger Restore-Fehler muss zuerst geprüft werden; der Dienst bleibt gestoppt.');
+    }
+    if (!unlink($requestPath)) {
+        failRestore('Der bereits protokollierte Restore-Auftrag konnte nicht geschlossen werden.');
+    }
+    syncPath($dataDirectory);
+    exit(0);
 }
 
 if (is_file($resultPath)) {
@@ -315,8 +416,18 @@ if (is_file($resultPath)) {
         failRestore('Ein anderes Restore-Ergebnis wartet noch auf den Startabgleich.');
     }
     unlink($requestPath);
+    $swapPath = $dataDirectory.'/restore-swap-in-progress.json';
+    if (is_file($swapPath) && !unlink($swapPath)) {
+        failRestore('Der abgeschlossene Restore-Austauschmarker konnte nicht entfernt werden.');
+    }
     syncPath($dataDirectory);
     exit(0);
+}
+
+$swapPath = $dataDirectory.'/restore-swap-in-progress.json';
+if (is_file($swapPath) || is_link($swapPath)) {
+    $GLOBALS['restore_exchange_started'] = true;
+    failRestore('Ein vorheriger Datenbankaustausch wurde unterbrochen; vor dem Neustart sind die Sicherungskopie und der Austauschmarker manuell zu prüfen.');
 }
 
 $backupDirectory = rtrim(getenv('FALKENWARTE_BACKUP_DIR') ?: $dataDirectory.'/backups', '/');
@@ -330,6 +441,7 @@ if ($archive->open($archivePath, ZipArchive::RDONLY) !== true) {
     failRestore('Das ausgewählte Backuparchiv kann nicht geöffnet werden.');
 }
 $temporaryDatabase = $dataDirectory.'/.restore-'.$request['request_id'].'.sqlite.tmp';
+$GLOBALS['restore_temporary_database'] = $temporaryDatabase;
 try {
     if ($archive->numFiles !== 2) {
         failRestore('Das Backuparchiv enthält unerwartete Einträge.');
@@ -375,6 +487,14 @@ if (!is_dir($previousDirectory) && !mkdir($previousDirectory, 0700, true) && !is
     failRestore('Die bisherige Datenbank kann nicht gesichert werden.');
 }
 
+writeMarker($swapPath, [
+    'request_id' => $request['request_id'],
+    'backup_id' => $request['backup_id'],
+    'started_at' => gmdate('Y-m-d\TH:i:s\Z'),
+    'stage' => 'database_exchange_started',
+]);
+$GLOBALS['restore_exchange_started'] = true;
+
 if (is_file($databasePath) || is_link($databasePath)) {
     $previousDatabase = $previousDirectory.'/original.sqlite';
     if (is_file($previousDatabase) || is_link($previousDatabase)) {
@@ -418,5 +538,8 @@ $result = [
     'database_sha256' => strtolower((string) $manifest['database_sha256']),
 ];
 writeMarker($resultPath, $result);
+if (is_file($swapPath) && !unlink($swapPath)) {
+    failRestore('Der abgeschlossene Restore-Austauschmarker konnte nicht entfernt werden.');
+}
 unlink($requestPath);
 syncPath($dataDirectory);

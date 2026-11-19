@@ -1291,6 +1291,11 @@
           "task_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "source_run_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Optional run on this task whose unresolved questions should be included in the handoff."
           }
         },
         "required": [

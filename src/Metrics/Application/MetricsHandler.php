@@ -8,12 +8,13 @@ use App\Metrics\Domain\MeasurementWindow;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
+use App\WorkManagement\Application\AttentionLabelReader;
 
 final class MetricsHandler
 {
     private const ACTIVE_RUN_STATES = ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'cancel_requested', 'result_reported', 'verifying'];
 
-    public function __construct(private readonly Store $store)
+    public function __construct(private readonly Store $store, private readonly AttentionLabelReader $attentionLabels)
     {
     }
 
@@ -112,8 +113,8 @@ final class MetricsHandler
             }
         }
 
-        $attention = $this->attentionItems($projectIds, $actor->owner);
-        $metrics = $this->metricValues(null, $events, $now, $tasks, $runs, $projectIds, $window, $actor->owner);
+        $attention = $this->attentionItems($projectIds, $actor->owner && null === $projectFilter);
+        $metrics = $this->metricValues(null, $events, $now, $tasks, $runs, $projectIds, $window, $actor->owner && null === $projectFilter);
         $activityEvents = array_values(array_filter($events, fn (array $event): bool => $window->contains($this->eventTime($event))));
         $activity = $this->activityItems($activityEvents);
 
@@ -146,7 +147,7 @@ final class MetricsHandler
         $dataThrough = $this->latestTimestamp($events, $computedAt);
         $tasks = $this->forProjects('tasks', $projectIds);
         $runs = $this->forProjects('runs', $projectIds);
-        $values = $this->metricValues($projectId, $events, $computedAt, $tasks, $runs, $projectIds, $window, $actor->owner);
+        $values = $this->metricValues($projectId, $events, $computedAt, $tasks, $runs, $projectIds, $window, $actor->owner && null === $projectFilter);
         $keys = $p['metric_keys'] ?? [];
         if (is_string($keys)) {
             $keys = [$keys];
@@ -258,42 +259,55 @@ final class MetricsHandler
     {
         $items = [];
         $now = $this->store->now();
-        foreach ($this->forProjects('tasks', $projectIds) as $task) {
-            $intake = $this->store->find('intakes', (string) ($task['intake_id'] ?? ''));
-            $human = $task['human_attention'] ?? [];
-            $reasons = is_array($human) && is_array($human['reasons'] ?? null) ? $human['reasons'] : [];
-            foreach ($reasons as $reason) {
-                if (is_string($reason)) {
-                    [$title, $detail] = $this->attentionReasonText($reason);
-                    $items[] = $this->attention('classification', $task['project_id'] ?? null, 'task', $task, $title, $detail, $task['updated_at'] ?? $now);
-                    continue;
-                }
-                if (!is_array($reason) || ($reason['resolved_at'] ?? null) !== null || ($reason['addressee'] ?? 'owner') !== 'owner') {
-                    continue;
-                }
-                $code = is_string($reason['code'] ?? null) ? $reason['code'] : '';
-                [$fallbackTitle, $fallbackDetail] = $this->attentionReasonText($code);
-                $items[] = $this->attention('classification', $task['project_id'] ?? null, 'task', $task, $reason['title'] ?? $fallbackTitle, $reason['detail'] ?? $fallbackDetail, $reason['created_at'] ?? $task['updated_at'] ?? $now);
+        $tasks = $this->forProjects('tasks', $projectIds);
+        $open = [];
+        $tracked = [];
+        foreach ($this->forProjects('attention_reasons', $projectIds) as $reason) {
+            $taskId = $reason['task_id'];
+            $tracked[$taskId] = true;
+            if (!empty($reason['open']) && 'owner' === ($reason['addressed_to'] ?? null)) {
+                $open[$taskId][$reason['code']] = $reason['created_at'] ?? $now;
             }
+        }
+        $intakes = array_column($this->forProjects('intakes', $projectIds), null, 'task_id');
+        foreach ($tasks as $task) {
+            $taskId = $task['id'];
+            $projectId = $task['project_id'];
+            // Older ticket snapshots stored owner reasons directly on the task.
+            if (!isset($tracked[$taskId])) {
+                foreach ($task['human_attention']['reasons'] ?? [] as $reason) {
+                    if (is_string($reason)) {
+                        $open[$taskId][$reason] = $task['updated_at'] ?? $now;
+                    } elseif (is_array($reason) && isset($reason['code']) && null === ($reason['resolved_at'] ?? null) && 'owner' === ($reason['addressed_to'] ?? $reason['addressee'] ?? 'owner')) {
+                        $open[$taskId][$reason['code']] = $reason['created_at'] ?? $now;
+                    }
+                }
+            }
+            foreach ($open[$taskId] ?? [] as $code => $since) {
+                $label = $this->attentionLabels->labelForReason($projectId, $code);
+                $kind = match ($code) {
+                    'approval_pending' => 'approval',
+                    'agent_question' => 'question',
+                    'auth_required' => 'auth',
+                    'reconciliation_required' => 'reconciliation',
+                    'run_failed' => 'failure',
+                    default => 'classification',
+                };
+                $items[] = ['reason_code' => $code] + $this->attention($kind, $projectId, 'task', $task, $label['name'] ?? 'Entscheidung erforderlich', $label['description'] ?? 'Für dieses Ticket ist eine Entscheidung offen.', $since);
+            }
+            $intake = $intakes[$taskId] ?? [];
             $intakeState = $intake['outcome'] ?? $intake['status'] ?? $task['intake_outcome'] ?? $task['intake_status'] ?? null;
             if (in_array($intakeState, ['needs_information', 'waiting_for_requester'], true)) {
-                $items[] = $this->attention('intake_information', $task['project_id'] ?? null, 'task', $task, 'Rückfrage an Agent', 'Ergänzende Angaben werden erwartet.', $intake['updated_at'] ?? $task['updated_at'] ?? $now);
-            }
-        }
-
-        foreach ($this->forProjects('approvals', $projectIds) as $approval) {
-            if (in_array($approval['state'] ?? null, ['pending', 'requested', 'waiting'], true)) {
-                $items[] = $this->attention('approval', $approval['project_id'] ?? null, 'approval', $approval, 'Menschliche Entscheidung offen', $approval['reason'] ?? 'Eine Freigabe wird benötigt.', $approval['created_at'] ?? $now);
-            }
-        }
-
-        foreach ($this->store->all('connections') as $connection) {
-            if (in_array($connection['health'] ?? null, ['degraded', 'unreachable', 'incompatible'], true) && ($connection['project_id'] ?? null) !== null && in_array($connection['project_id'], $projectIds, true)) {
-                $items[] = $this->attention('auth', $connection['project_id'], 'connection', $connection, 'T3-Verbindung prüfen', $connection['diagnostic'] ?? 'Die Verbindung meldet einen Fehlerzustand.', $connection['updated_at'] ?? $now);
+                $items[] = $this->attention('intake_information', $projectId, 'task', $task, 'Rückfrage an Agent', $intake['missing_fields'][0]['question'] ?? 'Ergänzende Angaben werden erwartet.', $intake['updated_at'] ?? $task['updated_at'] ?? $now);
             }
         }
 
         if ($includeGlobal) {
+            foreach ($this->store->all('connections') as $connection) {
+                if (in_array($connection['health'] ?? null, ['degraded', 'unreachable', 'incompatible'], true)) {
+                    $items[] = $this->attention('auth', null, 'connection', $connection, $connection['name'] ?? 'T3-Verbindung prüfen', $connection['diagnostic'] ?? 'Die Verbindung meldet einen Fehlerzustand.', $connection['updated_at'] ?? $now);
+                }
+            }
             foreach ($this->store->all('plugins') as $plugin) {
                 if (($plugin['state'] ?? null) === 'draining') {
                     $items[] = $this->attention('plugin_drain', null, 'plugin', $plugin, 'Plugin-Deaktivierung läuft', 'Aktive Beiträge und Daten werden weiterhin beobachtet.', $plugin['updated_at'] ?? $now);
@@ -304,23 +318,6 @@ final class MetricsHandler
         usort($items, static fn (array $left, array $right): int => strcmp($left['since'], $right['since']));
 
         return $items;
-    }
-
-    private function attentionReasonText(string $code): array
-    {
-        return match ($code) {
-            'routing_ambiguous' => ['Workflow auswählen', 'Für diesen Eingang ist keine eindeutige Workflowroute gespeichert.'],
-            'classification_unavailable' => ['Einordnung nicht verfügbar', 'Die fachliche Einordnung konnte nicht abgeschlossen werden.'],
-            'decision_refused' => ['Einordnung prüfen', 'Die Klassifikation verlangt eine menschliche Entscheidung.'],
-            'intake_escalated' => ['Eingang benötigt Entscheidung', 'Der Eingang wurde an den Eigentümer weitergeleitet.'],
-            'approval_pending' => ['Freigabe erforderlich', 'Eine menschliche Freigabe steht noch aus.'],
-            'agent_question' => ['Rückfrage beantworten', 'Ein Agent wartet auf eine Antwort des Eigentümers.'],
-            'run_failed' => ['T3-Auftrag prüfen', 'Ein externer Auftrag wurde als fehlgeschlagen beobachtet.'],
-            'auth_required' => ['T3-Zugang prüfen', 'Die Verbindung benötigt eine erneute Authentifizierung.'],
-            'reconciliation_required' => ['Abgleich erforderlich', 'Der externe Zustand ist noch nicht sicher bekannt.'],
-            'plugin_drain_blocked' => ['Plugin-Deaktivierung blockiert', 'Aktive oder ungeklärte Arbeit verhindert den Abschluss des Drains.'],
-            default => ['Mensch erforderlich', 'Für diese Aufgabe wird eine menschliche Entscheidung benötigt.'],
-        };
     }
 
     private function attention(string $kind, ?string $projectId, string $resourceType, array $record, string $title, string $detail, string $since): array
@@ -456,7 +453,8 @@ final class MetricsHandler
         $active = count(array_filter($runs, static fn (array $run): bool => in_array($run['state'] ?? null, self::ACTIVE_RUN_STATES, true)));
         $attention = $this->attentionItems($projectIds, $includeGlobalAttention);
         $requesterQuestions = count(array_filter($attention, static fn (array $item): bool => 'intake_information' === $item['kind']));
-        $humanAttention = count(array_filter($attention, static fn (array $item): bool => 'intake_information' !== $item['kind']));
+        $ownerItems = array_filter($attention, static fn (array $item): bool => 'task' === $item['resource']['resource_type'] && 'intake_information' !== $item['kind']);
+        $humanAttention = count(array_unique(array_column($ownerItems, 'task_id')));
         $completed = $this->taskCompletionEpisodes($events, $tasks, $window);
         $intakeOutcomes = $this->intakeOutcomes($events, $window);
         $classificationCount = $this->countClassificationRecords($events, $window);
@@ -486,6 +484,7 @@ final class MetricsHandler
             $this->metric('cycle_time_seconds', 'Median Cycle-Time ab Arbeitsbeginn', $this->median($completed['cycle']), 'seconds', count($completed['cycle'])),
             $this->metric('blocked_time_seconds', 'Median Blockadezeit', $this->median($blockedDurations), 'seconds', count($blockedDurations), 'derived', [] === $blockedDurations ? 'unavailable' : 'estimated'),
             $this->metric('waiting_time_seconds', 'Median Wartezeit auf Antwort oder Entscheidung', $this->median($waitingDurations), 'seconds', count($waitingDurations), 'derived', [] === $waitingDurations ? 'unavailable' : 'estimated'),
+            $this->metric('provider_cost', 'Anbieterkosten', null, 'currency', 0, 'provider_reported', 'unavailable', 'Es liegen keine verifizierten Anbieterabrechnungsdaten vor; Kosten bleiben unbekannt.'),
         ];
     }
 

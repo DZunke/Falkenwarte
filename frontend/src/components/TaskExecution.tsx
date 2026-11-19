@@ -376,6 +376,7 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
   const currentReport = reportsForCurrentAttempt.find((report) => report.accepted_for_reconciliation && report.task_revision === task.version)
   const approvalAlreadyOpen = approvals.some((approval) => approval.status === 'pending' && approval.kind === approvalKind && approval.result_digest === selectedRun?.result_digest)
   const canRequestApproval = Boolean(selectedRun?.result_digest && currentReport && ['result_reported', 'verifying', 'succeeded'].includes(selectedRun.state) && !approvalAlreadyOpen)
+  const hasPendingApproval = task.human_attention.reasons.includes('approval_pending') || approvals.some((approval) => approval.status === 'pending')
 
   const profileStatus = (profile: components['schemas']['AgentProfile']) => !profile.enabled ? 'Deaktiviert' : !profile.configuration_valid ? 'Nicht startbereit' : 'Startbereit'
   const selectedWorkflowStage = selectedWorkflow?.stages.find((stage) => stage.id === selectedStageId)
@@ -388,7 +389,7 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
       <section className="space-y-3 rounded-lg border p-4">
         <div><h3 className="text-sm font-semibold">Startbedingungen</h3><p className="mt-1 text-xs text-muted-foreground">Falkenwarte prüft Ticketstand, Rolle, T3-Verbindung und freien Ausführungsplatz erneut beim Start.</p></div>
         {constraints.length > 0 ? <ul className="list-disc space-y-1 pl-5 text-sm text-amber-900">{constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}</ul> : <p className="text-sm text-muted-foreground">Für Ticket und Projekt sind keine bekannten Startblockaden offen.</p>}
-        {task.human_attention.reasons.includes('approval_pending') && <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-50 p-3"><p className="text-sm text-amber-950">Eine Ergebnismeldung wartet auf deine fachliche Entscheidung.</p><Button size="sm" variant="outline" onClick={onOpenDecisions}><ShieldCheck />Entscheidung öffnen</Button></div>}
+        {hasPendingApproval && <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-50 p-3"><p className="text-sm text-amber-950">Eine Ergebnismeldung wartet auf deine fachliche Entscheidung.</p><Button size="sm" variant="outline" onClick={onOpenDecisions}><ShieldCheck />Entscheidung öffnen</Button></div>}
         <p className="text-xs text-muted-foreground">Ein Phasenlauf schließt das Ticket nicht automatisch ab. Berichte bleiben Agentenmeldungen; Ticketkriterien und Projektabschlussregeln gelten unabhängig davon.</p>
       </section>
 

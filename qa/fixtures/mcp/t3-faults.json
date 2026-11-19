@@ -175,6 +175,14 @@
       "expected": "Der externe Lauf bleibt nach Falkenwarte-Restore beobachtbar, bis die Teststeuerung ihn ausdrücklich beendet."
     },
     {
+      "id": "reference_missing_model",
+      "match": {
+        "tool": "t3_thread_read"
+      },
+      "mutation": "Liefere Thread und Projekt weiter, aber lasse providerInstanceId und model aus der gespeicherten T3-Referenz aus.",
+      "expected": "Eine fehlende referenzierte Ausführungsmöglichkeit wird als Konfigurationsbedarf sichtbar; es gibt keinen stillen Wechsel und keinen neuen Start."
+    },
+    {
       "id": "mismatched_structured_content",
       "mutation": "Nur structuredContent.threadId ändern; content.text unverändert lassen.",
       "expected": "Adapter meldet widersprüchliche externe Antwort und verwendet keinen beliebigen Wert."

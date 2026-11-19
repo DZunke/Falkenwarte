@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -141,6 +141,7 @@ export default function App() {
         {mobileMenu && <div className="fixed inset-x-0 top-16 z-20 max-h-[calc(100vh-4rem)] overflow-y-auto border-b bg-sidebar px-3 py-4 shadow-lg md:hidden"><Navigation route={route} projects={projects} onNavigate={() => setMobileMenu(false)} /><div className="mt-3 border-t pt-3"><button className="nav-link" onClick={() => { go('docs'); setMobileMenu(false) }}><BookOpen />Dokumentation</button><button className="nav-link" onClick={() => { go('settings'); setMobileMenu(false) }}><Settings />Einstellungen</button></div></div>}
 
         <main id="main-content" className="mx-auto min-h-[calc(100vh-4rem)] max-w-[1560px] px-4 py-6 md:px-8 md:py-8">
+          <AsyncViewBoundary key={route.page}>
           {route.page === 'project' && activeProject ? <ProjectBoard key={activeProject.id} project={activeProject} initialTaskId={route.taskId} initialCreate={route.createTask} onRefreshProject={() => { void queryClient.invalidateQueries({ queryKey: ['projects'] }) }} /> : null}
           {route.page === 'project' && !activeProject && <ProjectMissing projects={projects} onCreate={() => go('projects')} />}
           {route.page === 'projects' && <ProjectsPage projects={projects} loading={projectsQuery.isPending} error={projectsQuery.error} />}
@@ -154,11 +155,27 @@ export default function App() {
           {route.page === 'settings' && <Suspense fallback={<PageSkeleton />}><SettingsView /></Suspense>}
           {route.page === 'docs' && <Suspense fallback={<PageSkeleton />}><DocsView path={route.docPath ?? ''} navigate={(path) => go(path)} /></Suspense>}
           {!['project', 'projects', 'dashboard', 'labels', 'agents', 'roles', 'workflows', 'plugins', 'metrics', 'settings', 'docs'].includes(route.page) && <ProjectMissing projects={projects} onCreate={() => go('dashboard')} />}
+          </AsyncViewBoundary>
         </main>
       </div>
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} projects={projects} />
     </div>
   )
+}
+
+class AsyncViewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return <Card><CardContent className="p-6"><h1 className="font-semibold">Diese Ansicht konnte nicht geladen werden</h1><p className="mt-2 text-sm text-muted-foreground">Die App-Datei ist möglicherweise veraltet oder die Verbindung wurde unterbrochen. Lade Falkenwarte neu, um den aktuellen Stand zu öffnen.</p><Button variant="outline" className="mt-4" onClick={() => window.location.reload()}>Erneut versuchen</Button></CardContent></Card>
+    }
+    return this.props.children
+  }
 }
 
 function Brand() {

@@ -13,7 +13,7 @@ use App\WorkManagement\Domain\TaskCompletionPolicy;
 use App\WorkManagement\Domain\TaskLinkPolicy;
 use Symfony\Component\Uid\Uuid;
 
-final class WorkHandler
+final class WorkHandler implements AttentionLabelReader
 {
     private const TASK_FIELDS = [
         'title', 'description', 'task_type', 'priority', 'due_at', 'custom_fields', 'label_ids',
@@ -1906,6 +1906,16 @@ final class WorkHandler
         usort($labels, static fn (array $a, array $b): int => [$a['kind'], $a['name']] <=> [$b['kind'], $b['name']]);
 
         return $labels;
+    }
+
+    public function labelForReason(string $projectId, string $code): ?array
+    {
+        if (!isset(AttentionLabelCatalog::definitions()[$code])) {
+            return null;
+        }
+        $label = $this->attentionLabelDefinition($projectId, $code);
+
+        return ['name' => $label['name'], 'description' => $label['description']];
     }
 
     /** @return array<string, mixed> */

@@ -69,15 +69,17 @@ export async function loadOwnerFixtureContext(ownerApi) {
     tasks[definition.key] = taskRead.data;
   }
 
-  const metricTask = tasks.metric_cycle;
-  if (!metricTask) throw new Error('The fixture seed does not define metric_cycle.');
   for (const step of seed.metric_history) {
     await setBusinessTime(step.at);
+    const taskKey = step.task_key ?? 'metric_cycle';
+    const metricTask = tasks[taskKey];
+    const taskDefinition = seed.tasks.find((definition) => definition.key === taskKey);
+    if (!metricTask || !taskDefinition) throw new Error(`The fixture seed does not define metric task ${taskKey}.`);
     const current = await ownerApi.get(`/tasks/${metricTask.id}`);
     expect(current.response.status(), JSON.stringify(current.data)).toBe(200);
 
     if (step.action === 'move') {
-      const status = statuses.falkenwarte[step.status_category];
+      const status = statuses[taskDefinition.project_key]?.[step.status_category];
       if (!status) throw new Error(`Metric seed references unknown task status: ${step.status_category}`);
       const result = await ownerApi.post(`/tasks/${metricTask.id}/move`, { status_id: status.id }, { version: current.data.version });
       await requireSuccess(result, 200, 'move metric task');

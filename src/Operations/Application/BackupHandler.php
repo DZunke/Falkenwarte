@@ -92,6 +92,30 @@ final class BackupHandler
         $this->store->save('backups', $job, 'backup.restore_finalized');
     }
 
+    /** @param array<string, mixed> $marker */
+    public function finalizeFailedRestore(array $marker): void
+    {
+        $id = $this->payloadId($marker, 'backup_id');
+        $requestId = $this->payloadId($marker, 'request_id');
+        $job = $this->store->find('backups', $id);
+        if (null === $job) {
+            throw new Problem(409, 'backup_restore_record_missing', 'Der fehlgeschlagene Wiederherstellungsauftrag ist in der Datenbank nicht vorhanden.');
+        }
+        if (($job['restore_request_id'] ?? null) !== $requestId) {
+            throw new Problem(409, 'backup_restore_request_mismatch', 'Der Fehlernachweis passt nicht zum angeforderten Wiederherstellungsauftrag.');
+        }
+        if (($job['status'] ?? null) === 'failed' && is_string($job['error'] ?? null)) {
+            return;
+        }
+        if (($job['status'] ?? null) !== 'restoring') {
+            throw new Problem(409, 'backup_restore_state_invalid', 'Der Wiederherstellungsauftrag kann nicht als fehlgeschlagen abgeschlossen werden.');
+        }
+
+        $job['status'] = 'failed';
+        $job['error'] = mb_substr(trim((string) ($marker['failure_message'] ?? 'Die Wiederherstellung wurde vor dem Datenbankaustausch abgebrochen.')), 0, 300);
+        $this->store->save('backups', $job, 'backup.restore_failed');
+    }
+
     /** @param array<string, mixed> $p @return array<string, mixed> */
     private function list(array $p): array
     {
@@ -142,7 +166,7 @@ final class BackupHandler
     private function restore(string $id, array $body, Actor $actor): array
     {
         $job = $this->store->get('backups', $id);
-        if (($job['status'] ?? null) !== 'ready' || !is_array($job['manifest'] ?? null)) {
+        if (!in_array($job['status'] ?? null, ['ready', 'failed'], true) || !is_array($job['manifest'] ?? null)) {
             throw new Problem(409, 'backup_not_ready', 'Nur ein geprüftes, fertiges Backup kann wiederhergestellt werden.');
         }
 
@@ -161,6 +185,7 @@ final class BackupHandler
         $requestId = $this->store->id();
         $requestedAt = $this->store->now();
         $job['status'] = 'restoring';
+        $job['error'] = null;
         $job['restore_request_id'] = $requestId;
         $job['restore_reason'] = trim((string) ($body['reason'] ?? ''));
         $job = $this->store->save('backups', $job, 'backup.restore_requested');

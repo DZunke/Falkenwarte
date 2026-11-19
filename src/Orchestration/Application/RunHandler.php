@@ -1510,6 +1510,9 @@ final class RunHandler
         $task = $this->record('tasks', $taskId);
         $actor->requireProject((string) $task['project_id']);
         $run = isset($p['source_run_id']) ? $this->store->find('runs', (string) $p['source_run_id']) : null;
+        if (isset($p['source_run_id']) && (null === $run || $run['task_id'] !== $taskId || $run['project_id'] !== $task['project_id'])) {
+            throw new Problem(404, 'resource_not_found', 'Der angeforderte Ausgangslauf gehört nicht zu dieser Aufgabe.');
+        }
         $evidence = array_values(array_filter($this->store->all('evidence', (string) $task['project_id']), static fn (array $item): bool => $item['task_id'] === $taskId && 'rejected' !== $item['review_status']));
         $collections = array_values(array_filter($this->store->all('link_collections', (string) $task['project_id']), static fn (array $collection): bool => $collection['task_id'] === $taskId));
 

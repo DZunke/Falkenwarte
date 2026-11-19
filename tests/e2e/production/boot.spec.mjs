@@ -41,6 +41,12 @@ test('A19 production container boots and preserves human tickets across restart'
   await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
   await expect(ownerPage.getByText('Für die T3-Prüfung fehlt eine gültige OAuth-Anmeldung.')).toBeVisible({ timeout: 20_000 });
   await expect(ownerPage.getByRole('button', { name: /T3 ohne Zugang/ })).toContainText('Eingeschränkt');
+  const dashboard = await ownerApi.get('/dashboard');
+  expect(dashboard.response.status()).toBe(200);
+  expect(dashboard.data.attention).toEqual(expect.arrayContaining([expect.objectContaining({
+    kind: 'auth', resource: expect.objectContaining({ resource_type: 'connection', id: disconnected.data.id }),
+  })]));
+  expect(dashboard.data.metrics.find((metric) => metric.key === 'human_attention')?.value).toBe(0);
   expect((await ownerPage.request.get('/healthz')).status()).toBe(200);
   recordEvidence('Der Produktcontainer bedient den Browser ohne T3-/Decisions-Zugänge und ignoriert den QA-Fehlerpunkt.', 'Ein menschlich erstelltes Ticket war im privaten Live-Board sichtbar. Die Produktions-App akzeptierte die Änderung trotz Testheader. Eine ergänzte T3-Verbindung ohne Zugang zeigte anschließend die fehlende OAuth-Anmeldung an, und die App blieb erreichbar.');
 });

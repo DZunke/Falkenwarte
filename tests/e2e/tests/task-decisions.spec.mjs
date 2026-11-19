@@ -172,6 +172,7 @@ test('A27 owner resolves an ambiguous intake from the dashboard task decision pa
       return intake.structuredContent?.outcome;
     }, { timeout: 30_000 }).toBe('needs_human_decision');
 
+    await ownerPage.reload();
     await ownerPage.goto('/#/dashboard');
     const decisionLink = ownerPage.getByRole('link', { name: title, exact: true });
     await expectWithinMobileViewport(decisionLink, 'Dashboard decision link');
@@ -181,7 +182,7 @@ test('A27 owner resolves an ambiguous intake from the dashboard task decision pa
     const ownerDecisionTab = ownerPage.getByRole('tab', { name: 'Entscheidungen' });
     await ownerDecisionTab.focus();
     await ownerPage.keyboard.press('Enter');
-    await expect(ownerPage.getByText('Eigentümerentscheidung')).toBeVisible();
+    await expect(ownerPage.getByRole('heading', { name: 'Eigentümerentscheidung', exact: true })).toBeVisible();
     await expect(ownerPage.getByText('Klassifikationsnachweis')).toBeVisible();
 
     const decisionPanel = ownerPage.getByTestId('task-decisions');

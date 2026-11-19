@@ -68,6 +68,11 @@ if [[ ! -f "$data_directory/falkenwarte.sqlite" ]]; then
 fi
 
 run_startup_tasks() {
+    if [[ -f "$data_directory/restore-swap-in-progress.json" && ! -f "$data_directory/restore-result.json" ]]; then
+        printf 'A database restore was interrupted during file exchange; inspect restore-swap-in-progress.json and restore-previous before allowing services to write.\n' >&2
+        exit 1
+    fi
+
     if [[ -f "$data_directory/restore-request.json" ]]; then
         php /app/bin/restore-offline.php
     fi

@@ -20,6 +20,23 @@ async function readUntil(ownerApi, route, matches, description, timeout = 45_000
   return current;
 }
 
+async function dashboardAttentionCount(ownerApi) {
+  const dashboard = await ownerApi.get('/dashboard');
+  expect(dashboard.response.status(), JSON.stringify(dashboard.data)).toBe(200);
+  const metric = dashboard.data.metrics.find((item) => item.key === 'human_attention');
+  expect(metric, 'The dashboard exposes its human-attention KPI.').toBeTruthy();
+  return metric.value;
+}
+
+async function expectDashboardAttention(ownerApi, ownerPage, expected) {
+  expect(await dashboardAttentionCount(ownerApi)).toBe(expected);
+  await ownerPage.goto('/#/dashboard');
+  const kpi = ownerPage.locator('dl[aria-label="Arbeitsstand"]');
+  const attentionLabel = kpi.getByText('Mensch erforderlich', { exact: true });
+  const cell = kpi.locator('div').filter({ has: attentionLabel }).last();
+  await expect(cell.locator('dd')).toHaveText(String(expected));
+}
+
 async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E') {
   const project = await ownerApi.createProject({ name: `${name} Projekt` });
   const created = await ownerApi.post('/connections', {
@@ -83,7 +100,8 @@ async function createProfile(ownerApi, ownerPage, baseURL, project, connection, 
   await ownerPage.goto('/#/roles');
   await expect(ownerPage.getByRole('heading', { name: 'Agentrollen' })).toBeVisible();
   await expect(ownerPage.getByText(name, { exact: true })).toBeVisible();
-  await expect(ownerPage.getByText(executionTarget.mode === 't3_project_default' ? 'T3-Projektstandard' : `Referenzthread ${executionTarget.reference_thread_id}`, { exact: true })).toBeVisible();
+  const profileCard = ownerPage.getByRole('article').filter({ hasText: name });
+  await expect(profileCard.getByText(executionTarget.mode === 't3_project_default' ? 'T3-Projektstandard' : `Referenzthread ${executionTarget.reference_thread_id}`, { exact: true })).toBeVisible();
   return profile;
 }
 
@@ -191,8 +209,18 @@ function reportArguments(run, task, reportId = randomUUID()) {
   };
 }
 
-async function reportThroughMcp(agent, run, task) {
-  const result = await agent.call('runs_report_result', reportArguments(run, task));
+async function reportThroughMcp(agent, run, task, ownerApi = null) {
+  const args = reportArguments(run, task);
+  let result;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (ownerApi) {
+      const latest = await ownerApi.get(`/runs/${run.id}`);
+      expect(latest.response.status(), JSON.stringify(latest.data)).toBe(200);
+      args.expected_version = latest.data.version;
+    }
+    result = await agent.call('runs_report_result', args);
+    if (!result.isError || result.structuredContent?.status !== 412 || !ownerApi) break;
+  }
   expect(result.isError, JSON.stringify(result.structuredContent)).toBe(false);
   return result.structuredContent;
 }
@@ -228,7 +256,7 @@ test('A09/A10 T3 OAuth and MCP launch replay preserve one immutable dispatch', a
     expect(t3.journal.some((entry) => entry.method === 'initialize' && entry.protocol_version === '2025-06-18')).toBe(true);
     expect(dispatched.attempts[0].external_thread_id).toBe(t3.accepted_launches[0].response.threadId);
 
-    await reportThroughMcp(reporter.agent, dispatched, task);
+    await reportThroughMcp(reporter.agent, dispatched, task, ownerApi);
     const completed = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'succeeded', 'T3-Endzustand und Agentmeldung müssen gemeinsam den Phasenabschluss ergeben.');
     expect(completed.report_ids).toHaveLength(1);
     expect(completed.attempts[0].external_thread_id).toBe(dispatched.attempts[0].external_thread_id);
@@ -260,7 +288,7 @@ test('A11/A30 early agent report and new OAuth namespace do not create a second 
     }, { timeout: 30_000, message: 'T3 muss den Launch angenommen und die Antwort an der Testbarriere angehalten haben.' }).toBe(true);
     const dispatching = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'dispatching');
     expect(dispatching.attempts[0].external_thread_id).toBeNull();
-    await reportThroughMcp(reporter.agent, dispatching, task);
+    await reportThroughMcp(reporter.agent, dispatching, task, ownerApi);
     const reportedEarly = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.report_ids?.length === 1, 'Der MCP-Agentbericht muss vor der Launch-Antwort gespeichert werden.');
     expect(reportedEarly.state).toBe('result_reported');
 
@@ -329,7 +357,7 @@ test('M4 workflow phase waits for an owner decision and does not close the task'
 
   try {
     const runBeforeReport = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state));
-    await reportThroughMcp(reporter.agent, runBeforeReport, task);
+    await reportThroughMcp(reporter.agent, runBeforeReport, task, ownerApi);
     const awaitingApproval = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.status_reason?.includes('Eigentümerentscheidung'));
     const approvalRequest = await ownerApi.post(`/runs/${runId}/approvals`, {
       kind: 'completion',
@@ -384,7 +412,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
 
   try {
     const beforeReport = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state));
-    await reportThroughMcp(reporter.agent, beforeReport, task);
+    await reportThroughMcp(reporter.agent, beforeReport, task, ownerApi);
     const awaitingApproval = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.result_digest !== null);
     const oldApprovalResult = await ownerApi.post(`/runs/${runId}/approvals`, {
       kind: 'completion',
@@ -395,6 +423,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     const oldApproval = oldApprovalResult.data;
     task = (await ownerApi.get(`/tasks/${task.id}`)).data;
     expect(task.human_attention.reasons).toContain('approval_pending');
+    expect(await dashboardAttentionCount(ownerApi)).toBe(1);
 
     await qaMocks.setDecisionsScenario('decisions_ambiguous');
     const reclassified = await ownerApi.post(`/tasks/${task.id}/intake/reclassify`, {
@@ -404,6 +433,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     task = await readUntil(ownerApi, `/tasks/${task.id}`, (current) => current.human_attention.reasons?.includes('routing_ambiguous'));
     expect(task.human_attention.reasons).toContain('approval_pending');
     expect(task.human_attention.reasons).toContain('routing_ambiguous');
+    await expectDashboardAttention(ownerApi, ownerPage, 1);
 
     const attentionLabels = await ownerApi.get(`/projects/${project.id}/labels`);
     expect(attentionLabels.response.status()).toBe(200);
@@ -434,8 +464,10 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     }, { version: omittedRoutingLabel.data.version });
     expect(routeDecision.response.status(), JSON.stringify(routeDecision.data)).toBe(200);
     expect(routeDecision.data.human_attention.reasons).toEqual(['approval_pending']);
-    expect(routeDecision.data.label_ids).toContain(approvalLabel.id);
-    expect(routeDecision.data.label_ids).not.toContain(routingLabel.id);
+    task = (await ownerApi.get(`/tasks/${task.id}`)).data;
+    expect(task.label_ids).toContain(approvalLabel.id);
+    expect(task.label_ids).not.toContain(routingLabel.id);
+    expect(await dashboardAttentionCount(ownerApi)).toBe(1);
 
     const staleApproval = await ownerApi.post(`/approvals/${oldApproval.id}/decision`, {
       decision: 'approved',
@@ -446,6 +478,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     expect(staleApproval.data.status).toBe('invalidated');
     task = (await ownerApi.get(`/tasks/${task.id}`)).data;
     expect(task.human_attention.reasons).toEqual([]);
+    expect(await dashboardAttentionCount(ownerApi)).toBe(0);
 
     const oldRun = (await ownerApi.get(`/runs/${runId}`)).data;
     const cancelled = await ownerApi.post(`/runs/${runId}/cancel`, {
@@ -457,7 +490,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     task = (await ownerApi.get(`/tasks/${task.id}`)).data;
     const freshRunId = await requestRun(ownerApi, task, profile);
     const freshRun = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => ['running', 'verifying'].includes(run.state));
-    await reportThroughMcp(reporter.agent, freshRun, task);
+    await reportThroughMcp(reporter.agent, freshRun, task, ownerApi);
     const freshResult = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => run.state === 'verifying' && run.result_digest !== null);
     const freshApprovalResult = await ownerApi.post(`/runs/${freshRunId}/approvals`, {
       kind: 'completion',
@@ -466,6 +499,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     }, { version: freshResult.version });
     expect(freshApprovalResult.response.status(), JSON.stringify(freshApprovalResult.data)).toBe(201);
     const freshApproval = freshApprovalResult.data;
+    expect(await dashboardAttentionCount(ownerApi)).toBe(1);
     const decision = await ownerApi.post(`/approvals/${freshApproval.id}/decision`, {
       decision: 'approved',
       result_digest: freshResult.result_digest,
@@ -478,6 +512,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     expect(task.human_attention).toEqual({ required: false, reasons: [] });
     expect(task.label_ids).not.toContain(approvalLabel.id);
     expect(task.label_ids).not.toContain(routingLabel.id);
+    await expectDashboardAttention(ownerApi, ownerPage, 0);
 
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);
@@ -517,7 +552,7 @@ test('A29 reference threads supply only live T3 routing and block removed or for
       instanceId: 'qa-inherited-provider',
       model: 'qa-inherited-model',
     });
-    await reportThroughMcp(validReporter.agent, validRun, validTask);
+    await reportThroughMcp(validReporter.agent, validRun, validTask, ownerApi);
     await readUntil(ownerApi, `/runs/${validRunId}`, (run) => run.state === 'succeeded');
 
     const foreignProject = await ownerApi.createProject({ name: 'A29 Fremdes T3-Ziel' });
@@ -622,7 +657,7 @@ test('A09 unknown T3 capability and run state remain visible failures', async ({
     await qaMocks.setT3Scenario('default');
     await ownerApi.post(`/runs/${runId}/reconcile`, { reason: 'T3-Zustand erneut geprüft.' }, { version: unknown.version });
     const current = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying');
-    await reportThroughMcp(reporter.agent, current, task);
+    await reportThroughMcp(reporter.agent, current, task, ownerApi);
     await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'succeeded');
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);

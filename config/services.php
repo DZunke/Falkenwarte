@@ -52,6 +52,7 @@ use App\Shared\Infrastructure\Consumer;
 use App\Shared\Infrastructure\DbalIdempotencyStore;
 use App\Shared\Infrastructure\MaintenanceCommand;
 use App\Shared\Infrastructure\SystemClock;
+use App\WorkManagement\Application\AttentionLabelReader;
 use App\WorkManagement\Application\TaskIntake;
 use App\WorkManagement\Application\WorkHandler;
 use App\WorkManagement\Domain\BoardWipPolicy;
@@ -120,6 +121,7 @@ return static function (ContainerConfigurator $c): void {
     foreach ([App\Portfolio\Domain\CustomFieldPolicy::class, BoardWipPolicy::class, TaskCompletionPolicy::class, TaskLinkPolicy::class] as $policy) {
         $s->set($policy);
     }
+    $s->alias(AttentionLabelReader::class, WorkHandler::class);
     $types = [Access::class, Live::class, PortfolioHandler::class, WorkHandler::class, IntakeHandler::class, AgentCatalogHandler::class, RunHandler::class, PluginHandler::class, MetricsHandler::class, JournalHandler::class, BackupHandler::class];
     foreach ($types as $class) {
         $s->set($class)->tag('app.operation_handler');

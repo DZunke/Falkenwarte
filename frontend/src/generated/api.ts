@@ -2774,6 +2774,7 @@ export interface components {
             prompt_template_version: number;
             run_completion_policy: components["schemas"]["RunCompletionPolicy"];
             execution_target: components["schemas"]["T3ExecutionTarget"];
+            bridge_plugin_id?: string | null;
             classification_id: components["schemas"]["Id"] | null;
             workflow_label_id: components["schemas"]["Id"] | null;
             routing_rules_version: number | null;
@@ -3077,6 +3078,7 @@ export interface components {
             allowed_actions: components["schemas"]["AllowedAction"][];
             name: string;
             bridge_id: string;
+            bridge_plugin_id: string;
             /** Format: uri */
             canonical_url: string;
             /** @enum {string} */
@@ -3108,7 +3110,16 @@ export interface components {
             refresh_capabilities?: boolean;
         };
         ConnectionCheck: {
+            id: components["schemas"]["Id"];
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            allowed_actions: components["schemas"]["AllowedAction"][];
             connection_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            status: "queued" | "succeeded" | "failed";
             /** Format: date-time */
             checked_at: string;
             /** @enum {string} */
@@ -3154,6 +3165,7 @@ export interface components {
             icon_key: string;
             role: string;
             connection_id: components["schemas"]["Id"];
+            bridge_plugin_id: string;
             allowed_project_ids: components["schemas"]["Id"][];
             /**
              * @description MVP: zusätzlich maximal ein aktiver Run pro T3-ProjectBinding; kein lokaler Worktree-Verwalter.
@@ -3401,6 +3413,8 @@ export interface components {
             warnings: string[];
         };
         AttentionItem: {
+            /** @description Stable code of an open owner reason on the ticket. */
+            reason_code?: string;
             /** @enum {string} */
             kind: "question" | "approval" | "failure" | "auth" | "reconciliation" | "plugin_drain" | "classification" | "intake_information";
             project_id: components["schemas"]["Id"] | null;
@@ -3484,6 +3498,7 @@ export interface components {
             }[];
             active_run_count: number;
             pending_job_count: number;
+            unresolved_external_activity_count: number;
             retained_data_bytes: number;
             /** Format: uri-reference */
             configuration_schema_id: string | null;
@@ -3733,6 +3748,7 @@ export interface components {
             gate_id: components["schemas"]["Id"];
             project_id: components["schemas"]["Id"];
             connection_id: components["schemas"]["Id"] | null;
+            bridge_plugin_id?: string | null;
             external_project_id?: string | null;
             run_id?: components["schemas"]["Id"] | null;
             external_thread_id?: string | null;
@@ -5994,7 +6010,9 @@ export interface operations {
     };
     task_handoff_get: {
         parameters: {
-            query?: never;
+            query?: {
+                source_run_id?: components["schemas"]["Id"];
+            };
             header?: never;
             path: {
                 task_id: components["schemas"]["Id"];

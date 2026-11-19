@@ -79,6 +79,14 @@
         "topic.ui"
       ],
       "created_at": "2026-01-01T09:00:00Z"
+    },
+    {
+      "key": "metric_cancelled",
+      "project_key": "falkenwarte",
+      "title": "Abgebrochenes Ticket nicht als Abschluss zählen",
+      "description": "Das Ticket endet abgebrochen und darf keinen Abschluss vortäuschen.",
+      "priority": "normal",
+      "created_at": "2026-01-01T10:00:00Z"
     }
   ],
   "metric_history": [
@@ -88,10 +96,22 @@
       "status_category": "active"
     },
     {
+      "at": "2026-01-02T10:00:00Z",
+      "task_key": "metric_cancelled",
+      "action": "move",
+      "status_category": "active"
+    },
+    {
       "at": "2026-01-03T09:00:00Z",
       "action": "block",
       "blocked": true,
       "reason": "Abhängige fachliche Klärung steht aus."
+    },
+    {
+      "at": "2026-01-03T10:00:00Z",
+      "task_key": "metric_cancelled",
+      "action": "move",
+      "status_category": "cancelled"
     },
     {
       "at": "2026-01-04T09:00:00Z",

@@ -18,10 +18,12 @@ docker compose logs --tail=100 app
 
 Dieser Startpfad baut das Appimage aus dem aktuellen Checkout und verwendet den Compose-Standardtag `falkenwarte:local`.
 
-Für ein veröffentlichtes Release wird zuerst die Release-Datei `image-manifest.json` aus [GitHub Releases](https://github.com/DZunke/Falkenwarte/releases/latest) geprüft und der dort verzeichnete GHCR-Digest verwendet:
+Für ein veröffentlichtes Release wird zuerst die Datei `image-manifest.json` aus [GitHub Releases](https://github.com/DZunke/Falkenwarte/releases/latest) geladen und der dort verzeichnete GHCR-Digest verwendet:
 
 ```bash
-FALKENWARTE_IMAGE=ghcr.io/dzunke/falkenwarte@sha256:<digest-aus-image-manifest.json> docker compose up -d --wait
+curl -fsSLO https://github.com/DZunke/Falkenwarte/releases/latest/download/image-manifest.json
+export FALKENWARTE_IMAGE="$(jq -er .image image-manifest.json)"
+docker compose up -d --wait
 ```
 
 Das Release-Manifest nennt Tag, Commit, Image-ID und Registry-Digest; der Digest wird unverändert in `FALKENWARTE_IMAGE` übernommen.
@@ -54,10 +56,13 @@ Die produktive Decisions-Verbindung und T3-URL sind getrennte Einstellungen; feh
 
 Vor einem Update mit Migrationen wird ein geprüftes Backup erstellt und sein Restoreweg wird anhand des aktuellen Image-Digests bestimmt.
 
+Ein Quellcheckout wird mit `docker compose up --build -d --wait` gebaut; der veröffentlichte Betrieb übernimmt stattdessen den Digest aus `image-manifest.json` und setzt ihn in `FALKENWARTE_IMAGE`.
+
 Das neue Image wird vor dem Start auf Commit und Digest geprüft; Migrationen laufen unter einer Volume-weiten Dateisperre, bevor HTTP, Consumer und Maintenance gestartet werden.
 
 ```bash
-docker compose pull
+curl -fsSLO https://github.com/DZunke/Falkenwarte/releases/latest/download/image-manifest.json
+export FALKENWARTE_IMAGE="$(jq -er .image image-manifest.json)"
 docker compose up -d --wait
 docker compose ps
 docker compose logs --tail=100 app
@@ -94,6 +99,12 @@ Die Prozessaufsicht beendet daraufhin HTTP, Worker und Maintenance, während die
 Vor dem Austausch werden Datenbankintegrität, Datei- und Manifestsumme, Appversion, Schema-Migrationen und unterstützter Dateiumfang geprüft; das vorherige Datenbankfile wird im geschützten Verzeichnis `/data/restore-previous/` aufbewahrt.
 
 Die Prüfung vergleicht den App-Migrationsstand separat vom Plugin-Migrationsstand und lehnt unbekannte Migrationen, nicht vorhandene Pluginpakete sowie einen neueren inkompatiblen Pluginstand vor dem Datenbanktausch ab.
+
+Scheitert diese Prüfung vor dem Austausch, bleibt die bisherige Datenbank aktiv, der geprüfte Backupauftrag erhält den sichtbaren Status `failed` mit dem Grund und der Wartungsmodus bleibt eingeschaltet; nach Behebung der Inkompatibilität kann derselbe geprüfte Backupstand erneut ausgewählt werden.
+
+Vor der ersten Dateiverschiebung schreibt PID 1 `/data/restore-swap-in-progress.json`; liegt dieser Marker beim nächsten Start ohne `/data/restore-result.json` vor, bleiben HTTP, Worker und Maintenance gestoppt, bis die Datenbankdatei und die Kopie unter `/data/restore-previous/<request-id>/` geprüft und der Austausch ausdrücklich abgeschlossen wurde.
+
+Bei einem unterbrochenen Austausch darf der Marker nicht blind gelöscht werden: zuerst den App-Container gestoppt lassen, die gesicherten und aktuellen Datenbankdateien auf SQLite-Integrität und den erwarteten SHA-256 prüfen und erst danach die gewünschte Datei unter `/data/falkenwarte.sqlite` einsetzen; WAL-, SHM- und Journaldateien müssen zum gewählten Stand passen.
 
 Beim folgenden Start liest `app:restore:finalize` den Restoremarker ein und ruft den Wiederherstellungsabgleich auf, bevor die überwachten Prozesse wieder laufen.
 

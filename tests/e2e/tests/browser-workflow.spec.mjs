@@ -100,7 +100,7 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
   await ownerPage.getByRole('button', { name: 'Link speichern' }).click();
   await expect(ownerPage.getByText('Geprüfte Bedienbarkeitsnotiz', { exact: true })).toBeVisible();
 
-  await ownerPage.getByRole('button', { name: 'Bearbeiten' }).click();
+  await ownerPage.getByRole('button', { name: 'Bearbeiten', exact: true }).click();
   await ownerPage.getByLabel('Titel', { exact: true }).last().fill('Ein bearbeiteter Browserablauf');
   await ownerPage.getByLabel('Beschreibung', { exact: true }).last().fill('Die Änderung wurde von Hand im Ticket-Sheet gespeichert.');
   await ownerPage.getByRole('checkbox', { name: `${labelName} geprüft` }).check();

@@ -165,6 +165,18 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     expect(knownEntry).toMatchObject({ run_id: runId, external_thread_id: knownThreadId, external_run_id: knownExternalRunId });
     expect(unlistedEntry).toMatchObject({ status: 'owner_review_required', external_project_id: 'qa-t3-project-1' });
 
+    const bridgePluginId = 'falkenwarte.t3-mcp-bridge';
+    let bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
+    const startDrain = await ownerApi.post('/plugins/' + bridgePluginId + '/drain', {
+      policy: 'finish_active',
+      reason: 'A18 prüft bekannte und unbekannte T3-Aktivität nach einem Restore.',
+    }, { version: bridgePlugin.version });
+    expect(startDrain.response.status(), JSON.stringify(startDrain.data)).toBe(202);
+    await expect.poll(async () => {
+      bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
+      return [bridgePlugin.state, bridgePlugin.active_run_count, bridgePlugin.unresolved_external_activity_count];
+    }, { timeout: 30_000, message: 'Bekannter Run und unbekannte T3-Aktivität müssen den Bridge-Drain offen halten.' }).toEqual(['draining', 1, 1]);
+
     const restoredTask = await ownerApi.get('/tasks/' + task.id);
     expect(restoredTask.response.status()).toBe(200);
     expect(restoredTask.data.title).toBe(originalTitle);
@@ -205,6 +217,17 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
       return lateEntry?.status === 'stopped';
     }, { timeout: 40_000 }).toBe(true);
 
+    bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
+    const checkUnknownActivity = await ownerApi.post('/plugins/' + bridgePluginId + '/drain', {
+      policy: 'finish_active',
+      reason: 'A18 prüft, dass die unaufgelöste Projektinventur den Drain weiter blockiert.',
+    }, { version: bridgePlugin.version });
+    expect(checkUnknownActivity.response.status(), JSON.stringify(checkUnknownActivity.data)).toBe(202);
+    await expect.poll(async () => {
+      bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
+      return [bridgePlugin.state, bridgePlugin.active_run_count, bridgePlugin.unresolved_external_activity_count];
+    }, { timeout: 30_000, message: 'Auch nach Ende des bekannten Runs muss die unbekannte T3-Aktivität den Drain offen halten.' }).toEqual(['draining', 0, 1]);
+
     await ownerPage.getByRole('button', { name: 'Aktuellen Stand laden' }).click();
     await expect(knownCard.getByRole('button', { name: 'Eintrag als geklärt markieren' })).toBeEnabled();
     await knownCard.locator(`#recovery-reason-${knownEntry.id}`).fill('Der gespeicherte T3-Run wurde nach dem Restore erneut gelesen und meldet failed; er kann nicht weiterlaufen.');
@@ -226,11 +249,24 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     await expect(ownerPage.getByText('Keine offene Wiederherstellungsinventur.')).toBeVisible();
     expect((await ownerApi.get('/recovery/inventory')).data).toEqual({ status: 'clear', entries: [] });
 
+    bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
+    const finishBridgeDrain = await ownerApi.post('/plugins/' + bridgePluginId + '/drain', {
+      policy: 'finish_active',
+      reason: 'A18 beendet den Bridge-Drain erst nach vollständiger Inventur.',
+    }, { version: bridgePlugin.version });
+    expect(finishBridgeDrain.response.status(), JSON.stringify(finishBridgeDrain.data)).toBe(202);
+    await expect.poll(async () => (await ownerApi.get('/plugins/' + bridgePluginId)).data.state, { timeout: 30_000 }).toBe('disabled');
+    bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
+    const deactivateBridge = await ownerApi.post('/plugins/' + bridgePluginId + '/deactivate', {
+      reason: 'A18 Bridge nach geklärter Inventur deaktivieren.',
+    }, { version: bridgePlugin.version });
+    expect(deactivateBridge.response.status(), JSON.stringify(deactivateBridge.data)).toBe(202);
+    await expect.poll(async () => (await ownerApi.get('/plugins/' + bridgePluginId)).data.state, { timeout: 10_000 }).toBe('installed_disabled');
+
     const journal = await qaMocks.t3Journal();
     expect(journal.unexpected).toEqual([]);
     recordEvidence(
-      'Ein echtes ZIP-Backup wird per SHA-256 geprüft und über den überwachten Einzelservice restauriert; bekannte und nach dem Backup entstandene T3-Arbeit werden inventarisiert, Starts bleiben bis zu begründeten Ownerentscheidungen gesperrt.',
-      'Backup ' + backupId + ' enthielt App-Schema ' + backup.manifest.schema_version + ', Linknotizen ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.link-notes')?.version + ' und T3-Bridge ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.t3-mcp-bridge')?.version + '; ZIP-CRC und SQLite-SHA-256 stimmten. Nach Neustart wurde Ticket "' + originalTitle + '" aus dem Snapshot wiederhergestellt, Run ' + runId + ' samt T3-Thread ' + knownThreadId + ' abgeglichen und der zusätzliche T3-Lauf ' + lateExternal.thread_id + ' einzeln registriert. Neue Starts erhielten recovery_inventory_required; drei begründete Entscheidungen lösten anschließend das Gate.',
+      'Backup ' + backupId + ' enthielt App-Schema ' + backup.manifest.schema_version + ', Linknotizen ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.link-notes')?.version + ' und T3-Bridge ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.t3-mcp-bridge')?.version + '; ZIP-CRC und SQLite-SHA-256 stimmten. Nach Neustart wurde Ticket "' + originalTitle + '" aus dem Snapshot wiederhergestellt, Run ' + runId + ' samt T3-Thread ' + knownThreadId + ' abgeglichen und der zusätzliche T3-Lauf ' + lateExternal.thread_id + ' einzeln registriert. Neue Starts erhielten recovery_inventory_required; bekannte und unbekannte externe Aktivität hielten Plugin ' + bridgePluginId + ' im Drain, bis alle drei begründeten Entscheidungen das Gate lösten.',
       { t3: journal },
     );
   } finally {

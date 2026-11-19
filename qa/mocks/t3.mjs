@@ -282,13 +282,16 @@ function callTool(namespace, name, args, scenario) {
     const runs = Object.entries(state.runs)
       .filter(([, run]) => run.threadId === args.threadId)
       .map(([runId, run]) => ({ runId, status: scenario === 'unknown_run_state' ? 'future_unknown_state' : run.status, ...(run.pendingInput ? { pendingInput: run.pendingInput } : {}) }));
-    return { result: toolResult({
+    const thread = {
       threadId: args.threadId,
       projectId: launchEntry?.response.projectId ?? externalActivity.externalProjectId,
-      providerInstanceId: 'qa-inherited-provider',
-      model: 'qa-inherited-model',
       runs,
-    }) };
+    };
+    if (scenario !== 'reference_missing_model') {
+      thread.providerInstanceId = 'qa-inherited-provider';
+      thread.model = 'qa-inherited-model';
+    }
+    return { result: toolResult(thread) };
   }
   if (name === 't3_thread_send') {
     const key = `${namespace}:${args.clientRequestId}`;
@@ -366,6 +369,41 @@ function externalActivity(body) {
 
 async function mcpRequest(request, response) {
   noStore(response);
+  const pathname = pathOf(request);
+  if (pathname === '/mcp' && request.method === 'DELETE') {
+    const namespace = namespaceFor(request.headers.authorization);
+    const sessionId = request.headers['mcp-session-id'];
+    const version = request.headers['mcp-protocol-version'];
+    const entry = {
+      method: 'session_terminate',
+      request_id: null,
+      tool: null,
+      auth_namespace: namespace,
+      session_id: typeof sessionId === 'string' ? sessionId : null,
+      protocol_version: typeof version === 'string' ? version : null,
+      arguments_hash: null,
+    };
+    if (!namespace) {
+      appendJournal({ ...entry, outcome: 'unauthorized' });
+      return sendJson(response, 401, { error: { message: 'Fixture OAuth bearer required.' } });
+    }
+    const activeSession = state.sessions[sessionId];
+    if (!activeSession || activeSession.namespace !== namespace || version !== activeSession.protocolVersion) {
+      appendJournal({ ...entry, outcome: 'invalid_session' });
+      return sendJson(response, 404, { error: { message: 'Unknown or expired MCP session.' } });
+    }
+    delete state.sessions[sessionId];
+    appendJournal({ ...entry, outcome: 'terminated' });
+    persist();
+    response.writeHead(202);
+    response.end();
+    return;
+  }
+  if (pathname === '/mcp' && request.method === 'GET') {
+    response.writeHead(405, { Allow: 'POST, DELETE' });
+    response.end();
+    return;
+  }
   const body = await readJson(request);
   const namespace = namespaceFor(request.headers.authorization);
   const sessionId = request.headers['mcp-session-id'];
@@ -380,7 +418,7 @@ async function mcpRequest(request, response) {
     arguments_hash: body?.params?.arguments ? hash(body.params.arguments) : null,
   };
 
-  if (request.method !== 'POST' || pathOf(request) !== '/mcp') {
+  if (request.method !== 'POST' || pathname !== '/mcp') {
     recordUnexpected({ ...entry, http_method: request.method, path: pathOf(request) });
     return sendJson(response, 404, { error: { message: 'Unknown MCP endpoint.' } });
   }

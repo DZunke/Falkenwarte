@@ -143,10 +143,13 @@
         "A12",
         "A29"
       ],
-      "fault_ids": [],
+      "fault_ids": [
+        "reference_missing_model"
+      ],
       "expected_flow": [
         "Echter MCP-Client initialisiert und startet mit nativen Argumenten.",
-        "T3-Abschluss ist noch keine menschliche Ticketabnahme."
+        "T3-Abschluss ist noch keine menschliche Ticketabnahme.",
+        "Fehlende T3-Referenzdaten invalidieren das Ausführungsziel ohne stillen Wechsel."
       ]
     },
     {
@@ -298,10 +301,12 @@
         "A18"
       ],
       "fault_ids": [
-        "lost_reply_after_accept"
+        "run_pending"
       ],
       "expected_flow": [
-        "Deaktivierung respektiert offene Aufträge und bewahrt Historie."
+        "Owner aktiviert Linknotizen über die Oberfläche; UI-Beitrag und MCP-Werkzeuge erscheinen gemeinsam.",
+        "Notizen werden über Browser und MCP gelesen und geändert; Historie bleibt nach Deaktivierung lesbar und ist nach Reaktivierung wieder nutzbar.",
+        "Eine T3-Bridge im Drain verweigert neue Runs, lässt aktive Ausführung beobachtbar und bleibt bei aktiven Abhängigkeiten oder ungeklärter externer Arbeit im Drain."
       ]
     },
     {
