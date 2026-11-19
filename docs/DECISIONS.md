@@ -1,6 +1,6 @@
 # Architekturentscheidungen
 
-**Status:** Für Konzeptfassung 2.0 entschieden; Implementierungsnachweise sind noch offen. **Datum:** 19. November 2026.
+**Status:** Für Konzeptfassung 2.0 entschieden; der aktuelle Umsetzungs- und Abnahmenachweis steht in [Traceability](TRACEABILITY.md). **Datum:** 19. November 2026.
 
 Jedes ADR beschreibt eine konkrete Richtungsentscheidung. Eine spätere Änderung erhält ein neues ADR und verweist auf das ersetzte Dokument. Implementierungsdetails können innerhalb dieser Grenzen fortentwickelt werden.
 

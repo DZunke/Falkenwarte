@@ -1,6 +1,6 @@
 # Falkenwarte: öffentliche Verträge
 
-Diese Dateien sind der **umsetzbare Vertragsentwurf**, keine bereits laufende Anwendung. `openapi.yaml` ist die kanonische JSON-HTTP-API; `mcp-tools.json` beschreibt die öffentliche MCP-Toolauswahl. Beide Adapter rufen dieselben Application-Handler auf. Das Frontend verwendet einen daraus generierten, typisierten API-Client und hält Fachregeln im Backend.
+Diese Dateien sind der kanonische Laufzeitvertrag der Falkenwarte-Anwendung. `openapi.yaml` steuert die HTTP-Routen und Drahtformate; `mcp-tools.json` beschreibt die öffentliche MCP-Toolauswahl. HTTP und MCP rufen dieselben Application-Handler auf, und das Frontend verwendet einen daraus generierten, typisierten API-Client. Ob die fachlichen Ergebnisse bereits vollständig belegt sind, steht getrennt im [Traceability-Bericht](../docs/TRACEABILITY.md).
 
 ## Dateien
 
@@ -11,7 +11,7 @@ Diese Dateien sind der **umsetzbare Vertragsentwurf**, keine bereits laufende An
 | `schemas/` | JSON Schema 2020-12 für Domain-/Action-/UI-Events, Pluginmanifest, Intake-Receipt, Klassifikationsnachweis und Link-Collections |
 | `examples/` | Konkrete, syntaktisch und gegen die Schemas geprüfte Beispiele mit illustrativen IDs und Referenzen |
 
-Die aktuelle Fassung enthält 110 HTTP-Pfade, 144 Operationen, 201 Komponentenschemas und 35 MCP-Tools. Viele Operationen sind einfache Konfigurations- und Lesewege. Diese Anzahl ist keine Umsetzungspflicht für eine einzelne erste Iteration; der Projektplan bestimmt die Reihenfolge. Der vereinbarte Gesamtumfang bleibt über die Verträge vollständig erreichbar.
+Die aktuelle Fassung enthält 114 HTTP-Pfade, 151 Operationen, 210 Komponentenschemas und 35 MCP-Tools. `php scripts/check-contracts.php` prüft OpenAPI-Referenzen, MCP-Zuordnungen und Vertragsbeispiele; diese statische Prüfung ersetzt keine Browser- oder gehostete Abnahme.
 
 ## Zuständigkeit und Schreibrechte
 

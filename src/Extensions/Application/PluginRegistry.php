@@ -73,6 +73,15 @@ final class PluginRegistry implements PluginManifestReader
         return 'enabled' === $this->state($pluginId) && $this->dependenciesSatisfied($pluginId);
     }
 
+    public function allowsDrainCancellation(string $pluginId): bool
+    {
+        if (!$this->has($pluginId) || 'draining' !== $this->state($pluginId) || !$this->dependenciesSatisfied($pluginId)) {
+            return false;
+        }
+
+        return 'request_cancel' === ($this->store->find('plugins', $pluginId)['drain_policy'] ?? null);
+    }
+
     public function supports(string $pluginId, string $capabilityName): bool
     {
         return isset($this->capabilities[$pluginId][$capabilityName]);

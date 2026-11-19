@@ -66,10 +66,11 @@ test('A17 Linknotizen bleiben über Browser, API und MCP verfügbar und behalten
   await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}`);
   await expect(ownerPage.getByRole('heading', { name: task.title })).toBeVisible();
   await ownerPage.getByRole('tab', { name: 'Linknotizen' }).click();
-  await ownerPage.getByLabel('Ticketlink').click();
+  const notesPanel = ownerPage.getByRole('tabpanel', { name: 'Linknotizen' });
+  await notesPanel.getByLabel('Ticketlink').click();
   await ownerPage.getByRole('option', { name: 'Abnahmekonzept', exact: true }).click();
   const originalNote = 'Diese Referenz enthält die fachlichen Prüfpunkte für die nächste Abnahme.';
-  await ownerPage.getByLabel('Notiz').fill(originalNote);
+  await notesPanel.getByRole('textbox', { name: 'Notiz', exact: true }).fill(originalNote);
   await ownerPage.getByRole('button', { name: 'Ergänzen', exact: true }).click();
   await expect(ownerPage.getByText(originalNote, { exact: true })).toBeVisible();
 
@@ -153,7 +154,12 @@ async function createT3Connection(ownerApi, ownerPage, baseURL, qaMocks, name) {
   await ownerPage.reload();
   await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
   await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
-  await expect.poll(async () => (await ownerApi.get(`/connections/${connection.id}/check`)).data?.status, { timeout: 45_000 }).toBe('succeeded');
+  await expect.poll(async () => {
+    const check = await ownerApi.get(`/connections/${connection.id}/check`);
+    return check.response.status() === 200
+      ? [check.data.network, check.data.authentication, check.data.mcp_handshake, check.data.capabilities].join(':')
+      : null;
+  }, { timeout: 45_000 }).toBe('ok:ok:ok:ok');
   return readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.health === 'ready' && item.auth_status === 'valid', 'Die Verbindung und Fähigkeiten müssen bereit sein.');
 }
 
@@ -212,7 +218,6 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
   const activeRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id) && Boolean(run.attempts[0]?.external_dispatch_run_id), 'Der Mock-T3-Auftrag muss aktiv und von außen beobachtbar sein.');
   expect(activeRun.snapshot.project_binding_id).toBe(bindingA.id);
   expect(activeRun.snapshot.bridge_plugin_id).toBe(T3_BRIDGE);
-  const external = { threadId: activeRun.attempts[0].external_thread_id, runId: activeRun.attempts[0].external_dispatch_run_id };
 
   const dependent = await ownerApi.get(`/plugins/${QA_DEPENDENT}`);
   expect(dependent.response.status(), JSON.stringify(dependent.data)).toBe(200);
@@ -232,7 +237,12 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
   await ownerPage.goto('/#/plugins');
   await ownerPage.getByRole('button').filter({ hasText: T3_BRIDGE }).click();
   await expect(ownerPage.getByText('Lässt aktive Arbeit auslaufen', { exact: true })).toBeVisible();
-  await expect(ownerPage.getByText('Aktive Aufträge', { exact: true })).toBeVisible();
+  await expect(ownerPage.getByText('Aktive Aufträge', { exact: true }).locator('..')).toContainText('1');
+  await expect(ownerPage.getByText('Wartende Arbeit', { exact: true }).locator('..')).toContainText('0');
+  await expect(ownerPage.getByText('Ungeklärte externe Aktivitäten', { exact: true }).locator('..')).toContainText('0');
+  await expect(ownerPage.getByText(/abhängigen Erweiterungen.*QA: Abhängiges Bridge-Plugin/)).toBeVisible();
+  await ownerPage.getByRole('button', { name: 'Drain erneut prüfen', exact: true }).click();
+  bridge = await readUntil(ownerApi, `/plugins/${T3_BRIDGE}`, (plugin) => plugin.state === 'draining' && plugin.active_run_count === 1, 'Der Browser-Drain darf einen extern aktiven Run nicht als beendet werten.');
 
   const blockedTask = (await ownerApi.get(`/tasks/${taskB.id}`)).data;
   const blockedStart = await ownerApi.post(`/tasks/${taskB.id}/runs`, {
@@ -245,11 +255,22 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
   const launchJournal = await qaMocks.t3Journal();
   expect(launchJournal.accepted_launches).toHaveLength(1);
 
-  await qaMocks.completeExternalT3Activity({ ...external, status: 'failed' });
-  const endedRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'failed', 'Der aktive Run muss trotz Bridge-Drain extern beobachtet und abgeschlossen werden.');
-  expect(endedRun.snapshot.bridge_plugin_id).toBe(T3_BRIDGE);
   bridge = (await ownerApi.get(`/plugins/${T3_BRIDGE}`)).data;
-  expect(bridge.state).toBe('draining');
+  const cancelRequest = await ownerApi.post(`/plugins/${T3_BRIDGE}/drain`, {
+    policy: 'request_cancel',
+    reason: 'A18 fordert den bestätigten T3-Abbruch für bereits gestartete Provider-Runs an.',
+  }, { version: bridge.version });
+  expect(cancelRequest.response.status(), JSON.stringify(cancelRequest.data)).toBe(202);
+  const endedRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'cancelled', 'Der T3-Abbruch darf erst nach externer Beobachtung als beendet gelten.');
+  expect(endedRun.snapshot.bridge_plugin_id).toBe(T3_BRIDGE);
+  const cancelJournal = await qaMocks.t3Journal();
+  const cancelToolIndex = cancelJournal.requests.findIndex((entry) => entry.tool === 't3_thread_interrupt');
+  const observationToolIndex = cancelJournal.requests.findIndex((entry, index) => index > cancelToolIndex && entry.tool === 't3_thread_read');
+  expect(cancelToolIndex).toBeGreaterThanOrEqual(0);
+  expect(observationToolIndex).toBeGreaterThan(cancelToolIndex);
+
+  bridge = await readUntil(ownerApi, `/plugins/${T3_BRIDGE}`, (plugin) => plugin.state === 'disabled', 'Nach externer Beobachtung des T3-Endes muss der Drain automatisch abschließen.');
+  await expect(ownerPage.getByRole('button', { name: 'Deaktivieren', exact: true })).toBeDisabled();
   const blockedDeactivate = await ownerApi.post(`/plugins/${T3_BRIDGE}/deactivate`, {
     reason: 'A18 Abhängigkeitsschutz prüfen.',
   }, { version: bridge.version });
@@ -270,25 +291,19 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
   await readUntil(ownerApi, `/plugins/${QA_DEPENDENT}`, (plugin) => plugin.state === 'installed_disabled', 'Die Abhängigkeit muss deaktiviert bleiben.');
 
   bridge = (await ownerApi.get(`/plugins/${T3_BRIDGE}`)).data;
-  const finishDrain = await ownerApi.post(`/plugins/${T3_BRIDGE}/drain`, {
-    policy: 'finish_active',
-    reason: 'A18 bestätigt den Drain nach beobachtetem externem Abschluss.',
-  }, { version: bridge.version });
-  expect(finishDrain.response.status(), JSON.stringify(finishDrain.data)).toBe(202);
-  bridge = await readUntil(ownerApi, `/plugins/${T3_BRIDGE}`, (plugin) => plugin.state === 'disabled', 'Die Bridge darf nach geklärtem aktivem Run aus dem Drain gehen.');
   const deactivation = await ownerApi.post(`/plugins/${T3_BRIDGE}/deactivate`, {
     reason: 'A18 Bridge nach bestätigtem Drain deaktivieren.',
   }, { version: bridge.version });
   expect(deactivation.response.status(), JSON.stringify(deactivation.data)).toBe(202);
   await readUntil(ownerApi, `/plugins/${T3_BRIDGE}`, (plugin) => plugin.state === 'installed_disabled', 'Die Bridge muss nach erfolgreichem Drain deaktiviert sein.');
   const finalRun = (await ownerApi.get(`/runs/${runId}`)).data;
-  expect(finalRun.state).toBe('failed');
+  expect(finalRun.state).toBe('cancelled');
   expect(finalRun.snapshot.bridge_plugin_id).toBe(T3_BRIDGE);
   expect((await qaMocks.t3Journal()).accepted_launches).toHaveLength(1);
 
   recordEvidence(
-    'A18: Die Bridge nimmt während Drain keine neuen Starts an, lässt aktive externe Arbeit beobachtbar und verhindert Deaktivierung solange ein anderes Plugin von ihr abhängt.',
-    `T3 Run ${runId} blieb mit snapshot.bridge_plugin_id=${finalRun.snapshot.bridge_plugin_id} unter der Bridge-Zuordnung beobachtbar. Während state=draining erhielt der zweite Projektstart capability_unavailable; der Mock verzeichnete weiter nur einen Start. Externes T3-Ende failed wurde gelesen, die aktive Arbeit blieb bis zum erneuten Drain sichtbar. Deaktivierung mit aktivem dependent Plugin erhielt plugin_dependency_active. Erst nach dessen Drain konnte die Bridge deaktiviert werden.`,
-    { t3: await qaMocks.t3Journal() },
+    'A18: Die Bridge nimmt während Drain keine neuen Starts an, fordert bei request_cancel einen externen Abbruch an, wartet die T3-Beobachtung ab und berücksichtigt aktive Abhängigkeiten.',
+    `T3 Run ${runId} blieb mit snapshot.bridge_plugin_id=${finalRun.snapshot.bridge_plugin_id} der Bridge zugeordnet. Der zweite Projektstart erhielt während state=draining capability_unavailable. Der Browser zeigte aktive Aufträge=1, wartende Arbeit=0, ungeklärte externe Aktivitäten=0 und den Namen des abhängigen QA-Plugins; „Drain erneut prüfen“ ließ den Run offen. Die explizite request_cancel-Policy führte zu t3_thread_interrupt; erst das nachfolgende t3_thread_read bestätigte cancelled und gab den Drain frei. Deaktivierung mit aktiver Abhängigkeit erhielt plugin_dependency_active; erst nach ihrem Drain konnte die Bridge deaktiviert werden.`,
+    { t3: cancelJournal },
   );
 });

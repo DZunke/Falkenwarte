@@ -17,6 +17,7 @@ final class PluginHandler
         private readonly Store $store,
         private readonly ExtensionPersistence $extensions,
         private readonly PluginRegistry $registry,
+        private readonly ProviderRunDrainPort $runDrain,
         private readonly PluginEventDispatcher $events,
         private readonly LinkNoteRepository $linkNotes,
     ) {
@@ -74,7 +75,7 @@ final class PluginHandler
             return;
         }
 
-        $plugin = $this->plugin($pluginId);
+        $plugin = $this->requireInstalledPlugin($pluginId);
         if ('plugin.activate' === $kind && 'enabling' === $plugin['state']) {
             $plugin['state'] = 'enabled';
             $plugin['last_safe_state'] = 'enabled';
@@ -95,6 +96,20 @@ final class PluginHandler
             }
 
             $this->store->save('plugins', $plugin, 'PluginActivationChanged');
+        }
+    }
+
+    public function completeCancellationDrains(): void
+    {
+        foreach ($this->store->all('plugins') as $plugin) {
+            if ('draining' !== ($plugin['state'] ?? null) || 'request_cancel' !== ($plugin['drain_policy'] ?? null)) {
+                continue;
+            }
+            $id = $plugin['id'];
+            if (0 === array_sum($this->activeWorkCounts($id))) {
+                // Recheck state and outstanding work under the writer lock before completing the drain.
+                $this->store->atomic(fn () => $this->work('plugin.drain', ['plugin_id' => $id]));
+            }
         }
     }
 
@@ -179,6 +194,9 @@ final class PluginHandler
         $plugin['pending_job_count'] = $counts['jobs'];
         $plugin['unresolved_external_activity_count'] = $counts['external'];
         $plugin = $this->store->save('plugins', $plugin, 'PluginActivationChanged');
+        if ('request_cancel' === $body['policy']) {
+            $this->runDrain->requestCancelForProvider($pluginId, trim((string) $body['reason']));
+        }
         $this->store->enqueue('plugin.drain', ['plugin_id' => $pluginId, 'policy' => $body['policy']]);
 
         return $this->store->accepted([
@@ -249,7 +267,9 @@ final class PluginHandler
             'values' => array_replace($this->defaultSettings($manifest['settings_schema']), $values),
             'redacted_fields' => [],
         ];
-        $this->store->save('plugin_configurations', $configuration, 'PluginConfigurationChanged');
+        $config = $this->store->save('plugin_configurations', $configuration, 'PluginConfigurationChanged');
+        $plugin['configuration_version'] = $config['version'];
+        $this->store->save('plugins', $plugin, 'PluginConfigurationChanged');
 
         return $this->plugin($pluginId);
     }
@@ -452,7 +472,13 @@ final class PluginHandler
             throw new Problem(404, 'resource_not_found', 'The requested plugin is not installed.');
         }
 
-        return $this->plugin($pluginId);
+        $view = $this->plugin($pluginId);
+        $stored = $this->store->find('plugins', $pluginId);
+
+        // The installed manifest already exposes revision 1 before the first mutation.
+        return null === $stored
+            ? $this->store->save('plugins', $view, 'PluginDiscovered')
+            : $view + $stored;
     }
 
     private function plugin(string $pluginId): array

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Shared\Infrastructure;
 
 use App\Extensions\Application\PluginEventDispatcher;
+use App\Extensions\Application\PluginHandler;
 use App\Live\Infrastructure\Live;
 use App\Orchestration\Application\RunHandler;
 use App\Shared\Application\Actor;
@@ -18,7 +19,7 @@ use Symfony\Component\Messenger\MessageBusInterface;
 #[AsCommand(name: 'app:maintenance', description: 'Dauerhafte Commands zustellen und private UI-Updates veröffentlichen')]
 final class MaintenanceCommand extends Command
 {
-    public function __construct(private readonly DbalStoreAccess $store, private readonly MessageBusInterface $bus, private readonly Live $live, private readonly RunHandler $runs, private readonly PluginEventDispatcher $pluginEvents)
+    public function __construct(private readonly DbalStoreAccess $store, private readonly MessageBusInterface $bus, private readonly Live $live, private readonly RunHandler $runs, private readonly PluginEventDispatcher $pluginEvents, private readonly PluginHandler $plugins)
     {
         parent::__construct();
     }
@@ -51,6 +52,7 @@ final class MaintenanceCommand extends Command
             if (time() >= $nextPluginDispatch) {
                 try {
                     $this->pluginEvents->dispatch();
+                    $this->plugins->completeCancellationDrains();
                 } catch (\Throwable $e) {
                     $nextPluginDispatch = time() + 5;
                     $output->writeln('Plugin-Ereignisse warten: '.$e->getMessage());

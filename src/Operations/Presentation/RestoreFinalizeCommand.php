@@ -99,6 +99,9 @@ final class RestoreFinalizeCommand extends Command
         if (1 !== preg_match('/^[a-f0-9]{64}$/i', $marker['database_sha256'])) {
             throw new \RuntimeException('Der Datenbank-Prüfwert im Wiederherstellungsnachweis ist ungültig.');
         }
+        if (isset($marker['action_id']) && (!is_string($marker['action_id']) || 1 !== preg_match('/^[a-f0-9-]{36}$/i', $marker['action_id']))) {
+            throw new \RuntimeException('Die Action-ID im Wiederherstellungsnachweis ist ungültig.');
+        }
     }
 
     private function validateFailureMarker(mixed $marker): void
@@ -115,7 +118,8 @@ final class RestoreFinalizeCommand extends Command
         if (1 !== preg_match('/^[a-f0-9-]{36}$/i', $marker['request_id'])
             || 1 !== preg_match('/^[a-f0-9-]{36}$/i', $marker['backup_id'])
             || 1 !== preg_match('/^[a-f0-9]{64}$/i', $marker['database_sha256'])
-            || ($marker['exchange_started'] ?? null) !== false) {
+            || ($marker['exchange_started'] ?? null) !== false
+            || (isset($marker['action_id']) && (!is_string($marker['action_id']) || 1 !== preg_match('/^[a-f0-9-]{36}$/i', $marker['action_id'])))) {
             throw new \RuntimeException('Der Restore-Fehlernachweis enthält ungültige Identitäten oder einen unklaren Austauschstatus.');
         }
     }

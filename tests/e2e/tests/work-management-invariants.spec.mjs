@@ -223,9 +223,11 @@ test('A14 a stale Ticket Sheet save reports the conflict and loads the latest se
   const original = await readTask(ownerApi, task.id);
   const parallel = await ownerApi.patch(`/tasks/${task.id}`, { title: 'Aktueller Stand vom zweiten Client' }, { version: original.version });
   expect(parallel.response.status(), JSON.stringify(parallel.data)).toBe(200);
+  await expect(ownerPage.getByText(new RegExp(`Ticket · Version ${parallel.data.version} ·`))).toBeVisible();
 
   await ownerPage.getByRole('button', { name: 'Änderungen speichern', exact: true }).click();
   await expect(ownerPage.getByRole('alert')).toContainText('Der aktuelle Ticketstand wurde neu geladen');
+  await expect(ownerPage.getByLabel('Titel', { exact: true })).toHaveValue('Veralteter Formularentwurf');
   await expect.poll(async () => (await readTask(ownerApi, task.id)).title).toBe('Aktueller Stand vom zweiten Client');
   await ownerPage.getByRole('button', { name: 'Formular mit aktuellem Stand laden' }).click();
   await expect(ownerPage.getByLabel('Titel', { exact: true })).toHaveValue('Aktueller Stand vom zweiten Client');

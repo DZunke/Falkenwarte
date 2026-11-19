@@ -144,14 +144,29 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
       reason: 'A20 prüft den echten Supervisor-Restore und die anschließende T3-Inventur.',
     }, { version: backup.version });
     expect(restoreRequest.response.status(), JSON.stringify(restoreRequest.data)).toBe(202);
+    expect(restoreRequest.data.action_url).toBe(`/api/v1/actions/${restoreRequest.data.action_id}`);
+    const restoreActionId = restoreRequest.data.action_id;
 
     await expect.poll(async () => {
       try {
-        return (await ownerApi.context.get('/healthz', { timeout: 4_000 })).status();
+        const response = await ownerApi.get('/backups/' + backupId);
+        return response.response.status() === 200 && response.data.status === 'ready';
       } catch {
-        return 0;
+        return false;
       }
-    }, { timeout: 120_000, intervals: [500, 1000, 2000, 4000] }).toBe(200);
+    }, { timeout: 120_000, intervals: [500, 1000, 2000, 4000], message: 'Der Backupauftrag wird erst nach erfolgreichem Supervisor-Neustart und Restore-Abgleich wieder bereit.' }).toBe(true);
+    expect((await ownerApi.context.get('/healthz')).status()).toBe(200);
+    let restoreAction;
+    await expect.poll(async () => {
+      try {
+        const response = await ownerApi.get('/actions/' + restoreActionId);
+        restoreAction = response.data;
+        return response.response.status() === 200;
+      } catch {
+        return false;
+      }
+    }, { timeout: 15_000 }).toBe(true);
+    expect(restoreAction).toMatchObject({ id: restoreActionId, type: 'backups_restore', status: 'succeeded', result: { resource_type: 'backup', id: backupId } });
 
     let inventory;
     await expect.poll(async () => {
@@ -166,6 +181,8 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     expect(unlistedEntry).toMatchObject({ status: 'owner_review_required', external_project_id: 'qa-t3-project-1' });
 
     const bridgePluginId = 'falkenwarte.t3-mcp-bridge';
+    expect(knownEntry.bridge_plugin_id).toBe(bridgePluginId);
+    expect(unlistedEntry.bridge_plugin_id).toBe(bridgePluginId);
     let bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
     const startDrain = await ownerApi.post('/plugins/' + bridgePluginId + '/drain', {
       policy: 'finish_active',
@@ -189,7 +206,7 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     expect(blockedStart.data.code).toBe('recovery_inventory_required');
 
     await ownerPage.goto('/#/settings');
-    await expect(ownerPage.getByRole('heading', { name: 'T3-Abgleich nach Wiederherstellung' })).toBeVisible();
+    await expect(ownerPage.getByText('T3-Abgleich nach Wiederherstellung', { exact: true })).toBeVisible();
     await expect(ownerPage.getByText('Inventur erforderlich · neue Starts sind gesperrt')).toBeVisible();
     await expect(ownerPage.getByText(/Grund: A20 prüft den echten Supervisor-Restore und die anschließende T3-Inventur\./)).toBeVisible();
     await ownerPage.locator('#recovery-confirm-reason').fill('Bekannter Backup-Run und später gestarteter T3-Run sind geklärt; das T3-Projektjournal wurde vollständig geprüft.');
@@ -204,7 +221,7 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
 
     await ownerPage.locator('#recovery-project').click();
     await ownerPage.getByRole('option', { name: project.name }).click();
-    await expect(ownerPage.getByText(/qa-t3-project-1/)).toBeVisible();
+    await expect(ownerPage.getByText('qa-t3-project-1', { exact: true })).toBeVisible();
     await ownerPage.locator('#recovery-thread-id').fill(lateExternal.thread_id);
     await ownerPage.locator('#recovery-run-id').fill(lateExternal.run_id);
     await ownerPage.locator('#recovery-registration-reason').fill('Der nach dem Backup in T3 sichtbare Lauf wurde einzeln geprüft und in die Inventur aufgenommen.');
@@ -229,8 +246,9 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     }, { timeout: 30_000, message: 'Auch nach Ende des bekannten Runs muss die unbekannte T3-Aktivität den Drain offen halten.' }).toEqual(['draining', 0, 1]);
 
     await ownerPage.getByRole('button', { name: 'Aktuellen Stand laden' }).click();
-    await expect(knownCard.getByRole('button', { name: 'Eintrag als geklärt markieren' })).toBeEnabled();
+    await expect(knownCard.getByRole('button', { name: 'Eintrag als geklärt markieren' })).toBeDisabled();
     await knownCard.locator(`#recovery-reason-${knownEntry.id}`).fill('Der gespeicherte T3-Run wurde nach dem Restore erneut gelesen und meldet failed; er kann nicht weiterlaufen.');
+    await expect(knownCard.getByRole('button', { name: 'Eintrag als geklärt markieren' })).toBeEnabled();
     await knownCard.getByRole('button', { name: 'Eintrag als geklärt markieren' }).click();
     await expect(knownCard.getByText('Geklärt')).toBeVisible();
 

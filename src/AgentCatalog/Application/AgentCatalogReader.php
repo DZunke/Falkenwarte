@@ -35,4 +35,6 @@ interface AgentCatalogReader
     public function providerIdForConnection(string $connectionId): ?string;
 
     public function providerEnabled(string $bridgePluginId): bool;
+
+    public function providerAllowsDrainCancellation(string $bridgePluginId): bool;
 }

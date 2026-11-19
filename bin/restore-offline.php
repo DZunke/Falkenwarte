@@ -6,7 +6,6 @@ require dirname(__DIR__).'/vendor/autoload.php';
 const MAX_MANIFEST_BYTES = 1048576;
 const COPY_CHUNK_BYTES = 1048576;
 
-/** @var array<string, mixed>|null */
 $GLOBALS['restore_request'] = null;
 $GLOBALS['restore_data_directory'] = null;
 $GLOBALS['restore_temporary_database'] = null;
@@ -39,6 +38,9 @@ function failRestore(string $message): never
             'failure_message' => mb_substr($message, 0, 500),
             'exchange_started' => false,
         ];
+        if (is_string($request['action_id'] ?? null)) {
+            $failure['action_id'] = $request['action_id'];
+        }
         $failurePath = $dataDirectory.'/restore-failure.json';
         $failureTemporary = $failurePath.'.'.bin2hex(random_bytes(8)).'.tmp';
         $handle = fopen($failureTemporary, 'xb');
@@ -305,7 +307,7 @@ function installedPluginManifests(): array
 function extractDatabase(ZipArchive $archive, string $temporaryPath, string $expectedHash, int $maximumBytes): void
 {
     $entry = $archive->statName('database.sqlite');
-    if (!is_array($entry) || (int) ($entry['size'] ?? 0) <= 0 || (int) $entry['size'] > $maximumBytes) {
+    if (!is_array($entry) || $entry['size'] <= 0 || $entry['size'] > $maximumBytes) {
         failRestore('Die Datenbankdatei im Backup hat eine unzulässige Größe.');
     }
 
@@ -380,6 +382,9 @@ foreach (['request_id', 'backup_id'] as $field) {
     if (preg_match('/^[a-f0-9-]{36}$/i', $request[$field]) !== 1) {
         failRestore('Der gespeicherte Wiederherstellungsauftrag enthält eine ungültige ID.');
     }
+}
+if (isset($request['action_id']) && (!is_string($request['action_id']) || preg_match('/^[a-f0-9-]{36}$/i', $request['action_id']) !== 1)) {
+    failRestore('Der gespeicherte Wiederherstellungsauftrag enthält eine ungültige Action-ID.');
 }
 $GLOBALS['restore_request'] = $request;
 if (preg_match('/^[a-f0-9]{64}$/i', $request['database_sha256']) !== 1) {
@@ -537,6 +542,9 @@ $result = [
     'completed_at' => $completedAt,
     'database_sha256' => strtolower((string) $manifest['database_sha256']),
 ];
+if (is_string($request['action_id'] ?? null)) {
+    $result['action_id'] = $request['action_id'];
+}
 writeMarker($resultPath, $result);
 if (is_file($swapPath) && !unlink($swapPath)) {
     failRestore('Der abgeschlossene Restore-Austauschmarker konnte nicht entfernt werden.');

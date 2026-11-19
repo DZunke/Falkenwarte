@@ -450,18 +450,52 @@ test('A26 Decisions refusal, limited retry, and exhausted transport stay disting
     expect(failed.structuredContent.outcome).toBe('classification_unavailable');
     expect(failed.structuredContent.human_attention.required).toBe(true);
 
+    const malformedResults = [];
+    for (const scenario of ['decisions_invalid_answer_type', 'decisions_partial_answers', 'decisions_unknown_answer']) {
+      await qaMocks.setDecisionsScenario(scenario);
+      const malformed = await submit(`Ungültige Decisions-Antwort ${scenario}`, `qa-malformed-${scenario}-${randomUUID()}`);
+      expect(malformed.isError, JSON.stringify(malformed)).toBe(false);
+      const unavailableResult = malformed.structuredContent.outcome === 'classification_unavailable'
+        ? malformed
+        : await waitForIntake(agent, malformed.structuredContent.task_id, ['classification_unavailable']);
+      expect(unavailableResult.structuredContent.outcome).toBe('classification_unavailable');
+      expect(unavailableResult.structuredContent.human_attention.required).toBe(true);
+      expect(unavailableResult.structuredContent.classification_id).toBeTruthy();
+
+      const classification = await ownerApi.get(`/tasks/${malformed.structuredContent.task_id}/classifications/${unavailableResult.structuredContent.classification_id}`);
+      expect(classification.response.status(), JSON.stringify(classification.data)).toBe(200);
+      expect(classification.data).toMatchObject({
+        outcome: 'classification_unavailable',
+        applied: false,
+        answers: [],
+        failure_code: 'provider_unavailable',
+      });
+      const unchangedTask = await ownerApi.get(`/tasks/${malformed.structuredContent.task_id}`);
+      expect(unchangedTask.response.status()).toBe(200);
+      expect(unchangedTask.data).toMatchObject({
+        intake_outcome: 'classification_unavailable',
+        primary_topic_label_id: null,
+        workflow_label_id: null,
+        classification_id: null,
+      });
+      malformedResults.push({ scenario, classificationId: classification.data.id });
+    }
+
     const journal = await qaMocks.decisionsJournal();
     const refusalCalls = journal.requests.filter((entry) => entry.scenario === 'decisions_refusal');
     const retryCalls = journal.requests.filter((entry) => entry.scenario === 'decisions_429_then_success');
     const exhaustedCalls = journal.requests.filter((entry) => entry.scenario === 'decisions_transport_exhausted');
+    const malformedCalls = journal.requests.filter((entry) => ['decisions_invalid_answer_type', 'decisions_partial_answers', 'decisions_unknown_answer'].includes(entry.scenario));
     expect(refusalCalls.map((entry) => entry.outcome)).toEqual(['http_200']);
     expect(retryCalls.map((entry) => entry.outcome)).toEqual(['http_429', 'http_200']);
     expect(exhaustedCalls.length).toBeGreaterThanOrEqual(2);
     expect(exhaustedCalls.every((entry) => entry.outcome === 'connection_dropped')).toBe(true);
+    expect(malformedCalls).toHaveLength(3);
+    expect(malformedCalls.every((entry) => entry.outcome === 'http_200' && entry.validation_error === null)).toBe(true);
 
     recordEvidence(
-      'Ein typisiertes Refusal führt zu menschlicher Entscheidung, ein HTTP 429 wird innerhalb der konfigurierten Wiederholungen behoben, und ausgeschöpfte Verbindungsversuche enden als classification_unavailable.',
-      `Refusal erreichte needs_human_decision; der Rate-Limit-Aufruf wurde in ${retryCalls.length} Versuchen mit HTTP 429 gefolgt von HTTP 200 abgeschlossen und erreichte ready; der Transportfehler wurde ${exhaustedCalls.length} Mal versucht und blieb classification_unavailable. Alle Antworten waren fachliche Intake-Zustände statt JSON-RPC-Fehler.`,
+      'Typisiertes Refusal, HTTP 429, ausgeschöpfter Transport und nicht verwendbare Decisions-Daten bleiben als getrennte fachliche Zustände sichtbar.',
+      `Refusal erreichte needs_human_decision; der Rate-Limit-Aufruf wurde in ${retryCalls.length} Versuchen mit HTTP 429 gefolgt von HTTP 200 abgeschlossen und erreichte ready; der Transportfehler wurde ${exhaustedCalls.length} Mal versucht und blieb classification_unavailable. Antworttyp, Antwortanzahl und unbekannte Frage-ID endeten über jeweils einen HTTP-200-Aufruf als classification_unavailable ohne angewandte Teilantwort (${malformedResults.map((result) => `${result.scenario}: ${result.classificationId}`).join(', ')}). Alle Fälle blieben fachliche Intake-Zustände statt JSON-RPC-Fehler.`,
       { decisions: journal },
     );
   } finally {
@@ -532,6 +566,104 @@ test('A33 stale Decisions response cannot overwrite a newer ticket revision', as
       'Eine verspätete Antwort bleibt unapplied; ein neuer fachlicher Versuch klassifiziert ausschließlich die aktuellste Ticketrevision.',
       `Die erste Klassifikation für Revision ${beforeChange.data.version} blieb applied=false. Nach der Eigentümeränderung auf Revision ${revised.data.version} wurde ein neuer gültiger Decisions-Aufruf ausgeführt und erreichte ready mit applied=true. Tickettext und Topiclabel der aktuellen Revision blieben erhalten; beide Klassifikationen sind über die öffentliche History und Classification-API prüfbar.`,
       { decisions: { ...decisionsJournal, barrier_observed: heldJournal.requests[0].outcome === 'held_at_barrier' } },
+    );
+  } finally {
+    await simulator.close();
+  }
+});
+
+test('A33 stale Decisions response cannot overwrite newer taxonomy or routing versions', async ({ ownerApi, qaMocks }) => {
+  test.info().annotations.push({ type: 'expected', description: 'Eine verspätete Antwort bleibt auch nach Änderungen an Labeltaxonomie und Workflowroute unverändert unapplied; ein neuer fachlicher Versuch verwendet beide aktuellen Versionen.' });
+  const project = await ownerApi.createProject({ name: 'Veraltete Taxonomie und Route', color: '#887AA8' });
+  const { topic, workflows } = await configureIntake(ownerApi, project, { expectedInformation: false });
+  const simulator = await createAgent(ownerApi, project);
+  try {
+    const labelsBefore = await ownerApi.get(`/projects/${project.id}/labels`);
+    expect(labelsBefore.response.status()).toBe(200);
+    const routingBefore = await ownerApi.get(`/projects/${project.id}/routing-rules`);
+    expect(routingBefore.response.status()).toBe(200);
+    const initialTaxonomyVersion = labelsBefore.data.taxonomy_version;
+    const initialRoutingVersion = routingBefore.data.version;
+
+    await qaMocks.setDecisionsScenario('decisions_delayed');
+    const created = await simulator.agent.call('tasks_create', {
+      client_request_id: `qa-taxonomy-stale-${randomUUID()}`,
+      project_id: project.id,
+      title: 'Taxonomie und Route bleiben am Snapshot gebunden',
+      description: 'Eine noch ausstehende Bewertung darf keine geänderte Label- oder Routendefinition überschreiben.',
+      suggested_label_ids: [topic.id],
+      prefer_wait_ms: 0,
+    });
+    expect(created.isError, JSON.stringify(created)).toBe(false);
+    const initialReceipt = created.structuredContent;
+    expect(initialReceipt.task_id).toBeTruthy();
+    expect(initialReceipt.action_id).toBeTruthy();
+    const taskBeforeChange = await ownerApi.get(`/tasks/${initialReceipt.task_id}`);
+    expect(taskBeforeChange.response.status()).toBe(200);
+
+    await expect.poll(async () => {
+      const journal = await qaMocks.decisionsJournal();
+      return journal.requests.filter((entry) => entry.scenario === 'decisions_delayed' && entry.outcome === 'held_at_barrier').length;
+    }, { timeout: 10_000 }).toBeGreaterThan(0);
+
+    const changedTopic = await ownerApi.patch(`/projects/${project.id}/labels/${topic.id}`, {
+      description: 'Taxonomiesnapshot nach Eingang geändert.',
+    }, { version: topic.version });
+    expect(changedTopic.response.status(), JSON.stringify(changedTopic.data)).toBe(200);
+    const labelsAfter = await ownerApi.get(`/projects/${project.id}/labels`);
+    expect(labelsAfter.response.status()).toBe(200);
+    expect(labelsAfter.data.taxonomy_version).toBe(initialTaxonomyVersion + 1);
+
+    const swappedRules = routingBefore.data.rules.map((rule) => {
+      const nextWorkflow = rule.workflow_id === workflows[0].id ? workflows[1] : workflows[0];
+      return { ...rule, workflow_id: nextWorkflow.id, workflow_definition_version: nextWorkflow.definition_version ?? 1 };
+    });
+    const changedRouting = await ownerApi.put(`/projects/${project.id}/routing-rules`, {
+      rules: swappedRules,
+      on_unresolved: routingBefore.data.on_unresolved,
+    }, { version: routingBefore.data.version });
+    expect(changedRouting.response.status(), JSON.stringify(changedRouting.data)).toBe(200);
+    expect(changedRouting.data.version).toBe(initialRoutingVersion + 1);
+
+    await qaMocks.releaseDecisions();
+    const completed = await waitForIntake(simulator.agent, initialReceipt.task_id, ['ready']);
+    expect(completed.structuredContent.outcome).toBe('ready');
+    const finalIntake = await ownerApi.get(`/tasks/${initialReceipt.task_id}/intake`);
+    expect(finalIntake.response.status()).toBe(200);
+    expect(finalIntake.data.taxonomy_version).toBe(labelsAfter.data.taxonomy_version);
+    expect(finalIntake.data.routing_rules_version).toBe(changedRouting.data.version);
+    const finalTask = await ownerApi.get(`/tasks/${initialReceipt.task_id}`);
+    expect(finalTask.response.status()).toBe(200);
+    expect(finalTask.data.version).toBe(taskBeforeChange.data.version);
+    expect(finalTask.data.label_ids).toContain(topic.id);
+
+    const history = await ownerApi.get(`/history?action_id=${encodeURIComponent(initialReceipt.action_id)}&limit=100`);
+    expect(history.response.status(), JSON.stringify(history.data)).toBe(200);
+    const classificationIds = [...new Set(history.data.items
+      .filter((revision) => revision.resource?.resource_type === 'classification')
+      .map((revision) => revision.resource.id))];
+    const records = await Promise.all(classificationIds.map(async (classificationId) => {
+      const result = await ownerApi.get(`/tasks/${initialReceipt.task_id}/classifications/${classificationId}`);
+      expect(result.response.status(), JSON.stringify(result.data)).toBe(200);
+      return result.data;
+    }));
+    const staleRecord = records.find((record) => record.taxonomy_version === initialTaxonomyVersion && record.routing_rules_version === initialRoutingVersion);
+    const appliedRecord = records.find((record) => record.taxonomy_version === labelsAfter.data.taxonomy_version && record.routing_rules_version === changedRouting.data.version);
+    expect(staleRecord, 'The old taxonomy and routing snapshot must remain inspectable.').toBeTruthy();
+    expect(staleRecord.task_revision).toBe(taskBeforeChange.data.version);
+    expect(staleRecord.applied).toBe(false);
+    expect(appliedRecord).toBeTruthy();
+    expect(appliedRecord.task_revision).toBe(taskBeforeChange.data.version);
+    expect(appliedRecord.applied).toBe(true);
+    expect(appliedRecord.outcome).toBe('ready');
+
+    const decisionsJournal = await qaMocks.decisionsJournal();
+    expect(decisionsJournal.requests.length).toBeGreaterThanOrEqual(2);
+    expect(decisionsJournal.requests.every((entry) => entry.validation_error === null)).toBe(true);
+    recordEvidence(
+      'Eine verspätete Antwort wird anhand der eingefrorenen Label- und Routingversion als überholt gespeichert; die erneute Bewertung wendet nur den aktuellen Snapshot an.',
+      `Während eine Antwort wartete, stieg die Taxonomie von v${initialTaxonomyVersion} auf v${labelsAfter.data.taxonomy_version} und die Route von v${initialRoutingVersion} auf v${changedRouting.data.version}; die Ticketrevision blieb v${taskBeforeChange.data.version}. Der alte Klassifikationsnachweis blieb unapplied, der neue erreichte ready mit applied=true und derselben Ticketrevision.`,
+      { decisions: decisionsJournal },
     );
   } finally {
     await simulator.close();

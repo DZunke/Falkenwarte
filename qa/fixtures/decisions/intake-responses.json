@@ -454,6 +454,21 @@
       },
       "release_barrier": "after_owner_or_taxonomy_change",
       "expected_domain_outcome": "stale_result_not_applied"
+    },
+    {
+      "id": "decisions_invalid_answer_type",
+      "malformed_answers": "invalid_type",
+      "expected_domain_outcome": "classification_unavailable"
+    },
+    {
+      "id": "decisions_partial_answers",
+      "malformed_answers": "partial",
+      "expected_domain_outcome": "classification_unavailable"
+    },
+    {
+      "id": "decisions_unknown_answer",
+      "malformed_answers": "unknown_name",
+      "expected_domain_outcome": "classification_unavailable"
     }
   ]
 }

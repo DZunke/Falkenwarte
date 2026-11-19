@@ -102,6 +102,11 @@ final class StoreAgentCatalogReader implements AgentCatalogReader
         return $this->plugins->enabled($bridgePluginId);
     }
 
+    public function providerAllowsDrainCancellation(string $bridgePluginId): bool
+    {
+        return $this->plugins->allowsDrainCancellation($bridgePluginId);
+    }
+
     /** @return array<string, mixed> */
     private function required(string $type, string $id): array
     {

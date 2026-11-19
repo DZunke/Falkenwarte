@@ -82,6 +82,8 @@ final class BackupHandler
         $this->verifyArchive($id, $manifest);
 
         if (($job['status'] ?? null) === 'ready' && $this->canonicalJson($job['manifest'] ?? []) === $this->canonicalJson($manifest)) {
+            $this->finalizeRestoreAction($marker, $job);
+
             return;
         }
 
@@ -90,6 +92,7 @@ final class BackupHandler
         $job['download_url'] = '/api/v1/backups/'.$id.'/content';
         $job['error'] = null;
         $this->store->save('backups', $job, 'backup.restore_finalized');
+        $this->finalizeRestoreAction($marker, $job);
     }
 
     /** @param array<string, mixed> $marker */
@@ -193,6 +196,7 @@ final class BackupHandler
         $this->store->enqueue('restore.request', [
             'request_id' => $requestId,
             'backup_id' => $id,
+            'action_id' => $this->store->actionId(),
             'database_sha256' => $actualHash,
             'reason' => $job['restore_reason'],
             'requested_by' => $actor->id,
@@ -309,8 +313,62 @@ final class BackupHandler
             'requested_by' => (string) ($payload['requested_by'] ?? ''),
             'requested_at' => (string) ($payload['requested_at'] ?? ''),
         ];
+        if (is_string($payload['action_id'] ?? null) && '' !== $payload['action_id']) {
+            $request['action_id'] = $payload['action_id'];
+        }
 
         $this->writeJsonAtomically($this->restoreRequestPath(), $request);
+    }
+
+    /** @param array<string, mixed> $marker @param array<string, mixed> $backup */
+    private function finalizeRestoreAction(array $marker, array $backup): void
+    {
+        $actionId = $marker['action_id'] ?? null;
+        if (!is_string($actionId) || 1 !== preg_match('/^[a-f0-9-]{36}$/i', $actionId)) {
+            return;
+        }
+        $requestedBy = $this->payloadId($marker, 'requested_by');
+
+        $existing = $this->store->find('actions', $actionId);
+        if (null !== $existing) {
+            if (($existing['type'] ?? null) !== 'backups_restore'
+                || ($existing['status'] ?? null) !== 'succeeded'
+                || ($existing['correlation_id'] ?? null) !== $actionId
+                || ($existing['actor']['id'] ?? null) !== $requestedBy
+                || ($existing['result']['id'] ?? null) !== ($backup['id'] ?? null)) {
+                throw new Problem(409, 'restore_action_conflict', 'Die Restore-Action-ID ist bereits mit einem anderen Auftrag belegt.');
+            }
+
+            return;
+        }
+
+        $requestedAt = (string) ($marker['requested_at'] ?? '');
+        $completedAt = (string) ($marker['completed_at'] ?? '');
+        if ('' === $requestedAt || '' === $completedAt) {
+            throw new Problem(409, 'restore_action_invalid', 'Der Restore-Nachweis enthält keine gültigen Action-Zeitpunkte.');
+        }
+        $resource = [
+            'resource_type' => 'backup',
+            'id' => $backup['id'],
+            'version' => $backup['version'],
+            'url' => '/api/v1/backups/'.$backup['id'],
+        ];
+        $this->store->context(new Actor($requestedBy, true), $actionId);
+        $this->store->save('actions', [
+            'id' => $actionId,
+            'type' => 'backups_restore',
+            'status' => 'succeeded',
+            'actor' => (new Actor($requestedBy, true))->ref(),
+            'project_id' => null,
+            'correlation_id' => $actionId,
+            'causation_id' => null,
+            'target' => null,
+            'result' => $resource,
+            'error' => null,
+            'accepted_at' => $requestedAt,
+            'started_at' => $requestedAt,
+            'finished_at' => $completedAt,
+        ], 'action.succeeded');
     }
 
     /** @param array<string, mixed> $manifest */

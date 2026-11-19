@@ -64,6 +64,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const [priority, setPriority] = useState<Task['priority']>('normal')
   const [labelIds, setLabelIds] = useState<string[]>([])
   const [criteriaText, setCriteriaText] = useState('')
+  const [editBaseVersion, setEditBaseVersion] = useState<number>()
   const [linkForm, setLinkForm] = useState(false)
   const [collectionName, setCollectionName] = useState('Ergebnisse')
   const [collectionKind, setCollectionKind] = useState<'source' | 'delivery' | 'reference'>('delivery')
@@ -107,11 +108,35 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
     await onChanged()
   }
 
+  const beginTaskEdit = () => {
+    if (!task) return
+    setEditBaseVersion(task.version)
+    setEditing(true)
+  }
+
+  const rebaseTaskEdit = () => {
+    if (!task) return
+    setEditBaseVersion(task.version)
+    setSaveConflict('')
+  }
+
+  const reloadTaskEdit = () => {
+    if (!task) return
+    setEditBaseVersion(task.version)
+    setTitle(task.title)
+    setDescription(task.description)
+    setPriority(task.priority)
+    setLabelIds(task.label_ids)
+    setCriteriaText(task.criteria.map((criterion) => criterion.text).join('\n'))
+    setSaveConflict('')
+  }
+
   const saveTask = useMutation({
     mutationFn: async () => {
       if (!task) throw new Error('Das Ticket ist nicht geladen.')
+      if (editBaseVersion === undefined) throw new Error('Die Bearbeitungsversion ist nicht verfügbar. Öffne das Formular erneut.')
       const updated = await request(api.PATCH('/tasks/{task_id}', {
-        params: { path: { task_id: task.id }, ...mutationParams(task.version) },
+        params: { path: { task_id: task.id }, ...mutationParams(editBaseVersion) },
         body: { title: title.trim(), description, priority, label_ids: labelIds },
       }))
       const existing = new Map(task.criteria.map((criterion) => [criterion.text, criterion]))
@@ -127,7 +152,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
       }
       return updated
     },
-    onSuccess: async () => { setEditing(false); setSaveConflict(''); await invalidate(); toast.success('Ticket gespeichert') },
+    onSuccess: async () => { setEditing(false); setEditBaseVersion(undefined); setSaveConflict(''); await invalidate(); toast.success('Ticket gespeichert') },
     onError: async (error) => { setSaveConflict('Der aktuelle Ticketstand wurde neu geladen. Deine Eingaben sind im Formular erhalten. Prüfe den angezeigten Stand und speichere erneut, wenn deine Änderung weiter gilt.'); toast.error(formatError(error)); await invalidate() },
   })
 
@@ -257,7 +282,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                 <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="font-mono">{task.key}</span><span>·</span><span>{project.name}</span></div>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1"><SheetTitle className="text-xl leading-7">{task.title}</SheetTitle><SheetDescription className="mt-2">Ticket · Version {task.version} · {task.origin === 'manual' ? 'Von dir angelegt' : `Eingang über ${task.origin === 'mcp' ? 'MCP' : 'technische API'}`}</SheetDescription></div>
-                  <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Bearbeiten</Button>
+                  <Button size="sm" variant="outline" onClick={beginTaskEdit}>Bearbeiten</Button>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Select value={task.status_id} onValueChange={(statusId) => moveTask.mutate(statusId)}><SelectTrigger aria-label="Ticketstatus" className="h-8 w-auto min-w-36 text-xs"><SelectValue placeholder="Status" /></SelectTrigger><SelectContent>{statuses.map((status) => <SelectItem key={status.id} value={status.id}>{status.name}</SelectItem>)}</SelectContent></Select>
@@ -307,7 +332,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
         </SheetContent>
       </Sheet>
 
-      <Dialog open={editing} onOpenChange={(open) => { setEditing(open); if (!open) setSaveConflict('') }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Ticket bearbeiten</DialogTitle><DialogDescription>Änderungen erzeugen eine neue Version und werden im Verlauf festgehalten.</DialogDescription></DialogHeader>{saveConflict && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p>{saveConflict}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => { if (!task) return; setTitle(task.title); setDescription(task.description); setPriority(task.priority); setLabelIds(task.label_ids); setCriteriaText(task.criteria.map((criterion) => criterion.text).join('\n')); setSaveConflict('') }}>Formular mit aktuellem Stand laden</Button></div>}<div className="grid max-h-[65vh] gap-4 overflow-y-auto py-2 pr-1"><div className="grid gap-2"><Label htmlFor="edit-title">Titel</Label><Input id="edit-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label htmlFor="edit-description">Beschreibung</Label><Textarea id="edit-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={20000} /></div><div className="grid gap-2"><Label htmlFor="edit-priority">Priorität</Label><Select value={priority} onValueChange={(value) => setPriority(value as Task['priority'])}><SelectTrigger id="edit-priority"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Niedrig</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">Hoch</SelectItem><SelectItem value="urgent">Dringend</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="edit-criteria">Erfolgskriterien</Label><Textarea id="edit-criteria" value={criteriaText} onChange={(event) => setCriteriaText(event.target.value)} rows={4} placeholder="Ein Kriterium pro Zeile" /></div><fieldset className="grid gap-2"><legend className="text-sm font-medium">Labels</legend>{labels.length ? labels.map((label) => <label key={label.id} className="flex items-center gap-2 text-sm"><Checkbox checked={labelIds.includes(label.id)} onCheckedChange={(checked) => setLabelIds((current) => checked ? [...current, label.id] : current.filter((id) => id !== label.id))} /><span className="size-2 rounded-full" style={{ backgroundColor: label.color }} /><span>{label.name}</span><span className="ml-auto text-xs text-muted-foreground">{label.kind === 'workflow' ? 'Workflow' : 'Thema'}</span></label>) : <p className="text-xs text-muted-foreground">Für dieses Projekt sind noch keine Labels angelegt.</p>}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEditing(false)}>Abbrechen</Button><Button onClick={() => saveTask.mutate()} disabled={!title.trim() || saveTask.isPending}>{saveTask.isPending ? 'Speichert…' : 'Änderungen speichern'}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={editing} onOpenChange={(open) => { setEditing(open); if (!open) { setSaveConflict(''); setEditBaseVersion(undefined) } }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Ticket bearbeiten</DialogTitle><DialogDescription>Änderungen erzeugen eine neue Version und werden im Verlauf festgehalten.</DialogDescription></DialogHeader>{saveConflict && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p>{saveConflict}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={rebaseTaskEdit}>Aktuelle Version als Basis verwenden</Button><Button variant="outline" size="sm" onClick={reloadTaskEdit}>Formular mit aktuellem Stand laden</Button></div></div>}<div className="grid max-h-[65vh] gap-4 overflow-y-auto py-2 pr-1"><div className="grid gap-2"><Label htmlFor="edit-title">Titel</Label><Input id="edit-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label htmlFor="edit-description">Beschreibung</Label><Textarea id="edit-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={20000} /></div><div className="grid gap-2"><Label htmlFor="edit-priority">Priorität</Label><Select value={priority} onValueChange={(value) => setPriority(value as Task['priority'])}><SelectTrigger id="edit-priority"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Niedrig</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">Hoch</SelectItem><SelectItem value="urgent">Dringend</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="edit-criteria">Erfolgskriterien</Label><Textarea id="edit-criteria" value={criteriaText} onChange={(event) => setCriteriaText(event.target.value)} rows={4} placeholder="Ein Kriterium pro Zeile" /></div><fieldset className="grid gap-2"><legend className="text-sm font-medium">Labels</legend>{labels.length ? labels.map((label) => <label key={label.id} className="flex items-center gap-2 text-sm"><Checkbox checked={labelIds.includes(label.id)} onCheckedChange={(checked) => setLabelIds((current) => checked ? [...current, label.id] : current.filter((id) => id !== label.id))} /><span className="size-2 rounded-full" style={{ backgroundColor: label.color }} /><span>{label.name}</span><span className="ml-auto text-xs text-muted-foreground">{label.kind === 'workflow' ? 'Workflow' : 'Thema'}</span></label>) : <p className="text-xs text-muted-foreground">Für dieses Projekt sind noch keine Labels angelegt.</p>}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEditing(false)}>Abbrechen</Button><Button onClick={() => saveTask.mutate()} disabled={!title.trim() || saveTask.isPending}>{saveTask.isPending ? 'Speichert…' : 'Änderungen speichern'}</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Meldung hinzufügen</DialogTitle><DialogDescription>Speichere eine nachvollziehbare Meldung zu einem Erfolgskriterium. Die Meldung ist keine automatische Codeprüfung.</DialogDescription></DialogHeader><div className="grid gap-4 py-2"><div className="grid gap-2"><Label htmlFor="evidence-label">Bezeichnung</Label><Input id="evidence-label" value={evidenceLabel} onChange={(event) => setEvidenceLabel(event.target.value)} maxLength={200} /></div><div className="grid gap-2"><Label htmlFor="evidence-text">Meldung</Label><Textarea id="evidence-text" value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} rows={4} maxLength={10000} /></div><fieldset className="grid gap-2"><legend className="text-sm font-medium">Kriterien zuordnen</legend>{task?.criteria.map((criterion) => <label key={criterion.id} className="flex items-start gap-2 text-sm"><Checkbox checked={evidenceCriteria.includes(criterion.id)} onCheckedChange={(checked) => setEvidenceCriteria((current) => checked ? [...current, criterion.id] : current.filter((id) => id !== criterion.id))} /><span>{criterion.text}</span></label>)}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEvidenceOpen(false)}>Abbrechen</Button><Button onClick={() => registerEvidence.mutate()} disabled={!evidenceLabel.trim() || !evidenceText.trim() || registerEvidence.isPending}>{registerEvidence.isPending ? 'Speichert…' : 'Meldung speichern'}</Button></DialogFooter></DialogContent></Dialog>
 

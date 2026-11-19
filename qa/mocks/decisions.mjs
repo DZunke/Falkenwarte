@@ -46,7 +46,7 @@ function validateRequest(requestBody) {
 
 function responseFor(variantId, requestBody) {
   const variant = variants.get(variantId);
-  const fixtureResponse = variant?.response;
+  const fixtureResponse = variant?.response ?? variants.get('decisions_ready')?.response;
   if (!fixtureResponse?.body?.answers) return fixtureResponse;
 
   const answers = requestBody.questions.map((question) => {
@@ -79,6 +79,13 @@ function responseFor(variantId, requestBody) {
   if (variantId === 'decisions_refusal') {
     const index = answers.findIndex((answer) => answer.name === 'workflow');
     if (index >= 0) answers[index] = { type: 'refusal', name: 'workflow' };
+  }
+  if (variantId === 'decisions_invalid_answer_type') {
+    answers[0] = { ...answers[0], type: 'object' };
+  } else if (variantId === 'decisions_partial_answers') {
+    answers.pop();
+  } else if (variantId === 'decisions_unknown_answer') {
+    answers[0] = { ...answers[0], name: 'unexpected_question' };
   }
 
   return {

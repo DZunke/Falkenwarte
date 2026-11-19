@@ -23,7 +23,7 @@ Für ein veröffentlichtes Release wird zuerst die Datei `image-manifest.json` a
 ```bash
 curl -fsSLO https://github.com/DZunke/Falkenwarte/releases/latest/download/image-manifest.json
 export FALKENWARTE_IMAGE="$(jq -er .image image-manifest.json)"
-docker compose up -d --wait
+docker compose up --no-build -d --wait
 ```
 
 Das Release-Manifest nennt Tag, Commit, Image-ID und Registry-Digest; der Digest wird unverändert in `FALKENWARTE_IMAGE` übernommen.
@@ -63,7 +63,7 @@ Das neue Image wird vor dem Start auf Commit und Digest geprüft; Migrationen la
 ```bash
 curl -fsSLO https://github.com/DZunke/Falkenwarte/releases/latest/download/image-manifest.json
 export FALKENWARTE_IMAGE="$(jq -er .image image-manifest.json)"
-docker compose up -d --wait
+docker compose up --no-build -d --wait
 docker compose ps
 docker compose logs --tail=100 app
 ```

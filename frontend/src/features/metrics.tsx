@@ -16,7 +16,7 @@ const metricLabels: Record<string, string> = {
   intake_ready: 'Eingänge eingeordnet', intake_needs_information: 'Eingänge mit Rückfrage',
   classification_records: 'Angewandte Einordnungen', routing_corrections: 'Korrigierte Routen',
   run_success_rate: 'Erfolgreich gemeldete Runs', lead_time_seconds: 'Lead-Time bis Abschluss',
-  cycle_time_seconds: 'Cycle-Time ab Arbeitsbeginn',
+  cycle_time_seconds: 'Cycle-Time ab Arbeitsbeginn', provider_cost: 'Anbieterkosten',
 }
 
 const provenanceLabels: Record<string, string> = {
@@ -104,11 +104,7 @@ export default function MetricsView() {
         <Card>
           <CardHeader><CardTitle>Definition und Herkunft</CardTitle></CardHeader>
           <CardContent className="overflow-x-auto">
-            <div role="note" className="mb-4 rounded-lg border border-dashed p-3">
-              <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium">Anbieterkosten</p><Badge variant="outline">Keine Daten</Badge></div>
-              <p className="mt-1 text-xs text-muted-foreground">Es liegen keine verifizierten Abrechnungsdaten des Anbieters vor. Falkenwarte schätzt keine Kosten aus Modell oder Laufzeit.</p>
-            </div>
-            <table className="w-full min-w-[640px] text-left text-sm"><thead><tr className="border-b text-xs text-muted-foreground"><th className="pb-2 font-medium">Kennzahl</th><th className="pb-2 font-medium">Wert</th><th className="pb-2 font-medium">Quelle</th><th className="pb-2 font-medium">Qualität</th><th className="pb-2 text-right font-medium">Stichprobe</th></tr></thead><tbody>{query.data.values.map((metric) => <tr key={metric.key} className="border-b last:border-0"><td className="py-3 font-medium">{metricLabels[metric.key] ?? metric.label}</td><td className="py-3">{formatValue(metric.value, metric.unit)}</td><td className="py-3 text-muted-foreground">{provenanceLabels[metric.provenance]}</td><td className="py-3"><Badge variant={metric.quality === 'unavailable' ? 'outline' : 'secondary'}>{qualityLabels[metric.quality]}</Badge></td><td className="py-3 text-right tabular-nums">{metric.sample_size}</td></tr>)}</tbody></table>
+            <table className="w-full min-w-[640px] text-left text-sm"><thead><tr className="border-b text-xs text-muted-foreground"><th className="pb-2 font-medium">Kennzahl</th><th className="pb-2 font-medium">Wert</th><th className="pb-2 font-medium">Quelle</th><th className="pb-2 font-medium">Qualität</th><th className="pb-2 text-right font-medium">Stichprobe</th></tr></thead><tbody>{query.data.values.map((metric) => <tr key={metric.key} className="border-b last:border-0"><td className="py-3"><p className="font-medium">{metricLabels[metric.key] ?? metric.label}</p>{metric.reason && <p className="mt-1 max-w-sm text-xs text-muted-foreground">{metric.reason}</p>}</td><td className="py-3">{formatValue(metric.value, metric.unit)}</td><td className="py-3 text-muted-foreground">{provenanceLabels[metric.provenance]}</td><td className="py-3"><Badge variant={metric.quality === 'unavailable' ? 'outline' : 'secondary'}>{qualityLabels[metric.quality]}</Badge></td><td className="py-3 text-right tabular-nums">{metric.sample_size}</td></tr>)}</tbody></table>
             <p className="mt-4 text-xs text-muted-foreground">Zeitraum {new Date(query.data.from).toLocaleDateString()} – {new Date(query.data.to).toLocaleDateString()} · Datenstand {new Date(query.data.data_through).toLocaleString()} · {query.data.excluded_records} Ereignisse ohne Zeitstempel ausgeschlossen</p>
           </CardContent>
         </Card>

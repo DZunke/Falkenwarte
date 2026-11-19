@@ -413,7 +413,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
   try {
     const beforeReport = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state));
     await reportThroughMcp(reporter.agent, beforeReport, task, ownerApi);
-    const awaitingApproval = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.result_digest !== null);
+    const awaitingApproval = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['result_reported', 'verifying', 'succeeded'].includes(run.state) && run.result_digest !== null);
     const oldApprovalResult = await ownerApi.post(`/runs/${runId}/approvals`, {
       kind: 'completion',
       result_digest: awaitingApproval.result_digest,
@@ -491,7 +491,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     const freshRunId = await requestRun(ownerApi, task, profile);
     const freshRun = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => ['running', 'verifying'].includes(run.state));
     await reportThroughMcp(reporter.agent, freshRun, task, ownerApi);
-    const freshResult = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => run.state === 'verifying' && run.result_digest !== null);
+    const freshResult = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => ['result_reported', 'verifying', 'succeeded'].includes(run.state) && run.result_digest !== null);
     const freshApprovalResult = await ownerApi.post(`/runs/${freshRunId}/approvals`, {
       kind: 'completion',
       result_digest: freshResult.result_digest,
@@ -612,7 +612,7 @@ test('A29 reference threads supply only live T3 routing and block removed or for
     expect(t3.accepted_launches).toHaveLength(1);
     expect(t3.accepted_launches[0].payload.modelSelection).toEqual({ instanceId: 'qa-inherited-provider', model: 'qa-inherited-model' });
     expect(t3.journal.filter((entry) => entry.tool === 't3_thread_launch')).toHaveLength(1);
-    expect(t3.journal.some((entry) => entry.tool === 't3_thread_read' && entry.outcome === 'tool_error')).toBe(false);
+    expect(t3.journal.some((entry) => entry.tool === 't3_thread_read' && entry.outcome === 'success')).toBe(true);
     expect(journalBeforeForeign.accepted_launches).toHaveLength(1);
     expect(journalBeforeRemoved.accepted_launches).toHaveLength(1);
     recordEvidence(

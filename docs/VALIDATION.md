@@ -1,17 +1,16 @@
 # Tatsächliche Prüfergebnisse
 
-Stand dieser Aufzeichnung: 19. November 2026. Die lokalen Änderungen liegen im gemeinsamen Linux-Arbeitsverzeichnis und sind noch nicht in einem Commit; lokale Beobachtungen sind deshalb nicht als Abnahme eines festen Images gewertet.
+Stand dieser Aufzeichnung: 19. November 2026. Die lokalen und gehosteten Nachweise sind jeweils an den ausgewiesenen Commit und, wo verfügbar, das konkrete Image gebunden; erfolgreich abgeschlossene Einzeljobs ersetzen keine vollständige Workflow- oder Meilensteinabnahme.
 
 ## Statische Prüfungen
 
 | Befehl | Ergebnis | Aussage |
 |---|---|---|
-| `php scripts/check-contracts.php` | Bestanden: OpenAPI 3.1 mit 151 Operationen, 35 MCP-Zuordnungen, 7 Vertragsbeispielen und 36 Anforderungen | Referenzen, MCP-Zuordnungen und Vertragsbeispiele sind im aktuellen Arbeitsstand konsistent. |
-| `php scripts/check-architecture.php` | Bestanden | Die Bounded-Contexts besitzen Domain-Layer; direkte DBAL-, ORM- und Application-zu-Infrastructure-Verstöße wurden nicht gemeldet. |
-| `php bin/console lint:container --env=prod` und `php bin/console lint:container --env=test` | Beide bestanden | Produktiver und Testcontainer lösen die Services mit kompatiblen Typen auf. |
-| `php scripts/check-docs.php` | Bestanden | Dokumentationsverweise lösen auf und Prosaabsätze stehen jeweils auf einer Quellzeile. |
-| `php scripts/build-docs.php` | Bestanden: 39 Markdown-Dokumente indexiert | Der lokale Dokumentationsindex, die Inhalte, Verträge und HTML-Seiten wurden erzeugt. Die Browserprüfung ist separat dokumentiert. |
-| PHPStan Level 5 für AgentCatalog, RunHandler und die T3-Adapter | Bestanden: keine Fehler in den analysierten Pfaden; ein vollständiger Repository-Lauf steht noch aus | Die neue Context-Grenze und ihre DI-Adapter sind lokal typgeprüft. |
+| `php scripts/check-contracts.php`, `php scripts/check-architecture.php` und `php bin/console lint:container` | Bestanden im hosted `static-quality`-Job für Commit `86392687ed1f828075c1039ad2e8f20d8abe02b8` ([Lauf](https://github.com/DZunke/Falkenwarte/actions/runs/44588112948), [Job](https://github.com/DZunke/Falkenwarte/actions/runs/44588112948/job/135786468996)) | OpenAPI-/MCP-Verweise, Context-Grenzen und Servicecontainer waren in diesem Commit konsistent; der Gesamtworkflow lief bei dieser Aufzeichnung noch. |
+| `vendor/bin/phpstan analyse --no-progress --memory-limit=1G` | Bestanden im selben hosted `static-quality`-Job ([Job](https://github.com/DZunke/Falkenwarte/actions/runs/44588112948/job/135786468996)) | Der vollständige Repositorylauf erreichte PHPStan Level 5 auf dem genannten Commit. |
+| `vendor/bin/php-cs-fixer check --diff` und Frontend-Codegenerierung, Lint und Build | Bestanden im selben hosted `static-quality`-Job ([Job](https://github.com/DZunke/Falkenwarte/actions/runs/44588112948/job/135786468996)) | Die generierte API-Datei entsprach in diesem Commit dem OpenAPI-Vertrag und das Frontend ließ sich typprüfen und bauen. |
+| `php scripts/check-docs.php`, `php scripts/build-docs.php` und `test -s public/docs/index.html` | Bestanden im hosted `docs-quality`-Job ([Job](https://github.com/DZunke/Falkenwarte/actions/runs/44588112948/job/135786468387)) | Der statische Dokumentationsbuild erzeugte das Handbuch unabhängig vom React-Build. |
+| Linux-Release-Image bauen | Bestanden im hosted `build`-Job ([Job](https://github.com/DZunke/Falkenwarte/actions/runs/44588112948/job/135786468763)) | Das Image wurde erzeugt; der E2E-Job und der Gesamtworkflow waren noch nicht abgeschlossen. |
 
 ## Lokale Browserläufe
 
@@ -26,15 +25,19 @@ FALKENWARTE_BASE_URL=http://127.0.0.1:18770 FALKENWARTE_SETUP_TOKEN=test-setup-t
 
 Playwright meldete 7/7 Tests bestanden. Die beobachteten Abnahme-IDs waren A02, A13, A22, A24, A25, A26, A27, A28 und A33; A27 ist ausdrücklich `partial` und bleibt offen, weil der gleichzeitige Handlungsbedarf aus `approval_pending` und `routing_ambiguous` noch nicht gemeinsam nachgewiesen ist. Das Reportobjekt nennt `commit: null` und `image: null`; der Lauf ist lokale Entwicklerevidenz, keine hosted Abnahme.
 
+Ein späterer isolierter Compose-Checkpoint prüfte A12 am 19. November 2026 mit Chromium: 1/1 Fall bestanden, falscher Attempt mit `isError:true` abgewiesen, wiederholter Report mit neuer Idempotency-ID ohne zweiten Report oder Evidence-Eintrag. Die lokale Datei `qa/results/a12-checkpoint5/acceptance-evidence.json` nennt Commit `f2fface8839e27685c448c59da3434f363b0e44f` und Image `sha256:64c0088dab99c79261f1e326d208ec06498bdc7c98ca2d11168f7f821a980f5f`; `qa/results/` ist ignoriert, daher ist dieser einzelne Lauf keine gehostete oder vollständige Suiteabnahme.
+
 `qa/results.json` ist ein ignorierter Debugreport und wird bei jedem gezielten Lauf überschrieben. Er ist kein kumulatives Abnahmeverzeichnis. Die Traceability übernimmt nur einen abgeschlossenen, erfolgreichen und redigierten Hauptlauf, dessen SHA und Image mit dem abgeschlossenen GitHub-Workflow übereinstimmen; A03 und A05 benötigen zusätzlich die erfolgreichen Jobs `static-quality` und `background-functional`, A19 beide erfolgreichen Produktionsberichte für Start und Neustart.
 
 [`scripts/prepare-traceability-evidence.php`](../scripts/prepare-traceability-evidence.php) prüft Workflowjobs, Hauptartefakt und Produktionsberichte und schreibt `var/ci-evidence/verification.json`. Erst danach aktualisieren `scripts/build-traceability.php` und `scripts/build-docs.php` den Bericht und das statische Handbuch. Der Bericht enthält anklickbare GitHub-Quellen; lokale oder partielle Fälle bleiben offen.
 
 ## Hosted-Prüfung
 
-Der letzte verfügbare Lauf für [WIP-PR #1](https://github.com/DZunke/Falkenwarte/pull/1), Head `c4cfa7d1abe9d1908f7caf910748911d9f5936d6`, ist [Workflow 44575682493](https://github.com/DZunke/Falkenwarte/actions/runs/44575682493) und endete fehlgeschlagen. `static-quality` stoppte bei `check-architecture`, weil diesem damaligen PR-Head noch Domain-Verzeichnisse in Classification, AgentCatalog, Orchestration, Automation und Extensions fehlten; diese Struktur ist im aktuellen lokalen Arbeitsstand inzwischen vorhanden.
+[Workflow 44583451885](https://github.com/DZunke/Falkenwarte/actions/runs/44583451885) für Commit `f2fface8839e27685c448c59da3434f363b0e44f` endete fehlgeschlagen: `static-quality` scheiterte bei PHPStan und der Imagebuild scheiterte; `docs-quality`, `background-functional` und `commit-policy` bestanden, der E2E-Job wurde übersprungen.
 
-Der hosted E2E-Job startete keinen Playwright-Fall: Der Appcontainer wurde im Compose-Testnetz als `unhealthy` gemeldet, bevor der Runner startete. Das nachfolgende Artefakt-Upload fand keine Datei unter `var/ci-evidence/`; der Lauf liefert daher keine Akzeptanzfälle. `docs-quality`, `background-functional`, `commit-policy` und der Image-Build bestanden, `quality-gate` scheiterte wegen der fehlgeschlagenen Pflichtjobs.
+[Workflow 44586596073](https://github.com/DZunke/Falkenwarte/actions/runs/44586596073) für Commit `b06bfc3aa060039582baf60414618105565c424a` bestand PHPStan, Vertrags-/Architektur-/Containerprüfungen, Dokumentation und Imagebuild, scheiterte aber an der Frontend-Codegenerierungsprüfung und am E2E-Test des bereitgestellten Images; der Gesamtworkflow endete fehlgeschlagen.
+
+Der neuere [Workflow 44588112948](https://github.com/DZunke/Falkenwarte/actions/runs/44588112948) verwendet Commit `86392687ed1f828075c1039ad2e8f20d8abe02b8`. Zum Zeitpunkt dieser Aufzeichnung bestanden `commit-policy`, `static-quality`, `background-functional`, `docs-quality` und `build`; `e2e` lief noch. Deshalb liegt für diesen Commit noch keine vollständige hosted Abnahme vor und es werden daraus keine Akzeptanzfälle als bestanden übernommen.
 
 ## Meilensteine und offene Integrationen
 

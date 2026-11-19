@@ -3963,7 +3963,9 @@ export interface components {
                 [key: string]: unknown;
             };
             /** @description Werte gegen das zugehörige Plugin-Schema; Secrets nur als Referenzen oder redigiert. */
-            values: Record<string, never>;
+            values: {
+                [key: string]: unknown;
+            };
             redacted_fields: string[];
         };
         WorkflowInstancePage: {

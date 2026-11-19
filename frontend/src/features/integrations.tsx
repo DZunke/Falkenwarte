@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, Cable, CircleCheck, CircleHelp, RefreshCw, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
+import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -12,6 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 const healthLabels: Record<string, string> = { unconfigured: 'Noch nicht verbunden', ready: 'Bereit', degraded: 'Eingeschränkt', unreachable: 'Nicht erreichbar', incompatible: 'Protokoll prüfen' }
 const authLabels: Record<string, string> = { missing: 'Autorisierung fehlt', pending: 'Autorisierung läuft', valid: 'Autorisiert', expiring: 'Zugang läuft ab', expired: 'Zugang abgelaufen', revoked: 'Widerrufen' }
+const checkStatusLabels: Record<components['schemas']['ConnectionCheck']['status'], string> = { queued: 'Prüfung läuft', succeeded: 'Prüfung erfolgreich', failed: 'Prüfung fehlgeschlagen' }
+const stageLabels: Record<components['schemas']['ConnectionCheck']['network'], string> = { ok: 'Bestanden', failed: 'Fehlgeschlagen', not_checked: 'Nicht geprüft' }
 
 export default function IntegrationsView() {
   const client = useQueryClient()
@@ -19,6 +22,17 @@ export default function IntegrationsView() {
   const [name, setName] = useState('T3 Code')
   const [url, setUrl] = useState('')
   const [selectedId, setSelectedId] = useState<string>()
+  const [acceptedCheck, setAcceptedCheck] = useState<{ connectionId: string; actionId: string }>()
+  const connectionCheckQuery = useQuery({
+    queryKey: ['connection-check', selectedId],
+    enabled: Boolean(selectedId),
+    queryFn: async () => {
+      const response = await api.GET('/connections/{connection_id}/check', { params: { path: { connection_id: selectedId! } } })
+      if (response.response.status === 404) return null
+      return request(Promise.resolve(response))
+    },
+    refetchInterval: (query) => query.state.data?.status === 'queued' ? 750 : false,
+  })
   const projectsQuery = useQuery({
     queryKey: ['connection-projects', selectedId],
     enabled: Boolean(selectedId),
@@ -39,7 +53,11 @@ export default function IntegrationsView() {
     mutationFn: (connection: NonNullable<typeof connectionsQuery.data>['items'][number]) => request(api.POST('/connections/{connection_id}/check', {
       params: { path: { connection_id: connection.id }, ...mutationParams(connection.version) }, body: { refresh_capabilities: true },
     })),
-    onSuccess: async () => { await refresh(); toast.success('Verbindungstest angenommen') },
+    onSuccess: async (receipt, connection) => {
+      setAcceptedCheck({ connectionId: connection.id, actionId: receipt.action_id })
+      await Promise.all([refresh(), client.invalidateQueries({ queryKey: ['connection-check', connection.id] })])
+      toast.success('Verbindungsprüfung gestartet')
+    },
     onError: (error) => toast.error(formatError(error)),
   })
 
@@ -92,9 +110,11 @@ export default function IntegrationsView() {
             <p className="text-sm text-muted-foreground">Prüft Netzwerk, Autorisierung, MCP-Protokoll und verfügbare Fähigkeiten.</p>
             {selected.diagnostic && <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">{selected.diagnostic}</div>}
             <div className="flex flex-wrap gap-2">
-              <Button disabled={checkConnection.isPending} onClick={() => checkConnection.mutate(selected)}><RefreshCw className={checkConnection.isPending ? 'animate-spin' : ''} />Verbindung testen</Button>
+              <Button disabled={checkConnection.isPending || connectionCheckQuery.data?.status === 'queued'} onClick={() => checkConnection.mutate(selected)}><RefreshCw className={checkConnection.isPending || connectionCheckQuery.data?.status === 'queued' ? 'animate-spin' : ''} />{connectionCheckQuery.data?.status === 'queued' ? 'Prüfung läuft…' : 'Verbindung testen'}</Button>
               <Button variant="outline" disabled={authorize.isPending || selected.auth_status === 'valid'} onClick={() => authorize.mutate(selected)}>Bei T3 anmelden <ArrowUpRight /></Button>
             </div>
+            {connectionCheckQuery.isError && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">Prüfergebnis konnte nicht geladen werden. {formatError(connectionCheckQuery.error)} <Button variant="ghost" size="sm" onClick={() => void connectionCheckQuery.refetch()}>Erneut laden</Button></div>}
+            {connectionCheckQuery.data && <ConnectionCheckResult check={connectionCheckQuery.data} actionId={acceptedCheck?.connectionId === selected.id ? acceptedCheck.actionId : undefined} />}
             {selected.capability_snapshot_id && <p className="flex items-center gap-2 text-xs text-muted-foreground"><CircleCheck className="size-4 text-emerald-600" />Fähigkeitsstand {selected.capability_snapshot_id}</p>}
             {!selected.capability_snapshot_id && <p className="flex items-center gap-2 text-xs text-muted-foreground"><CircleHelp className="size-4" />Noch keine Fähigkeiten bestätigt</p>}
           </CardContent>
@@ -112,4 +132,20 @@ export default function IntegrationsView() {
       </section>}
     </main>
   )
+}
+
+function ConnectionCheckResult({ check, actionId }: { check: components['schemas']['ConnectionCheck']; actionId?: string }) {
+  const failed = check.status === 'failed'
+  return <section data-testid="connection-check-result" aria-live="polite" className={`space-y-2 rounded-lg border p-3 text-sm ${failed ? 'border-amber-500/30 bg-amber-500/5' : 'border-border bg-muted/20'}`}>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">{checkStatusLabels[check.status]}</h3><span className="text-xs text-muted-foreground">{new Date(check.checked_at).toLocaleString()}</span></div>
+    {actionId && <p className="text-xs text-muted-foreground">Auftrag {actionId}</p>}
+    <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+      <div className="flex justify-between gap-2"><dt>Netzwerk</dt><dd>{stageLabels[check.network]}</dd></div>
+      <div className="flex justify-between gap-2"><dt>Autorisierung</dt><dd>{stageLabels[check.authentication]}</dd></div>
+      <div className="flex justify-between gap-2"><dt>MCP-Verbindung</dt><dd>{stageLabels[check.mcp_handshake]}</dd></div>
+      <div className="flex justify-between gap-2"><dt>Fähigkeiten</dt><dd>{stageLabels[check.capabilities]}</dd></div>
+    </dl>
+    {check.diagnostic && <p className="whitespace-pre-wrap text-sm">{check.diagnostic}</p>}
+    {check.snapshot_id && <p className="text-xs text-muted-foreground">Fähigkeitssnapshot {check.snapshot_id}</p>}
+  </section>
 }

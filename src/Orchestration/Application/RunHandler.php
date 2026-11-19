@@ -164,7 +164,7 @@ final class RunHandler
                         continue;
                     }
                     $attempt = $this->attempt($run, (int) $run['attempt_no']);
-                    if (!$this->providerEnabledForRun($run, $attempt)) {
+                    if (!$this->canSendCancellation($run, $attempt)) {
                         continue;
                     }
                     unset($run['_provider_deferred_action']);
@@ -1211,7 +1211,25 @@ final class RunHandler
             return;
         }
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
+        if (in_array($run['state'], ['verifying', 'result_reported'], true) && null !== ($attempt['ended_at'] ?? null) && in_array(strtolower((string) $attempt['remote_status']), ['completed', 'succeeded', 'success'], true)) {
+            // T3 has settled this attempt. Only local reports, evidence and decisions can advance it.
+            $this->store->atomic(function () use ($runId, $run): void {
+                $current = $this->record('runs', $runId);
+                if ($current['version'] === $run['version']) {
+                    $this->completePhaseIfAllowed($current);
+                }
+            });
+
+            return;
+        }
         if (null === $attempt['external_thread_id']) {
+            if (!empty($run['_cancel_requested_unknown_external'])) {
+                // Replaying a keyed launch could start work the owner already asked to stop.
+                $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
+                $this->removeObservationSchedule($runId);
+
+                return;
+            }
             if (in_array($run['state'], ['queued', 'dispatching'], true)) {
                 return;
             }
@@ -1249,82 +1267,87 @@ final class RunHandler
 
             return;
         }
-        $run = $this->record('runs', $runId);
-        $attempt = $this->attempt($run, (int) $run['attempt_no']);
-        $attempt['remote_status'] = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
-        $attempt['external_observed_run_id'] = isset($remote['runId']) ? (string) $remote['runId'] : (isset($remote['run']['id']) ? (string) $remote['run']['id'] : $attempt['external_dispatch_run_id']);
-        $attempt['last_observed_at'] = $this->store->now();
-        $attempts = $run['attempts'];
-        $attempts[$attempt['attempt_no'] - 1] = $attempt;
-        $run['attempts'] = $attempts;
-        $run['last_observed_at'] = $attempt['last_observed_at'];
-        $run = $this->store->save('runs', $run, 'run.external_observed');
-        $status = strtolower((string) $attempt['remote_status']);
-        if (in_array($status, ['running', 'in_progress', 'streaming'], true)) {
-            $run['state'] = 'running';
-            $run['status_reason'] = null;
-        } elseif (in_array($status, ['queued', 'pending', 'accepted'], true)) {
-            $run['state'] = 'queued';
-            $run['status_reason'] = null;
-        } elseif (in_array($status, ['waiting_input', 'needs_input', 'input_required'], true)) {
-            $run['state'] = 'waiting_input';
-            $pending = $remote['pendingInput'] ?? $remote['pending_input'] ?? null;
-            if (is_array($pending)) {
-                $run['pending_input'] = $this->normalizePendingInput($pending);
-                $address = $run['pending_input'];
-                if ('permission' === $address['kind']) {
-                    $this->openAttention($run['task_id'], $run['project_id'], 'run_permission_in_t3', 'owner');
-                } elseif ('owner' === $address['addressed_to']) {
-                    $this->openAttention($run['task_id'], $run['project_id'], 'run_input_owner', 'owner');
-                } else {
-                    $this->openAttention($run['task_id'], $run['project_id'], 'agent_question', 'requester');
+        $this->store->atomic(function () use ($runId, $remote): void {
+            $run = $this->record('runs', $runId);
+            if (!in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
+                return;
+            }
+            $attempt = $this->attempt($run, (int) $run['attempt_no']);
+            $attempt['remote_status'] = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
+            $attempt['external_observed_run_id'] = isset($remote['runId']) ? (string) $remote['runId'] : (isset($remote['run']['id']) ? (string) $remote['run']['id'] : $attempt['external_dispatch_run_id']);
+            $attempt['last_observed_at'] = $this->store->now();
+            $attempts = $run['attempts'];
+            $attempts[$attempt['attempt_no'] - 1] = $attempt;
+            $run['attempts'] = $attempts;
+            $run['last_observed_at'] = $attempt['last_observed_at'];
+            $run = $this->store->save('runs', $run, 'run.external_observed');
+            $status = strtolower((string) $attempt['remote_status']);
+            if (in_array($status, ['running', 'in_progress', 'streaming'], true)) {
+                $run['state'] = 'running';
+                $run['status_reason'] = null;
+            } elseif (in_array($status, ['queued', 'pending', 'accepted'], true)) {
+                $run['state'] = 'queued';
+                $run['status_reason'] = null;
+            } elseif (in_array($status, ['waiting_input', 'needs_input', 'input_required'], true)) {
+                $run['state'] = 'waiting_input';
+                $pending = $remote['pendingInput'] ?? $remote['pending_input'] ?? null;
+                if (is_array($pending)) {
+                    $run['pending_input'] = $this->normalizePendingInput($pending);
+                    $address = $run['pending_input'];
+                    if ('permission' === $address['kind']) {
+                        $this->openAttention($run['task_id'], $run['project_id'], 'run_permission_in_t3', 'owner');
+                    } elseif ('owner' === $address['addressed_to']) {
+                        $this->openAttention($run['task_id'], $run['project_id'], 'run_input_owner', 'owner');
+                    } else {
+                        $this->openAttention($run['task_id'], $run['project_id'], 'agent_question', 'requester');
+                    }
+                }
+                $run['status_reason'] = 'T3 wartet auf eine Eingabe. Berechtigungsanfragen müssen in T3 beantwortet werden.';
+            } elseif (in_array($status, ['completed', 'succeeded', 'success'], true)) {
+                $run['state'] = 'verifying';
+                $attempt['ended_at'] = $this->store->now();
+                $attempts = $run['attempts'];
+                $attempts[$attempt['attempt_no'] - 1] = $attempt;
+                $run['attempts'] = $attempts;
+                $run['status_reason'] = 'T3 hat den Lauf beendet. Die passende Agentmeldung und die Phasenregeln werden noch abgeglichen.';
+            } elseif (in_array($status, ['failed', 'error'], true)) {
+                $run['state'] = 'failed';
+                $run['status_reason'] = 'T3 hat einen Fehler gemeldet.';
+                $attempt['ended_at'] = $this->store->now();
+                $attempts = $run['attempts'];
+                $attempts[$attempt['attempt_no'] - 1] = $attempt;
+                $run['attempts'] = $attempts;
+            } elseif (in_array($status, ['cancelled', 'canceled', 'interrupted'], true)) {
+                $run['state'] = 'cancelled';
+                $run['status_reason'] = 'T3 hat den Abbruch bestätigt.';
+                $attempt['ended_at'] = $this->store->now();
+                $attempts = $run['attempts'];
+                $attempts[$attempt['attempt_no'] - 1] = $attempt;
+                $run['attempts'] = $attempts;
+            } else {
+                $run['state'] = 'reconciling';
+                $run['status_reason'] = 'T3 meldet einen unbekannten Zustand. Der Ausführungsplatz bleibt bis zur Klärung belegt.';
+                $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
+            }
+            if ('waiting_input' !== $run['state']) {
+                foreach (['run_permission_in_t3', 'run_input_owner', 'agent_question'] as $reason) {
+                    $this->resolveAttention($run['task_id'], $reason);
                 }
             }
-            $run['status_reason'] = 'T3 wartet auf eine Eingabe. Berechtigungsanfragen müssen in T3 beantwortet werden.';
-        } elseif (in_array($status, ['completed', 'succeeded', 'success'], true)) {
-            $run['state'] = 'verifying';
-            $attempt['ended_at'] = $this->store->now();
-            $attempts = $run['attempts'];
-            $attempts[$attempt['attempt_no'] - 1] = $attempt;
-            $run['attempts'] = $attempts;
-            $run['status_reason'] = 'T3 hat den Lauf beendet. Die passende Agentmeldung und die Phasenregeln werden noch abgeglichen.';
-        } elseif (in_array($status, ['failed', 'error'], true)) {
-            $run['state'] = 'failed';
-            $run['status_reason'] = 'T3 hat einen Fehler gemeldet.';
-            $attempt['ended_at'] = $this->store->now();
-            $attempts = $run['attempts'];
-            $attempts[$attempt['attempt_no'] - 1] = $attempt;
-            $run['attempts'] = $attempts;
-        } elseif (in_array($status, ['cancelled', 'canceled', 'interrupted'], true)) {
-            $run['state'] = 'cancelled';
-            $run['status_reason'] = 'T3 hat den Abbruch bestätigt.';
-            $attempt['ended_at'] = $this->store->now();
-            $attempts = $run['attempts'];
-            $attempts[$attempt['attempt_no'] - 1] = $attempt;
-            $run['attempts'] = $attempts;
-        } else {
-            $run['state'] = 'reconciling';
-            $run['status_reason'] = 'T3 meldet einen unbekannten Zustand. Der Ausführungsplatz bleibt bis zur Klärung belegt.';
-            $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
-        }
-        if ('waiting_input' !== $run['state']) {
-            foreach (['run_permission_in_t3', 'run_input_owner', 'agent_question'] as $reason) {
-                $this->resolveAttention($run['task_id'], $reason);
+            $this->resolveAttention($run['task_id'], 'auth_required');
+            $run = $this->store->save('runs', $run, 'run.state_observed');
+            if ('verifying' === $run['state']) {
+                $this->completePhaseIfAllowed($run);
+            } elseif (in_array($run['state'], ['failed', 'cancelled'], true) && null !== $run['workflow_instance_id']) {
+                $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
             }
-        }
-        $this->resolveAttention($run['task_id'], 'auth_required');
-        $run = $this->store->save('runs', $run, 'run.state_observed');
-        if ('verifying' === $run['state']) {
-            $this->completePhaseIfAllowed($run);
-        } elseif (in_array($run['state'], ['failed', 'cancelled'], true) && null !== $run['workflow_instance_id']) {
-            $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
-        }
-        $current = $this->store->find('runs', $runId);
-        if (null !== $current && in_array($current['state'], self::ACTIVE_RUN_STATES, true)) {
-            $this->scheduleObservation($runId);
-        } else {
-            $this->removeObservationSchedule($runId);
-        }
+            $current = $this->store->find('runs', $runId);
+            if (null !== $current && in_array($current['state'], self::ACTIVE_RUN_STATES, true)) {
+                $this->scheduleObservation($runId);
+            } else {
+                $this->removeObservationSchedule($runId);
+            }
+        });
     }
 
     private function performCancel(string $runId): void
@@ -1332,14 +1355,23 @@ final class RunHandler
         $run = $this->record('runs', $runId);
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
         if (null === $attempt['external_thread_id'] || null === $attempt['external_dispatch_run_id']) {
+            $run['_cancel_requested_unknown_external'] = true;
             $run['state'] = 'reconciling';
             $run['status_reason'] = 'Der externe Startausgang ist ungeklärt. Abbruchwirkung wird vor einer Freigabe des Ausführungsplatzes abgeglichen.';
             $this->store->save('runs', $run, 'run.cancel_reconciliation_required');
+            $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
             $this->store->enqueue('run.reconcile', ['run_id' => $runId]);
 
             return;
         }
-        if (!$this->providerEnabledForRun($run, $attempt)) {
+        if (null !== $this->activeRecoveryGate()) {
+            $run['_provider_deferred_action'] = 'cancel';
+            $run['status_reason'] = 'Die Wiederherstellungsinventur hält externe Abbrüche an. Der bestätigbare Abbruch wird nach Freigabe fortgesetzt.';
+            $this->store->save('runs', $run, 'run.cancel_deferred_for_recovery');
+
+            return;
+        }
+        if (!$this->canSendCancellation($run, $attempt)) {
             $run['_provider_deferred_action'] = 'cancel';
             $run['status_reason'] = 'Der registrierte T3-Provider wird stillgelegt. Der Abbruch wird fortgesetzt, sobald der Provider wieder aktiviert ist.';
             $this->store->save('runs', $run, 'run.bridge_cancel_deferred');
@@ -1358,6 +1390,36 @@ final class RunHandler
             return;
         }
         $this->store->enqueue('run.observe', ['run_id' => $runId]);
+    }
+
+    /** Request confirmed T3 cancellation for active runs owned by a draining provider. */
+    public function requestCancelForProvider(string $providerId, string $reason): int
+    {
+        if (!$this->agentCatalog->providerAllowsDrainCancellation($providerId)) {
+            return 0;
+        }
+
+        return $this->store->atomic(function () use ($providerId, $reason): int {
+            $requested = 0;
+            foreach ($this->store->all('runs') as $run) {
+                if (($run['snapshot']['bridge_plugin_id'] ?? null) !== $providerId
+                    || !in_array($run['state'] ?? null, self::ACTIVE_RUN_STATES, true)) {
+                    continue;
+                }
+                if (!empty($run['_provider_drain_cancel_requested'])) {
+                    continue;
+                }
+
+                $run['_provider_drain_cancel_requested'] = true;
+                $run['state'] = 'cancel_requested';
+                $run['status_reason'] = $reason;
+                $this->store->save('runs', $run, 'run.provider_drain_cancel_requested');
+                $this->store->enqueue('run.cancel', ['run_id' => $run['id']]);
+                ++$requested;
+            }
+
+            return $requested;
+        });
     }
 
     private function performInput(string $runId, string $inputId): void
@@ -1458,6 +1520,9 @@ final class RunHandler
         }
 
         if (!$decision->isSucceeded()) {
+            if ('verifying' === $run['state'] && ($run['status_reason'] ?? null) === $decision->reason) {
+                return;
+            }
             $run['state'] = 'verifying';
             $run['status_reason'] = $decision->reason;
             $event = match ($decision->outcome) {
@@ -2058,6 +2123,16 @@ final class RunHandler
     }
 
     /** @param array<string, mixed> $run @param array<string, mixed> $attempt */
+    private function canSendCancellation(array $run, array $attempt): bool
+    {
+        $providerId = $run['snapshot']['bridge_plugin_id'] ?? null;
+        $drainCancellationAllowed = !empty($run['_provider_drain_cancel_requested'])
+            && is_string($providerId)
+            && $this->agentCatalog->providerAllowsDrainCancellation($providerId);
+
+        return $drainCancellationAllowed || $this->providerEnabledForRun($run, $attempt);
+    }
+
     private function providerEnabledForRun(array $run, array $attempt): bool
     {
         $providerId = $run['snapshot']['bridge_plugin_id'] ?? null;

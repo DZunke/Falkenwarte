@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Blocks, Download, Pause, Play, RefreshCw, Settings2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, formatError, mutationParams, request } from '@/lib/api'
-import { useProjects } from '@/lib/queries'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -19,10 +18,13 @@ const stateLabels: Record<string, string> = {
 
 export default function PluginsView() {
   const client = useQueryClient()
-  const pluginsQuery = useQuery({ queryKey: ['plugins'], queryFn: () => request(api.GET('/plugins', { params: { query: { limit: 100 } } })) })
-  const projectsQuery = useProjects()
+  const pluginsQuery = useQuery({
+    queryKey: ['plugins'],
+    queryFn: () => request(api.GET('/plugins', { params: { query: { limit: 100 } } })),
+    refetchInterval: (query) => query.state.data?.items.some((item) => ['enabling', 'draining'].includes(item.state)) ? 2000 : false,
+  })
   const [selectedId, setSelectedId] = useState('')
-  const [enabledLabelsText, setEnabledLabelsText] = useState('')
+  const [labelDraft, setLabelDraft] = useState<{ text: string; version: number } | null>(null)
   const [newPluginId, setNewPluginId] = useState('')
   const [newVersion, setNewVersion] = useState('')
   const [installSource, setInstallSource] = useState<'registry' | 'local_build'>('local_build')
@@ -66,16 +68,18 @@ export default function PluginsView() {
     onSuccess: async () => { await refresh(); toast.success('Plugin deaktiviert') },
     onError: (error) => toast.error(formatError(error)),
   })
+  const configuredLabels = configurationQuery.data?.values.enabled_labels
+  const labelInput = labelDraft?.text ?? (Array.isArray(configuredLabels) ? configuredLabels.filter((label) => typeof label === 'string').join(', ') : '')
   const saveConfiguration = useMutation({
     mutationFn: () => request(api.PUT('/plugins/{plugin_id}/config', {
-      params: { path: { plugin_id: plugin!.id }, ...mutationParams(plugin!.version) },
+      params: { path: { plugin_id: plugin!.id }, ...mutationParams(labelDraft?.version ?? configurationQuery.data!.plugin_version) },
       body: {
         schema_id: configurationQuery.data!.schema_id,
-        values: { enabled_labels: enabledLabelsText.split(',').map((value) => value.trim()).filter(Boolean) },
+        values: { enabled_labels: labelInput.split(',').map((value) => value.trim()).filter(Boolean) },
       },
     })),
-    onSuccess: async () => { await refresh(); toast.success('Plugin-Einstellungen gespeichert') },
-    onError: (error) => toast.error(formatError(error)),
+    onSuccess: async () => { await refresh(); setLabelDraft(null); toast.success('Plugin-Einstellungen gespeichert') },
+    onError: async (error) => { await refresh(); toast.error(formatError(error)) },
   })
   const createPlan = useMutation({
     mutationFn: () => request(api.POST('/plugin-install-plans', {
@@ -86,13 +90,13 @@ export default function PluginsView() {
     onError: (error) => toast.error(formatError(error)),
   })
 
-  const labelIds = useMemo(() => configurationQuery.data?.values.enabled_labels ?? [], [configurationQuery.data])
-  if (pluginsQuery.isPending || projectsQuery.isPending) return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
-  if (pluginsQuery.isError || projectsQuery.isError) {
-    const error = pluginsQuery.error ?? projectsQuery.error
+  if (pluginsQuery.isPending) return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
+  if (pluginsQuery.isError) {
+    const error = pluginsQuery.error
     return <Card><CardContent className="p-6"><h2 className="font-semibold">Plugins konnten nicht geladen werden</h2><p className="mt-2 text-sm text-muted-foreground">{formatError(error)}</p><Button variant="outline" className="mt-4" onClick={() => void refresh()}>Erneut laden</Button></CardContent></Card>
   }
 
+  const dependents = plugins.filter((item) => ['enabled', 'draining'].includes(item.state) && item.dependencies.some((dependency) => dependency.plugin_id === plugin?.id))
   const installedPlans = plansQuery.data?.items ?? []
   const anyMutationPending = activate.isPending || drain.isPending || deactivate.isPending || saveConfiguration.isPending
   const actionAllowed = (action: string) => plugin?.allowed_actions.some((item) => item.action === action && item.enabled) ?? false
@@ -111,25 +115,27 @@ export default function PluginsView() {
 
         {plugin && <Card><CardHeader><CardTitle>{plugin.name}</CardTitle></CardHeader><CardContent className="space-y-5">
           <div className="flex flex-wrap gap-2"><Badge variant="outline">Vertrag {plugin.contract_version}</Badge>{plugin.capabilities.map((capability) => <Badge key={capability} variant="secondary">{capability}</Badge>)}</div>
-          <div className="grid gap-3 sm:grid-cols-3"><Metric label="Aktive Aufträge" value={plugin.active_run_count} /><Metric label="Wartende Arbeit" value={plugin.pending_job_count} /><Metric label="Behaltene Daten" value={`${plugin.retained_data_bytes.toLocaleString()} Byte`} /></div>
+          <div className="grid gap-3 sm:grid-cols-2"><Metric label="Aktive Aufträge" value={plugin.active_run_count} /><Metric label="Wartende Arbeit" value={plugin.pending_job_count} /><Metric label="Ungeklärte externe Aktivitäten" value={plugin.unresolved_external_activity_count} /><Metric label="Behaltene Daten" value={`${plugin.retained_data_bytes.toLocaleString()} Byte`} /></div>
+          {dependents.length > 0 && <p className="text-sm">Vor dem Deaktivieren zuerst diese abhängigen Erweiterungen deaktivieren: {dependents.map((item) => item.name).join(', ')}.</p>}
           {plugin.last_error && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm">{plugin.last_error}</div>}
           <div className="flex flex-wrap gap-2">
             {actionAllowed('activate') && <Button disabled={anyMutationPending} onClick={() => activate.mutate()}><Play />Aktivieren</Button>}
             {actionAllowed('drain') && plugin.state === 'enabled' && <Button variant="outline" disabled={anyMutationPending} onClick={() => drain.mutate()}><Pause />Drain starten</Button>}
             {plugin.state === 'draining' && <>
-              <p className="basis-full text-sm text-muted-foreground">Aktive Arbeit wird abgeschlossen. Danach kannst du die Erweiterung deaktivieren.</p>
-              <Button variant="outline" disabled={pluginsQuery.isFetching} onClick={() => void pluginsQuery.refetch()}><RefreshCw />Status aktualisieren</Button>
+              <p className="basis-full text-sm text-muted-foreground">Die Erweiterung nimmt keine neuen Aufträge an. Prüfe den Drain erneut, sobald die aktiven Aufträge und externen Aktivitäten geklärt sind.</p>
+              {actionAllowed('drain') && <Button variant="outline" disabled={anyMutationPending} onClick={() => drain.mutate()}><RefreshCw />Drain erneut prüfen</Button>}
             </>}
-            {actionAllowed('deactivate') && <Button variant="outline" disabled={anyMutationPending} onClick={() => deactivate.mutate()}>Deaktivieren</Button>}
+            {actionAllowed('deactivate') && <Button variant="outline" disabled={anyMutationPending || dependents.length > 0} onClick={() => deactivate.mutate()}>Deaktivieren</Button>}
           </div>
 
           {plugin.id === 'falkenwarte.link-notes' && <section className="space-y-3 border-t pt-4">
             <h3 className="flex items-center gap-2 text-sm font-semibold"><Settings2 className="size-4" />Linknotizen-Einstellungen</h3>
             {configurationQuery.isError && <p className="text-sm text-muted-foreground">{formatError(configurationQuery.error)}</p>}
             {configurationQuery.isPending ? <Skeleton className="h-14" /> : configurationQuery.data && <>
-              <div className="space-y-1.5"><Label htmlFor="enabled-link-note-labels">Nur für diese Label-IDs <span className="font-normal text-muted-foreground">(optional, kommasepariert)</span></Label><Input id="enabled-link-note-labels" value={enabledLabelsText || labelIds.join(', ')} onChange={(event) => setEnabledLabelsText(event.target.value)} placeholder="Leer lassen für alle Tickets" /></div>
+              <div className="space-y-1.5"><Label htmlFor="enabled-link-note-labels">Nur für diese Label-IDs <span className="font-normal text-muted-foreground">(optional, kommasepariert)</span></Label><Input id="enabled-link-note-labels" value={labelInput} onChange={(event) => setLabelDraft({ text: event.target.value, version: labelDraft?.version ?? configurationQuery.data!.plugin_version })} placeholder="Leer lassen für alle Tickets" /></div>
               <p className="text-xs text-muted-foreground">Die Erweiterung speichert nur lokale Notizen zu vorhandenen Ticketlinks. URLs werden nicht abgerufen.</p>
-              <Button variant="outline" size="sm" disabled={!configurationQuery.data || saveConfiguration.isPending} onClick={() => saveConfiguration.mutate()}><ShieldCheck />Einstellungen speichern</Button>
+              {labelDraft && labelDraft.version !== configurationQuery.data.plugin_version && <div role="alert" className="space-y-2 text-sm"><p>Die Einstellungen wurden inzwischen geändert.</p><Button variant="outline" size="sm" onClick={() => setLabelDraft(null)}>Aktuellen Stand laden</Button></div>}
+              <Button variant="outline" size="sm" disabled={!labelDraft || saveConfiguration.isPending} onClick={() => saveConfiguration.mutate()}><ShieldCheck />Einstellungen speichern</Button>
             </>}
           </section>}
         </CardContent></Card>}

@@ -2,8 +2,8 @@ openapi: 3.1.0
 info:
   title: Falkenwarte JSON-HTTP API
   version: 0.2.0
-  description: Falkenwarte-Vertragsentwurf für Linux. Eine lokale Single-User-Steuerplattform für Tickets und eine T3-Instanz. JSON-HTTP,
-    keine JSON:API-Spezifikation. Kein Code-, Repository-, GitHub-/GitLab-/Jira-API-Zugriff und keine Merge-Funktion. Technischer Eingang
+  description: Laufender JSON-HTTP-Vertrag der Linux-Anwendung Falkenwarte. Eine lokale Single-User-Steuerplattform für Tickets und eine T3-Instanz.
+    JSON-HTTP, keine JSON:API-Spezifikation. Kein Code-, Repository-, GitHub-/GitLab-/Jira-API-Zugriff und keine Merge-Funktion. Technischer Eingang
     wird über OpenAI Decisions klassifiziert. Fachregeln sind für HTTP und MCP identisch.
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
@@ -28,7 +28,7 @@ tags:
 - name: intake
 - name: labels
 - name: links
-x-contract-status: proposed
+x-contract-status: implemented
 x-write-policy:
   idempotency: Jede fachliche Mutation benötigt Idempotency-Key. Schlüssel ist pro Principal und Operation einschließlich Zielpfad eindeutig.
     Normalisierte Payload einschließlich erwarteter Version wird serverseitig gehasht; gleiche Identität mit anderem Hash ergibt 409.
@@ -11185,6 +11185,7 @@ components:
           type: object
           maxProperties: 100
           description: Werte gegen das zugehörige Plugin-Schema; Secrets nur als Referenzen oder redigiert.
+          additionalProperties: true
         redacted_fields:
           type: array
           items:

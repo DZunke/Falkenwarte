@@ -40,6 +40,7 @@ use App\Orchestration\Application\RunHandler;
 use App\Orchestration\Domain\RunCompletionEvaluator;
 use App\Orchestration\Domain\RunDelegationPolicy;
 use App\Orchestration\Infrastructure\AgentCatalogRunImpactAdapter;
+use App\Orchestration\Infrastructure\ProviderRunDrainAdapter;
 use App\Portfolio\Application\PortfolioHandler;
 use App\Presentation\Contract;
 use App\Presentation\Gateway;
@@ -104,6 +105,8 @@ return static function (ContainerConfigurator $c): void {
     $s->alias(AgentCatalogReader::class, StoreAgentCatalogReader::class);
     $s->set(AgentCatalogRunImpactAdapter::class);
     $s->alias(RunImpactPort::class, AgentCatalogRunImpactAdapter::class);
+    $s->set(ProviderRunDrainAdapter::class);
+    $s->alias(App\Extensions\Application\ProviderRunDrainPort::class, ProviderRunDrainAdapter::class);
     $s->set(AgentCatalogHandler::class);
     foreach ([T3ConnectionRules::class, AgentProfileRules::class, ProjectBindingRules::class] as $policy) {
         $s->set($policy);

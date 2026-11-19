@@ -1,8 +1,8 @@
 {
   "catalog_version": "0.2.0",
-  "status": "proposed_contract",
+  "status": "implemented_contract",
   "title": "Falkenwarte MCP für Tickets und T3-Aufträge",
-  "description": "Vertragsentwurf. Alle Tools verwenden dieselben Application-Operationen wie JSON-HTTP. Kein Code- oder Repositoryzugriff, keine externe Issue-Synchronisierung. Eingänge werden mit OpenAI Decisions klassifiziert.",
+  "description": "Implementierter MCP-Toolkatalog. Alle Tools verwenden dieselben Application-Operationen wie JSON-HTTP. Kein Code- oder Repositoryzugriff, keine externe Issue-Synchronisierung. Eingänge werden mit OpenAI Decisions klassifiziert.",
   "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "transport": {
     "type": "streamable_http",
