@@ -36,7 +36,7 @@ Im früheren [Hosted-Build 44601867336](https://github.com/DZunke/Falkenwarte/ac
 
 Zwei unabhängige GitHub-Runner bauten Commit `83f0fb338a50dbd3dc6b4db0d87fb279759b80a2` mit identischer Image-ID `sha256:e333b4cf80ba65871b87ab8fad3c0b25c904215e0e801ccc552b4498529c868c`, 43 identischen RootFS-Layern und identischen Inventardateien. [PR-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44611627080/job/135869460410) · [Dispatch-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44611621718/job/135869445334)
 
-Die Release enthält drei Dateien. `image-manifest.json` verknüpft Tag, Commit, lokale Image-ID und GHCR-Digest. `browser-acceptance.tar.gz` enthält die redigierten Browserbeobachtungen, darunter den ersten Start und den Neustart des Produktionscontainers. `software-inventory.tar.gz` enthält das CycloneDX-Inventar, Laufzeitversionen und Lizenzhinweise. Das Build-Skript gleicht das Inventar mit den OCI-Labels ab, bevor die QA das Image übernimmt.
+Zur Veröffentlichung gehören das Image-Manifest und zwei Archive. `image-manifest.json` verknüpft Tag, Commit, lokale Image-ID und GHCR-Digest. `browser-acceptance.tar.gz` enthält die redigierten Browserbeobachtungen, darunter den ersten Start und den Neustart des Produktionscontainers. `software-inventory.tar.gz` enthält das CycloneDX-Inventar, Laufzeitversionen und Lizenzhinweise. Das Build-Skript gleicht das Inventar mit den OCI-Labels ab, bevor die QA das Image übernimmt.
 
 ## Rechte und Artefakte
 
@@ -44,7 +44,24 @@ Die QA führt PR-Code ohne produktive Secrets aus. Die verwendeten Actions sind 
 
 Die Fork-PR-Verifikation ist auf ausdrückliche Nutzerentscheidung vertagt und bleibt unverifiziert; bis zu einer erneuten Freigabe ist sie eine dokumentierte M6-Ausnahme und keine aktive Abnahmebedingung.
 
-Die übrigen Lieferkettenabnahmen bleiben erforderlich, bis echte GitHub-Läufe samt Ergebnis dokumentiert sind: regulärer PR-Lauf mit Branchregel, Release-PR mit exaktem SHA-Dispatch, absichtlich fehlgeschlagene und übersprungene E2E-Probe sowie der Release-Check.
+## Geprüfte Veröffentlichung
+
+Für v0.2.0 stimmen Tag, geprüfter Commit und OCI-Revision überein. Der GitHub-Packages-Eintrag bestätigt für den Versionstag denselben Registry-Digest wie das veröffentlichte Manifest. [Release](https://github.com/DZunke/Falkenwarte/releases/tag/v0.2.0) · [Image-Manifest](https://github.com/DZunke/Falkenwarte/releases/download/v0.2.0/image-manifest.json)
+
+`ghcr.io/dzunke/falkenwarte@sha256:7f6be8a339f26e0e948a318cdda9f3d983440df63a4f10669d608bf41a118cb0`
+
+Das GHCR-Paket ist öffentlich.
+
+Zwei unabhängige GitHub-Runner bauten v0.2.0 aus Commit `00d260efdb361deaa14fb75c76fa44a71e5965ba` mit derselben Image-ID `sha256:43bb9391eb18a4b6ea06aa3d4293d499eb0ce80915517e5826df6efdce7465d5` und denselben 43 RootFS-Layern. Die SHA-256-Werte für SBOM, Laufzeitinventar und Lizenzhinweise stimmen überein. [Erster Build](https://github.com/DZunke/Falkenwarte/actions/runs/44628082788/job/135927121539) · [Zweiter Build](https://github.com/DZunke/Falkenwarte/actions/runs/44628085255/job/135927134654)
+
+| Fall | Beobachtung |
+|---|---|
+| Fachliche Änderung | Der geschützte Hauptzweig übernahm den geprüften Implementierungs-PR. [QA](https://github.com/DZunke/Falkenwarte/actions/runs/44603788249) |
+| Reine Dokumentationsänderung | Der Dokumentationsjob für den eigenen PR bestand. [Dokumentationsprüfung](https://github.com/DZunke/Falkenwarte/actions/runs/44606393813/job/135851115578) |
+| Release-PR | Der ausdrücklich angeforderte Commit wurde ausgecheckt und bestand alle sieben Jobs. [Exakter Dispatch](https://github.com/DZunke/Falkenwarte/actions/runs/44625809181) · [Erforderlicher PR-Check](https://github.com/DZunke/Falkenwarte/actions/runs/44625811931) |
+| Fehlerhafter E2E-Job | Der erforderliche Gesamtcheck schlug fehl. [Fehlerprobe](https://github.com/DZunke/Falkenwarte/actions/runs/44606342740) |
+| Übersprungener E2E-Job | Auch der übersprungene E2E-Job ließ den Gesamtcheck fehlschlagen. [Skip-Probe](https://github.com/DZunke/Falkenwarte/actions/runs/44606360382) |
+| Veröffentlichung | Nach der Korrektur der Einzelprodukt-Konfiguration erzeugte Release Please den Tag am bereits geprüften Release-Commit. Der Veröffentlichungsjob verifizierte die ID des zugehörigen Push-Laufs und übertrug dessen Image nach GHCR. [Release-QA](https://github.com/DZunke/Falkenwarte/actions/runs/44628082788) · [Veröffentlichung](https://github.com/DZunke/Falkenwarte/actions/runs/44635387306) |
 
 ## Bedienbefehle
 

@@ -50,6 +50,8 @@ Zwei unabhängige GitHub-Runner bauten Commit `83f0fb338a50dbd3dc6b4db0d87fb2797
 
 Für Commit `d9158701a647d5a8a43c8b227d951fa9d40591f3` stimmte auch das lokal exportierte `manifest.json` mit beiden Runnern überein. Alle drei Archive enthielten dieselbe Config-ID `sha256:224cb1b65cf25feb13fe8ab4f2719118affacdd5d5ac194390050f48d06673f2` und dieselben 43 geordneten Layer. Für diesen Vergleich ist die in `manifest.json` referenzierte Konfigurationsdatei maßgeblich. Die lokale Docker-Engine zeigte nach dem Laden den Digest des Manifests als `.Id` an. [PR-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44614092324/job/135878020924) · [Dispatch-Build](https://github.com/DZunke/Falkenwarte/actions/runs/44614080974/job/135877982014)
 
+Zwei unabhängige GitHub-Runner bauten v0.2.0 aus Commit `00d260efdb361deaa14fb75c76fa44a71e5965ba` mit derselben Image-ID `sha256:43bb9391eb18a4b6ea06aa3d4293d499eb0ce80915517e5826df6efdce7465d5` und denselben 43 RootFS-Layern. Die SHA-256-Werte für SBOM, Laufzeitinventar und Lizenzhinweise stimmen überein. [Erster Build](https://github.com/DZunke/Falkenwarte/actions/runs/44628082788/job/135927121539) · [Zweiter Build](https://github.com/DZunke/Falkenwarte/actions/runs/44628085255/job/135927134654)
+
 Das Verzeichnis enthält `sbom.cdx.json`, `THIRD-PARTY-NOTICES.txt`, `runtime-evidence.json` und `image-evidence.json`; das letzte bindet deren Hash an Image-ID, Commitlabel und Produktversion.
 
 ## 3. Ein öffentlicher Ursprung
