@@ -24,7 +24,7 @@ export default function DocsView({ path, navigate }: { path: string; navigate: (
     staleTime: 60_000,
   })
   const documents = manifestQuery.data?.documents ?? []
-  const selected = documents.find((document) => decodeURIComponent(path.replace(/^docs\/?/, '')) === document.path.replace(/^docs\/?/, '')) ?? documents[0]
+  const selected = documents.find((document) => decodeURIComponent(path.replace(/^docs\/?/, '')) === document.path.replace(/^docs\/?/, '')) ?? documents.find((document) => document.path === 'README.md') ?? documents[0]
   const query = search.trim().toLocaleLowerCase()
   const results = useMemo(() => documents.filter((document) => !query || `${document.title} ${document.searchText ?? ''}`.toLocaleLowerCase().includes(query)), [documents, query])
 

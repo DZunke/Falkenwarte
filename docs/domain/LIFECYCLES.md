@@ -4,6 +4,8 @@
 
 ## 1. Mehrere unabhängige Zustände
 
+Den fachlichen Übergängen sind im [Ereigniskatalog](EVENTS.md) die zugehörigen Verträge zugeordnet. Für Intake v1 legen das [Eingangsreceipt](../../contracts/schemas/ticket-receipt.schema.json) und der [Klassifikationsnachweis](../../contracts/schemas/classification-record.schema.json) die gespeicherten Aussagen fest.
+
 Ticketstatus, Intake, Run, Action, menschliche Aufmerksamkeit und Pluginzustand beschreiben verschiedene Dinge. Ein Drag-and-drop im Board verändert den Taskstatus. Es beendet keinen Agentlauf, erfüllt keine Rückfrage und erteilt keine menschliche Freigabe.
 
 Alle Übergänge tragen Akteur, Zeitpunkt, erwartete Version und Ursache. Ein abgewiesener Übergang liefert einen nachvollziehbaren fachlichen Konflikt. Ein unklarer externer Ausgang wird nicht allein durch Zeitablauf zu Erfolg.

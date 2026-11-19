@@ -12,10 +12,13 @@ foreach ($acceptanceHeadings as $heading) {
     $slug = strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', $transliterated === false ? $heading[2] : $transliterated), '-'));
     $acceptanceAnchors[$heading[1]] = strtolower($heading[1]).'---'.$slug;
 }
-$resultPath = $root.'/qa/results.json';
+$resultPath = getenv('FALKENWARTE_ACCEPTANCE_EVIDENCE') ?: $root.'/var/ci-evidence/acceptance.json';
 $results = is_file($resultPath) ? json_decode((string) file_get_contents($resultPath), true, 512, JSON_THROW_ON_ERROR) : [];
 $cases = [];
-$completeRunReference = !empty($results['commit']) && !empty($results['image']) && !empty($results['fixture_version']);
+$completeRunReference = ($results['overall_status'] ?? null) === 'passed'
+    && !empty($results['commit'])
+    && !empty($results['image'])
+    && !empty($results['fixture_version']);
 foreach ($results['cases'] ?? [] as $case) {
     if ($completeRunReference && ($case['status'] ?? '') === 'passed' && !empty($case['observed_outcome'])) {
         $cases[$case['acceptance_id']] = $case;
@@ -38,7 +41,7 @@ $implementationPaths = [
     'R13' => ['src/Extensions'],
     'R14' => ['src/Classification', 'src/Orchestration', 'src/Shared'],
     'R15' => ['contracts/openapi.yaml', 'frontend/src/generated'],
-    'R16' => ['frontend/src'],
+    'R16' => ['frontend/src', 'docs/MOCKUPS.md', 'docs/media/mockups'],
     'R17' => ['composer.json', 'src/Classification/Application/DecisionGateway.php', 'src/Classification/Infrastructure/SymfonyAiDecisionAdapter.php', 'src/Classification/Infrastructure/OpenAiDecisionsPlatform.php'],
     'R18' => ['docker/Dockerfile', 'compose.yaml', 'docker/entrypoint.sh'],
     'R19' => ['src/Live/Infrastructure/Live.php', 'docker/Caddyfile', 'compose.yaml', 'docker/Dockerfile'],
@@ -77,7 +80,7 @@ $documentationPaths = [
     'R13' => ['docs/PLUGIN_SYSTEM.md'],
     'R14' => ['docs/domain/CONTEXT_MAP.md', 'docs/PLUGIN_SYSTEM.md'],
     'R15' => ['contracts/README.md'],
-    'R16' => ['docs/USER_GUIDE.md'],
+    'R16' => ['docs/USER_GUIDE.md', 'docs/MOCKUPS.md'],
     'R17' => ['docs/AI_DECISIONS.md', 'docs/SOURCES.md'],
     'R18' => ['docs/OPERATIONS.md'],
     'R19' => ['docs/LIVE_SERVICES.md'],
@@ -117,10 +120,10 @@ $link = static function (string $path, bool $showMissing = false) use ($root): s
 
 $formatPaths = static function (array $paths, bool $showMissing = false) use ($link): string {
     $links = array_values(array_filter(array_map(static fn (string $path): string => $link($path, $showMissing), $paths)));
-    return $links === [] ? 'Noch nicht vorhanden' : implode('<br>', $links);
+    return $links === [] ? 'Noch nicht vorhanden' : implode(' · ', $links);
 };
 
-$rows = [];
+$rows = ['| ID | Anforderung | Umsetzung | Dokumentation | Abnahme | Nachweisstatus |', '|---|---|---|---|---|---|'];
 foreach ($requirements['requirements'] as $requirement) {
     $id = $requirement['id'];
     $requiredCases = $requirement['acceptance'];
@@ -160,7 +163,7 @@ $gates = [
     'M5' => ['A17', 'A18', 'A23', 'A32'],
     'M6' => ['A15', 'A19', 'A20', 'A21', 'A31'],
 ];
-$gateRows = [];
+$gateRows = ['| Meilenstein | Konzept-Gate | Bestanden mit referenziertem Laufbeleg |', '|---|---|---|'];
 foreach ($gates as $milestone => $requiredCases) {
     $passedCount = count(array_filter($requiredCases, static fn (string $caseId): bool => isset($cases[$caseId])));
     $gateRows[] = sprintf('| %s | %s | %d/%d Abnahmen mit Laufbeleg |', $milestone, implode(', ', $requiredCases), $passedCount, count($requiredCases));
@@ -170,7 +173,7 @@ $reportPath = $root.'/docs/TRACEABILITY.md';
 $report = (string) file_get_contents($reportPath);
 $replaceGenerated = static function (string $content, string $start, string $end, array $generated): string {
     $pattern = '/'.preg_quote($start, '/').'\s*.*?\s*'.preg_quote($end, '/').'/s';
-    $replacement = $start."\n".implode("\n", $generated)."\n".$end;
+    $replacement = $start."\n\n".implode("\n", $generated)."\n\n".$end;
     $updated = preg_replace($pattern, $replacement, $content, 1, $matches);
     if ($matches !== 1 || $updated === null) {
         throw new RuntimeException(sprintf('Generated section %s is missing or duplicated.', $start));
@@ -181,4 +184,4 @@ $report = $replaceGenerated($report, '<!-- generated requirements start -->', '<
 $report = $replaceGenerated($report, '<!-- generated gates start -->', '<!-- generated gates end -->', $gateRows);
 file_put_contents($reportPath, $report);
 
-fwrite(STDOUT, sprintf("Generated traceability for %d requirements. %d acceptance cases have passing evidence.\n", count($rows), count($cases)));
+fwrite(STDOUT, sprintf("Generated traceability for %d requirements. %d acceptance cases have release-grade passing evidence.\n", count($requirements['requirements']), count($cases)));

@@ -57,6 +57,35 @@ foreach ($files as $file) {
     }
 }
 
+$decisions = (string) file_get_contents($root.'/docs/DECISIONS.md');
+$ids = [];
+foreach (glob($root.'/docs/adr/*.md') as $adr) {
+    $content = (string) file_get_contents($adr);
+    if (!preg_match('/^# (ADR-(\d{4}))\b/', $content, $id) || basename($adr, '.md') !== $id[2] || isset($ids[$id[1]])) {
+        $errors[] = sprintf('ADR heading and filename must identify one unique decision in %s.', basename($adr));
+        continue;
+    }
+    $ids[$id[1]] = true;
+    if (!preg_match('/^\*\*Status:\*\* (accepted|proposed|rejected|superseded)\b/m', $content, $status)) {
+        $errors[] = $id[1].' has an unrecognized decision status.';
+    } elseif ('superseded' === $status[1] && !preg_match('/\[ADR-(?!'.preg_quote($id[2], '/').'\b)\d{4}\]\(\d{4}\.md\)/', $content)) {
+        $errors[] = $id[1].' must link the successor decision.';
+    }
+    if (!str_contains($decisions, '['.$id[1].'](adr/'.basename($adr).')')) {
+        $errors[] = $id[1].' is missing from the decision index.';
+    }
+}
+foreach (['EVENTS' => ['event-envelope', 'action-event', 'ui-change'], 'LIFECYCLES' => ['ticket-receipt', 'classification-record']] as $page => $contracts) {
+    $content = (string) file_get_contents($root.'/docs/domain/'.$page.'.md');
+    foreach ($contracts as $contract) {
+        $relative = 'contracts/schemas/'.$contract.'.schema.json';
+        $schema = json_decode((string) file_get_contents($root.'/'.$relative), true, flags: JSON_THROW_ON_ERROR);
+        if (!str_contains($content, $relative) || !preg_match('/v[1-9][0-9]*$/', $schema['$id'] ?? '')) {
+            $errors[] = $page.' must link the versioned schema '.$relative.'.';
+        }
+    }
+}
+
 if ($errors !== []) {
     fwrite(STDERR, implode("\n", array_map(static fn (string $error): string => 'ERROR: '.$error, $errors))."\n");
     exit(1);

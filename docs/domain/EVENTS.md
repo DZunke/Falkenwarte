@@ -39,6 +39,8 @@ Die Tabelle ist der fachliche Katalog. Die endgültigen serialisierten Typnamen 
 
 ## 3. Umschlag und Datenminimierung
 
+Der Eventvertrag v1 umfasst den [gemeinsamen Umschlag](../../contracts/schemas/event-envelope.schema.json), die [Action-Ereignisse](../../contracts/schemas/action-event.schema.json), den [Ticketstatuswechsel](../../contracts/schemas/task-moved.schema.json) und die [öffentlichen Änderungshinweise](../../contracts/schemas/ui-change.schema.json).
+
 Jeder Umschlag enthält stabile Event-ID, Typ, Schemaversion, Zeitpunkt, Projekt-/Aggregatreferenz, Aggregatversion, ActorRef, correlation_id, causation_id und Payload. Die Korrelation verbindet Intake, Run und Folgephase. Die Causation-ID verweist auf den konkreten Auslöser.
 
 Secrets, Authorization-Header, Sessioncookies und rohe fremde Transkripte gehören nicht in Ereignisse. Externe Antworten werden vor dem Speichern normalisiert und redigiert. Für die Klassifikation genügen nachvollziehbare Eingabereferenz, Fragen-/Policyversion und benötigte Antwortwerte; eine vollständige Promptkopie ist keine pauschale Loggingpflicht.

@@ -20,6 +20,7 @@ Jedes ADR beschreibt eine konkrete Richtungsentscheidung. Eine spätere Änderun
 | [ADR-0012](adr/0012.md) | GitHub-Lieferkette und dokumentierte Entwicklung | accepted |
 | [ADR-0013](adr/0013.md) | Linux und ein Produktionscontainer | accepted |
 | [ADR-0014](adr/0014.md) | Restore sperrt neue automatische Ausführung | accepted |
+| [ADR-0015](adr/0015.md) | QA für den Release-Pull-Request | accepted |
 
 ## Noch praktisch nachzuweisen
 

@@ -37,7 +37,7 @@ foreach (['README.md', 'USER_GUIDE.md', 'OPERATIONS.md', 'domain/GLOSSARY.md', '
 foreach ($pages as $page) {
     $path = $page['path'];
     $dir = dirname($path);
-    $fragment = (string) $converter->convert($page['markdown']);
+    $fragment = (string) $converter->convert(preg_replace('/^<!-- generated [^>]+ -->$/m', '', $page['markdown']));
     $dom = new DOMDocument('1.0', 'UTF-8');
     $dom->loadHTML('<!doctype html><html lang="de"><head><meta charset="utf-8"></head><body><article>'.$fragment.'</article></body></html>', LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_NONET);
     $xpath = new DOMXPath($dom);
