@@ -121,7 +121,7 @@ final class Live
             $topics = array_values(array_unique([$this->topic($row['project_id']), $this->topic(null)]));
             $hub = new Hub(getenv('MERCURE_INTERNAL_URL') ?: $this->publicUrl(), new StaticTokenProvider($this->token(true, $topics, 'outbox')), publicUrl: $this->publicUrl(), httpClient: HttpClient::create(['timeout' => 2, 'max_duration' => 3]));
             $hub->publish(new Update($topics, $row['change_json'], true));
-            $this->store->db()->update('events',['published' => 1],['seq' => $row['seq']]);
+            $this->store->db()->update('events', ['published' => 1], ['seq' => $row['seq']]);
         }
     }
 }

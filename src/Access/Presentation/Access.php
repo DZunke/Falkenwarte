@@ -195,11 +195,11 @@ final class Access
             return $this->store->save('tokens', $token, 'access.token_revoked');
         }
         if ('secret_references_list' === $op) {
-            return $this->store->page($this->store->all('secret_references'),$p);
+            return $this->store->page($this->store->all('secret_references'), $p);
         }
-        $meta = 'secret_references_create' === $op ? ['id' => $this->store->id(), 'label' => $b['label']] : $this->store->get('secret_references',$p['secret_id']);
-        $this->store->putSecret($meta['id'],$b['value']);
+        $meta = 'secret_references_create' === $op ? ['id' => $this->store->id(), 'label' => $b['label']] : $this->store->get('secret_references', $p['secret_id']);
+        $this->store->putSecret($meta['id'], $b['value']);
 
-        return $this->store->save('secret_references',array_replace($meta,['configured' => true, 'rotated_at' => $this->store->now()]),'access.secret_configured');
+        return $this->store->save('secret_references', array_replace($meta, ['configured' => true, 'rotated_at' => $this->store->now()]), 'access.secret_configured');
     }
 }

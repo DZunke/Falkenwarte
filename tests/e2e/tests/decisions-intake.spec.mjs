@@ -220,6 +220,64 @@ test('A22 A24 A25 A28 technical MCP intake asks and resolves missing information
     expect(taskAfterAnswer.data.classification_required).toBe(finalReceipt.structuredContent.outcome !== 'ready');
     expect(taskAfterAnswer.data.label_ids).toContain(topic.id);
 
+    const deliveryCollection = await agent.call('tasks_link_collection_create', {
+      task_id: initialReceipt.task_id,
+      name: 'Ergebnisse',
+      kind: 'delivery',
+      client_request_id: `qa-delivery-${randomUUID()}`,
+      expected_version: taskAfterAnswer.data.version,
+    });
+    expect(deliveryCollection.isError).toBe(false);
+    const githubPullRequest = await agent.call('tasks_link_register', {
+      task_id: initialReceipt.task_id,
+      collection_id: deliveryCollection.structuredContent.id,
+      title: 'GitHub Pull Request 43',
+      url: 'https://github.com/example/falkenwarte/pull/43',
+      kind: 'pull_request',
+      relation: 'delivers',
+      client_request_id: `qa-github-pr-${randomUUID()}`,
+      expected_version: deliveryCollection.structuredContent.task_version,
+    });
+    expect(githubPullRequest.isError).toBe(false);
+    const gitlabMergeRequest = await agent.call('tasks_link_register', {
+      task_id: initialReceipt.task_id,
+      collection_id: deliveryCollection.structuredContent.id,
+      title: 'GitLab Merge Request 44',
+      url: 'https://gitlab.example.org/falkenwarte/app/-/merge_requests/44',
+      kind: 'merge_request',
+      relation: 'delivers',
+      client_request_id: `qa-gitlab-mr-${randomUUID()}`,
+      expected_version: githubPullRequest.structuredContent.task_version,
+    });
+    expect(gitlabMergeRequest.isError).toBe(false);
+    const jiraSource = await agent.call('tasks_link_register', {
+      task_id: initialReceipt.task_id,
+      collection_id: sourceCollection.id,
+      title: 'Jira-QA-42',
+      url: 'https://jira.example.org/browse/QA-42',
+      kind: 'source_issue',
+      relation: 'source',
+      client_request_id: `qa-jira-${randomUUID()}`,
+      expected_version: gitlabMergeRequest.structuredContent.task_version,
+    });
+    expect(jiraSource.isError).toBe(false);
+
+    const linksAfterRegistration = await agent.call('tasks_links_list', { task_id: initialReceipt.task_id });
+    expect(linksAfterRegistration.isError).toBe(false);
+    const allLinks = linksAfterRegistration.structuredContent.items.flatMap((collection) => collection.links);
+    expect(allLinks.map((link) => link.url)).toEqual(expect.arrayContaining([
+      'https://github.com/example/falkenwarte/pull/43',
+      'https://gitlab.example.org/falkenwarte/app/-/merge_requests/44',
+      'https://jira.example.org/browse/QA-42',
+    ]));
+    for (const link of allLinks.filter((item) => ['GitHub Pull Request 43', 'GitLab Merge Request 44', 'Jira-QA-42'].includes(item.title))) {
+      expect(link.registered_by).toBeTruthy();
+      expect(Number.isNaN(Date.parse(link.registered_at))).toBe(false);
+    }
+    const linkHistory = await ownerApi.get(`/history?resource_type=task&resource_id=${initialReceipt.task_id}&limit=100`);
+    expect(linkHistory.response.status()).toBe(200);
+    expect(linkHistory.data.items.some((revision) => revision.summary === 'task.link_registered')).toBe(true);
+
     const decisionsJournal = await qaMocks.decisionsJournal();
     expect(decisionsJournal.requests.length).toBeGreaterThanOrEqual(2);
     expect(decisionsJournal.requests.every((entry) => entry.validation_error === null)).toBe(true);
@@ -235,7 +293,8 @@ test('A22 A24 A25 A28 technical MCP intake asks and resolves missing information
 
     recordEvidence(
       'Ein Agenteneingang wird vor der Klassifikation dauerhaft gespeichert, liefert needs_information mit konkreter Rückfrage und Agentenzuständigkeit, und Ergänzungen klassifizieren denselben Task erneut. Links bleiben passive Referenzen.',
-      `MCP legte Ticket ${initialReceipt.task_id} und Intake ${initialReceipt.intake_id} an; Decisions wurde ${decisionsJournal.requests.length} Mal mit gpt-6-luna und validierten nativen Fragen aufgerufen; expected_behavior wurde angefragt und beantwortet; der Task blieb derselbe, erhielt Herkunft mcp und die Topic-ID ${topic.id}. Ein javascript-Link wurde mit -32602 aus dem MCP-Schema zurückgewiesen; ein syntaktisch gültiger HTTPS-Link mit Zugangsdaten wurde als Domainfehler abgelehnt, ohne gespeicherte Links zu ändern; origin=manual wurde zurückgewiesen.`,
+      `MCP legte Ticket ${initialReceipt.task_id} und Intake ${initialReceipt.intake_id} an; Decisions wurde ${decisionsJournal.requests.length} Mal mit gpt-6-luna und validierten nativen Fragen aufgerufen; expected_behavior wurde angefragt und beantwortet; der Task blieb derselbe, erhielt Herkunft mcp und die Topic-ID ${topic.id}. Ein javascript-Link wurde mit -32602 aus dem MCP-Schema zurückgewiesen; ein syntaktisch gültiger HTTPS-Link mit Zugangsdaten wurde als Domainfehler abgelehnt, ohne gespeicherte Links zu ändern; GitHub PR, GitLab MR und Jira-Quelle wurden mit Akteur/Zeitstempel historisiert; origin=manual wurde zurückgewiesen.`,
+      { decisions: decisionsJournal },
     );
   } finally {
     await simulator.close();
@@ -243,12 +302,12 @@ test('A22 A24 A25 A28 technical MCP intake asks and resolves missing information
 });
 
 test('A26 A27 unclear Decisions result keeps an explicit human decision open', async ({ ownerApi, qaMocks }) => {
-  test.info().annotations.push({ type: 'expected', description: 'Mehrdeutige Klassifikation erzeugt eine sichtbare menschliche Entscheidung und vergibt keine automatische Freigabe.' });
+  test.info().annotations.push({ type: 'expected', description: 'Überholte Intake-Gründe werden beim neuen Assessment geschlossen; ein offener Attention-Grund bleibt trotz Labelentfernung bestehen und wird nur durch die konkrete Entscheidung aufgelöst.' });
   const project = await ownerApi.createProject({ name: 'Mehrdeutige Entscheidung', color: '#C17778' });
   const { topic, workflowLabels } = await configureIntake(ownerApi, project, { expectedInformation: false });
   const simulator = await createAgent(ownerApi, project);
   try {
-    await qaMocks.setDecisionsScenario('decisions_ambiguous');
+    await qaMocks.setDecisionsScenario('decisions_transport_exhausted');
     const result = await simulator.agent.call('tasks_create', {
       client_request_id: `qa-ambiguous-${randomUUID()}`,
       project_id: project.id,
@@ -258,37 +317,68 @@ test('A26 A27 unclear Decisions result keeps an explicit human decision open', a
       prefer_wait_ms: 1500,
     });
     expect(result.isError, JSON.stringify(result)).toBe(false);
-    const receipt = ['needs_human_decision'].includes(result.structuredContent.outcome)
+    const unavailable = ['classification_unavailable'].includes(result.structuredContent.outcome)
       ? result
-      : await waitForIntake(simulator.agent, result.structuredContent.task_id, ['needs_human_decision']);
+      : await waitForIntake(simulator.agent, result.structuredContent.task_id, ['classification_unavailable']);
+    expect(unavailable.structuredContent.outcome).toBe('classification_unavailable');
+    expect(unavailable.structuredContent.human_attention.required).toBe(true);
+
+    const taskId = unavailable.structuredContent.task_id;
+    const failedTask = await ownerApi.get(`/tasks/${taskId}`);
+    expect(failedTask.response.status()).toBe(200);
+    await qaMocks.setDecisionsScenario('decisions_ambiguous');
+    const reclassified = await ownerApi.post(`/tasks/${taskId}/intake/reclassify`, {
+      reason: 'Neues Assessment nach dem früheren Providerfehler.',
+    }, { version: failedTask.data.version });
+    expect([200, 202], JSON.stringify(reclassified.data)).toContain(reclassified.response.status());
+    const receipt = await waitForIntake(simulator.agent, taskId, ['needs_human_decision']);
     expect(receipt.structuredContent.outcome).toBe('needs_human_decision');
     expect(receipt.structuredContent.human_attention.required).toBe(true);
 
-    const taskId = receipt.structuredContent.task_id;
     const taskBeforeLabelChange = await ownerApi.get(`/tasks/${taskId}`);
     expect(taskBeforeLabelChange.response.status()).toBe(200);
+    expect(taskBeforeLabelChange.data.human_attention.reasons).toEqual(['routing_ambiguous']);
     const labels = await ownerApi.get(`/projects/${project.id}/labels`);
     expect(labels.response.status()).toBe(200);
-    const attention = labels.data.items.find((label) => label.kind === 'attention' && label.active);
-    expect(attention, 'The project must expose its system-managed attention label.').toBeTruthy();
+    const attention = labels.data.items.find((label) => label.key === 'attention:routing_ambiguous');
+    expect(attention, 'The stable system label must be visible in the project label list.').toMatchObject({
+      kind: 'attention',
+      active: true,
+      system_managed: true,
+    });
+    expect(taskBeforeLabelChange.data.label_ids).toContain(attention.id);
+    const supersededAttention = labels.data.items.find((label) => label.key === 'attention:classification_unavailable');
+    expect(taskBeforeLabelChange.data.label_ids).not.toContain(supersededAttention.id);
 
-    const rejectedAttentionWrite = await ownerApi.put(`/tasks/${taskId}/labels`, {
-      label_ids: [attention.id],
-      primary_topic_label_id: null,
-      reason: 'QA versucht, die Systemaufmerksamkeit manuell zu setzen.',
-      routing_application: 'next_instance',
-    }, { version: taskBeforeLabelChange.data.version });
-    expect(rejectedAttentionWrite.response.status(), JSON.stringify(rejectedAttentionWrite.data)).toBe(403);
+    const editedAttention = await ownerApi.patch(`/projects/${project.id}/labels/${attention.id}`, {
+      name: 'Workflow wählen · QA',
+      color: '#A34545',
+    }, { version: attention.version });
+    expect(editedAttention.response.status(), JSON.stringify(editedAttention.data)).toBe(200);
+    expect(editedAttention.data.id).toBe(attention.id);
+    expect(editedAttention.data.version).toBe(attention.version + 1);
+    const staleAttentionEdit = await ownerApi.patch(`/projects/${project.id}/labels/${attention.id}`, {
+      color: '#E4B85F',
+    }, { version: attention.version });
+    expect(staleAttentionEdit.response.status(), JSON.stringify(staleAttentionEdit.data)).toBe(412);
+    expect(staleAttentionEdit.data.code).toBe('version_conflict');
+    const deactivateAttention = await ownerApi.patch(`/projects/${project.id}/labels/${attention.id}`, {
+      active: false,
+    }, { version: editedAttention.data.version });
+    expect(deactivateAttention.response.status(), JSON.stringify(deactivateAttention.data)).toBe(409);
+    expect(deactivateAttention.data.code).toBe('system_label_immutable');
 
     const clearedLabels = await ownerApi.put(`/tasks/${taskId}/labels`, {
-      label_ids: [],
-      primary_topic_label_id: null,
-      reason: 'QA entfernt gewöhnliche Labels, ohne die offene Entscheidung zu beantworten.',
+      label_ids: taskBeforeLabelChange.data.label_ids.filter((labelId) => labelId !== attention.id),
+      primary_topic_label_id: taskBeforeLabelChange.data.primary_topic_label_id,
+      reason: 'QA entfernt ausschließlich das abgeleitete Attentionlabel, ohne die offene Entscheidung zu beantworten.',
       routing_application: 'next_instance',
     }, { version: taskBeforeLabelChange.data.version });
     expect(clearedLabels.response.status(), JSON.stringify(clearedLabels.data)).toBe(200);
     expect(clearedLabels.data.human_attention.required).toBe(true);
     expect(clearedLabels.data.human_attention.reasons).toContain('routing_ambiguous');
+    expect(clearedLabels.data.human_attention.reasons).not.toContain('classification_unavailable');
+    expect(clearedLabels.data.label_ids).toContain(attention.id);
 
     const explicitDecision = await ownerApi.post(`/tasks/${taskId}/intake/decision`, {
       label_ids: [topic.id],
@@ -299,13 +389,20 @@ test('A26 A27 unclear Decisions result keeps an explicit human decision open', a
     expect(explicitDecision.response.status(), JSON.stringify(explicitDecision.data)).toBe(200);
     expect(explicitDecision.data.outcome).toBe('ready');
     expect(explicitDecision.data.human_attention.required).toBe(false);
+    expect(explicitDecision.data.human_attention.reasons).toEqual([]);
+    const settledTask = await ownerApi.get(`/tasks/${taskId}`);
+    expect(settledTask.response.status(), JSON.stringify(settledTask.data)).toBe(200);
+    expect(settledTask.data.human_attention).toEqual({ required: false, reasons: [] });
+    expect(settledTask.data.label_ids).not.toContain(attention.id);
+    test.info().annotations.push({ type: 'partial', description: 'A27' });
 
     const decisionsJournal = await qaMocks.decisionsJournal();
-    expect(decisionsJournal.requests.length).toBeGreaterThan(0);
-    expect(decisionsJournal.requests[0].validation_error).toBeNull();
+    expect(decisionsJournal.requests.length).toBeGreaterThanOrEqual(3);
+    expect(decisionsJournal.requests.every((entry) => entry.validation_error === null)).toBe(true);
     recordEvidence(
-      'Mehrdeutige Workflowauswahl fordert eine echte Eigentümerentscheidung und lässt die Agentenmeldung ohne automatische Freigabe bestehen.',
-      `Ticket ${taskId} erreichte needs_human_decision mit human_attention.required=true nach einem validierten Decisions-Aufruf. Das Setzen eines systemverwalteten Attentionlabels wurde mit HTTP 403 abgewiesen; das Entfernen aller regulären Labels ließ Grund routing_ambiguous bestehen; erst die explizite Intakeentscheidung führte zu ready und human_attention.required=false.`,
+      'Mehrdeutige Klassifikation zeigt ein systemverwaltetes Attentionlabel. Die Entfernung dieses Labels kann den fachlichen Grund nicht verbergen; erst die passende Eigentümerentscheidung schließt ihn. Gründe aus früheren Intake-Generationen werden beim neuen Assessment nicht weiter angezeigt. Die gleichzeitige Auflösung mehrerer Gründe verschiedener Quellen bleibt in dieser Spec offen.',
+      `Ticket ${taskId} erreichte zuerst classification_unavailable und nach einem neuen validierten Decisions-Assessment needs_human_decision. Der frühere Intake-Grund wurde durch die neue Assessment-Generation geschlossen; nur routing_ambiguous blieb offen und dessen systemverwaltetes Label war auf Projekt- und Ticketebene sichtbar. Name und Farbe ließen sich bei stabiler Label-ID aktualisieren; ein veralteter Versionsschreibversuch erhielt 412 version_conflict, die Deaktivierung 409 system_label_immutable. Ein Owner-Schreibvorgang, der nur das Attentionlabel aus der Labelzuordnung entfernte, erhielt Grund und Label. Erst tasks_intake_decide führte zu ready, human_attention.required=false und entfernte die abgeleitete Ticketzuordnung.`,
+      { decisions: decisionsJournal },
     );
   } finally {
     await simulator.close();
@@ -365,6 +462,76 @@ test('A26 Decisions refusal, limited retry, and exhausted transport stay disting
     recordEvidence(
       'Ein typisiertes Refusal führt zu menschlicher Entscheidung, ein HTTP 429 wird innerhalb der konfigurierten Wiederholungen behoben, und ausgeschöpfte Verbindungsversuche enden als classification_unavailable.',
       `Refusal erreichte needs_human_decision; der Rate-Limit-Aufruf wurde in ${retryCalls.length} Versuchen mit HTTP 429 gefolgt von HTTP 200 abgeschlossen und erreichte ready; der Transportfehler wurde ${exhaustedCalls.length} Mal versucht und blieb classification_unavailable. Alle Antworten waren fachliche Intake-Zustände statt JSON-RPC-Fehler.`,
+      { decisions: journal },
+    );
+  } finally {
+    await simulator.close();
+  }
+});
+
+test('A33 stale Decisions response cannot overwrite a newer ticket revision', async ({ ownerApi, qaMocks }) => {
+  test.info().annotations.push({ type: 'expected', description: 'Eine verspätete Decisions-Antwort wird als überholt protokolliert und überschreibt weder die neuere Ticketrevision noch deren erneute Klassifikation.' });
+  const project = await ownerApi.createProject({ name: 'Veraltete Klassifikation', color: '#887AA8' });
+  const { topic } = await configureIntake(ownerApi, project, { expectedInformation: false });
+  const simulator = await createAgent(ownerApi, project);
+  try {
+    await qaMocks.setDecisionsScenario('decisions_delayed');
+    const created = await simulator.agent.call('tasks_create', {
+      client_request_id: `qa-stale-${randomUUID()}`,
+      project_id: project.id,
+      title: 'Klassifikation beginnt mit altem Tickettext',
+      description: 'Die Klassifikation wartet auf eine kontrolliert verzögerte Antwort.',
+      suggested_label_ids: [topic.id],
+      prefer_wait_ms: 0,
+    });
+    expect(created.isError, JSON.stringify(created)).toBe(false);
+    const initialReceipt = created.structuredContent;
+    expect(initialReceipt.task_id).toBeTruthy();
+    expect(initialReceipt.action_id).toBeTruthy();
+
+    await expect.poll(async () => (await qaMocks.decisionsJournal()).requests.length, { timeout: 10_000 }).toBe(1);
+    const heldJournal = await qaMocks.decisionsJournal();
+    expect(heldJournal.requests[0].outcome).toBe('held_at_barrier');
+    const beforeChange = await ownerApi.get(`/tasks/${initialReceipt.task_id}`);
+    expect(beforeChange.response.status()).toBe(200);
+    const revised = await ownerApi.patch(`/tasks/${initialReceipt.task_id}`, {
+      title: 'Klassifikation bezieht sich auf den neuen Tickettext',
+    }, { version: beforeChange.data.version });
+    expect(revised.response.status(), JSON.stringify(revised.data)).toBe(200);
+    await qaMocks.releaseDecisions();
+
+    const finalReceipt = await waitForIntake(simulator.agent, initialReceipt.task_id, ['ready']);
+    expect(finalReceipt.structuredContent.outcome).toBe('ready');
+    const finalTask = await ownerApi.get(`/tasks/${initialReceipt.task_id}`);
+    expect(finalTask.data.title).toBe('Klassifikation bezieht sich auf den neuen Tickettext');
+    expect(finalTask.data.label_ids).toContain(topic.id);
+
+    const actionHistory = await ownerApi.get(`/history?action_id=${encodeURIComponent(initialReceipt.action_id)}&limit=100`);
+    expect(actionHistory.response.status(), JSON.stringify(actionHistory.data)).toBe(200);
+    const classificationIds = [...new Set(actionHistory.data.items
+      .filter((revision) => revision.resource?.resource_type === 'classification')
+      .map((revision) => revision.resource.id))];
+    expect(classificationIds.length).toBeGreaterThanOrEqual(2);
+    const records = await Promise.all(classificationIds.map(async (classificationId) => {
+      const result = await ownerApi.get(`/tasks/${initialReceipt.task_id}/classifications/${classificationId}`);
+      expect(result.response.status(), JSON.stringify(result.data)).toBe(200);
+      return result.data;
+    }));
+    const staleRecord = records.find((record) => record.task_revision === beforeChange.data.version);
+    const appliedRecord = records.find((record) => record.task_revision === revised.data.version);
+    expect(staleRecord, 'The outdated provider answer must remain inspectable.').toBeTruthy();
+    expect(staleRecord.applied).toBe(false);
+    expect(appliedRecord).toBeTruthy();
+    expect(appliedRecord.applied).toBe(true);
+    expect(appliedRecord.outcome).toBe('ready');
+
+    const decisionsJournal = await qaMocks.decisionsJournal();
+    expect(decisionsJournal.requests.length).toBeGreaterThanOrEqual(2);
+    expect(decisionsJournal.requests.every((entry) => entry.validation_error === null)).toBe(true);
+    recordEvidence(
+      'Eine verspätete Antwort bleibt unapplied; ein neuer fachlicher Versuch klassifiziert ausschließlich die aktuellste Ticketrevision.',
+      `Die erste Klassifikation für Revision ${beforeChange.data.version} blieb applied=false. Nach der Eigentümeränderung auf Revision ${revised.data.version} wurde ein neuer gültiger Decisions-Aufruf ausgeführt und erreichte ready mit applied=true. Tickettext und Topiclabel der aktuellen Revision blieben erhalten; beide Klassifikationen sind über die öffentliche History und Classification-API prüfbar.`,
+      { decisions: { ...decisionsJournal, barrier_observed: heldJournal.requests[0].outcome === 'held_at_barrier' } },
     );
   } finally {
     await simulator.close();

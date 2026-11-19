@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Presentation;
 
+use App\Extensions\Application\PluginRegistry;
 use App\Shared\Application\Actor;
 use App\Shared\Domain\Problem;
 use Mcp\Schema\Content\TextContent;
@@ -13,13 +14,16 @@ use Mcp\Server\Handler\ToolHandlerInterface;
 
 final readonly class McpTool implements ToolHandlerInterface
 {
-    public function __construct(private array $tool, private Actor $actor, private Gateway $app, private Contract $contract)
+    public function __construct(private array $tool, private Actor $actor, private Gateway $app, private Contract $contract, private PluginRegistry $plugins)
     {
     }
 
     public function execute(array $arguments, ClientGateway $gateway): mixed
     {
         try {
+            if (isset($this->tool['required_plugin']) && !$this->plugins->enabled($this->tool['required_plugin'])) {
+                throw new Problem(409, 'capability_unavailable', 'The plugin capability for this MCP tool is not enabled.');
+            }
             $this->contract->validate(json_decode(json_encode((object) $arguments, JSON_THROW_ON_ERROR)), $this->tool['inputSchema']);
             $op = $this->contract->op($this->tool['operation_id']);
             $p = $this->contract->params($op, $arguments, $arguments);

@@ -125,7 +125,7 @@ final readonly class HttpEndpoint
             $details = $problem->details();
             error_log($details['trace_id'].' '.$e::class.': '.$e->getMessage().' in '.$e->getFile().':'.$e->getLine());
 
-            return new JsonResponse($details,500,['Content-Type' => 'application/problem+json', 'Cache-Control' => 'no-store']);
+            return new JsonResponse($details, 500, ['Content-Type' => 'application/problem+json', 'Cache-Control' => 'no-store']);
         }
     }
 }

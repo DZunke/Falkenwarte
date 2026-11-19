@@ -34,14 +34,14 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
     public function invoke(string|Model $model, array|string|object $input, array $options = []): DeferredResult
     {
         $modelName = $model instanceof Model ? $model->getName() : $model;
-        if ($modelName !== 'gpt-6-luna') {
+        if ('gpt-6-luna' !== $modelName) {
             throw new DecisionProviderException('Für die Klassifikation ist ausschließlich gpt-6-luna zugelassen.', retryable: false);
         }
 
         $apiKey = $options['api_key'] ?? null;
         $questions = $options['questions'] ?? null;
         $timeoutMs = $options['timeout_ms'] ?? 10000;
-        if (!is_string($apiKey) || trim($apiKey) === '' || !is_array($questions) || !is_int($timeoutMs)) {
+        if (!is_string($apiKey) || '' === trim($apiKey) || !is_array($questions) || !is_int($timeoutMs)) {
             throw new DecisionProviderException('Die Decisions-Verbindung ist nicht vollständig konfiguriert.', retryable: false);
         }
 
@@ -76,11 +76,8 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
         }
 
         if ($status < 200 || $status >= 300) {
-            $retryable = $status === 429 || $status >= 500;
-            throw new DecisionProviderException(
-                $retryable ? 'OpenAI Decisions ist vorübergehend nicht verfügbar.' : 'OpenAI Decisions hat die Anfrage abgewiesen.',
-                retryable: $retryable,
-            );
+            $retryable = 429 === $status || $status >= 500;
+            throw new DecisionProviderException($retryable ? 'OpenAI Decisions ist vorübergehend nicht verfügbar.' : 'OpenAI Decisions hat die Anfrage abgewiesen.', retryable: $retryable);
         }
         if (!isset($body['answers']) || !is_array($body['answers'])) {
             throw new DecisionProviderException('OpenAI Decisions lieferte kein gültiges Antwortformat.', retryable: false);
@@ -110,7 +107,7 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
     {
         $normalized = [];
         foreach ($questions as $name => $question) {
-            if (!is_string($name) || $name === '' || !is_array($question)) {
+            if (!is_string($name) || '' === $name || !is_array($question)) {
                 throw new DecisionProviderException('Eine Decisions-Frage ist ungültig.', retryable: false);
             }
             $type = $question['type'] ?? null;
@@ -120,7 +117,7 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
             $normalized[] = ['type' => $type, 'name' => $name] + $question;
         }
 
-        if ($normalized === [] || count($normalized) > 400) {
+        if ([] === $normalized || count($normalized) > 400) {
             throw new DecisionProviderException('Die Anzahl der Decisions-Fragen liegt außerhalb des erlaubten Bereichs.', retryable: false);
         }
 
@@ -130,12 +127,12 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
     private function endpoint(): string
     {
         $environment = $_SERVER['APP_ENV'] ?? $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'prod';
-        if ($environment !== 'test') {
+        if ('test' !== $environment) {
             return self::ENDPOINT;
         }
 
         $endpoint = $_SERVER['DECISIONS_TEST_ENDPOINT'] ?? $_ENV['DECISIONS_TEST_ENDPOINT'] ?? getenv('DECISIONS_TEST_ENDPOINT') ?: '';
-        if ($endpoint === '') {
+        if ('' === $endpoint) {
             throw new DecisionProviderException('Der Decisions-Testendpunkt ist nicht konfiguriert.', retryable: false);
         }
 
@@ -179,7 +176,7 @@ final readonly class OpenAiDecisionsModelCatalog implements ModelCatalogInterfac
 {
     public function getModel(string $modelName): Model
     {
-        if ($modelName !== 'gpt-6-luna') {
+        if ('gpt-6-luna' !== $modelName) {
             throw new \InvalidArgumentException('Unbekanntes Decisions-Modell.');
         }
 

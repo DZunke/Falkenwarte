@@ -1,5 +1,7 @@
 <?php
+
 declare(strict_types=1);
+
 namespace App\Shared\Application;
 
 use App\Shared\Domain\Problem;
@@ -31,6 +33,6 @@ final readonly class Actor
 
     public function ref(): array
     {
-        return ['kind' => $this->owner ? 'owner' : ($this->id === 'system' ? 'system' : 'agent'), 'id' => $this->id] + ($this->name === '' ? [] : ['display_name' => $this->name]);
+        return ['kind' => $this->owner ? 'owner' : ('system' === $this->id ? 'system' : 'agent'), 'id' => $this->id] + ('' === $this->name ? [] : ['display_name' => $this->name]);
     }
 }

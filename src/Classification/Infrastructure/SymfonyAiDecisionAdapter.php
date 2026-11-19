@@ -7,7 +7,6 @@ namespace App\Classification\Infrastructure;
 use App\Classification\Application\DecisionGateway;
 use App\Classification\Application\DecisionProviderException;
 use Symfony\AI\Platform\PlatformInterface;
-use Symfony\AI\Platform\Result\DeferredResult;
 
 /**
  * Keeps application handlers on the DecisionGateway port while routing calls through Symfony AI.
@@ -35,16 +34,9 @@ final readonly class SymfonyAiDecisionAdapter implements DecisionGateway
             'timeout_ms' => $timeoutMs,
         ]);
 
-        if (!$result instanceof DeferredResult) {
-            throw new DecisionProviderException('Die Decisions-Plattform lieferte kein Ergebnis.', retryable: false);
-        }
-
         $content = $result->asObject();
         if (is_object($content)) {
             $content = get_object_vars($content);
-        }
-        if (!is_array($content)) {
-            throw new DecisionProviderException('Die Decisions-Antwort ist ungültig.', retryable: false);
         }
 
         $metadata = $result->getMetadata()->all();

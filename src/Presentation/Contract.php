@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Presentation;
 
-use App\Shared\Domain\Problem;
 use App\Extensions\Application\PluginRegistry;
+use App\Shared\Domain\Problem;
 use Opis\JsonSchema\Errors\ErrorFormatter;
 use Opis\JsonSchema\Validator;
 use Symfony\Component\Yaml\Yaml;
@@ -62,7 +62,7 @@ final class Contract
         $tools = json_decode(file_get_contents($this->root.'/contracts/mcp-tools.json'), true, flags: JSON_THROW_ON_ERROR)['tools'];
         foreach ($plugins?->mcpTools() ?? [] as $tool) {
             $operation = $this->op((string) $tool['operation_id']);
-            if (isset($tool['required_plugin']) === false || !isset($operation['x-application-operation'])) {
+            if (false === isset($tool['required_plugin']) || !isset($operation['x-application-operation'])) {
                 throw new Problem(500, 'plugin_contract_invalid', 'A plugin MCP tool does not reference an application operation.');
             }
             $tools[] = $tool;
@@ -222,7 +222,7 @@ final class Contract
                 if (isset($schema['properties'][$k])) {
                     $result[$k] = $this->project($schema['properties'][$k], $v);
                 } elseif (($schema['additionalProperties'] ?? true) !== false) {
-                    $result[$k] = $this->project(is_array($schema['additionalProperties'] ?? null) ? $schema['additionalProperties'] : [],$v);
+                    $result[$k] = $this->project(is_array($schema['additionalProperties'] ?? null) ? $schema['additionalProperties'] : [], $v);
                 }
             }
 

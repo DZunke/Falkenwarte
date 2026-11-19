@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Classification\Application;
 
+use App\Classification\Domain\IntakeOutcome;
 use App\Shared\Application\Actor;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
@@ -75,7 +76,7 @@ final class IntakeHandler implements TaskIntake
             $taskId = $this->stringField($task, 'id');
             $current = $this->store->get('tasks', $taskId);
             $existing = $this->latestIntake($taskId, $current['project_id']);
-            if ($existing !== null) {
+            if (null !== $existing) {
                 return $this->receipt($current, $existing);
             }
 
@@ -84,7 +85,7 @@ final class IntakeHandler implements TaskIntake
             $taxonomyVersion = $this->taxonomyVersion($current['project_id']);
             $updated = $current;
             $updated['classification_required'] = true;
-            $updated['intake_outcome'] = 'accepted';
+            $updated['intake_outcome'] = IntakeOutcome::ACCEPTED->value;
             $updated['classification_id'] = null;
             $updated['human_attention'] = $this->humanAttention($taskId, $current['project_id']);
             $updated = $this->store->save('tasks', $updated, 'task.intake_accepted');
@@ -96,7 +97,7 @@ final class IntakeHandler implements TaskIntake
                 'requester' => $actor->ref(),
                 'task_version' => $updated['version'],
                 'assessed_task_revision' => null,
-                'outcome' => 'accepted',
+                'outcome' => IntakeOutcome::ACCEPTED->value,
                 'assessment_status' => 'queued',
                 'waiting_for' => 'none',
                 'missing_fields' => [],
@@ -129,10 +130,11 @@ final class IntakeHandler implements TaskIntake
 
         $actionId = $this->store->actionId();
         $this->store->context($actor, $actionId);
+
         return $this->store->atomic(function () use ($task, $actor, $projectId, $actionId): array {
             $current = $this->store->get('tasks', $task['id']);
             $current['classification_required'] = true;
-            $current['intake_outcome'] = 'accepted';
+            $current['intake_outcome'] = IntakeOutcome::ACCEPTED->value;
             $current = $this->store->save('tasks', $current, 'task.classification_requested');
             if (($current['label_ids'] ?? []) !== [] || ($current['primary_topic_label_id'] ?? null) !== null || ($current['workflow_label_id'] ?? null) !== null) {
                 $this->store->save('classification_controls', [
@@ -150,7 +152,7 @@ final class IntakeHandler implements TaskIntake
                 'requester' => $actor->ref(),
                 'task_version' => $current['version'],
                 'assessed_task_revision' => null,
-                'outcome' => 'accepted',
+                'outcome' => IntakeOutcome::ACCEPTED->value,
                 'assessment_status' => 'queued',
                 'waiting_for' => 'none',
                 'missing_fields' => [],
@@ -185,17 +187,18 @@ final class IntakeHandler implements TaskIntake
         return $this->store->atomic(function () use ($taskId, $projectId, $actor, $reason, $suggestedLabelIds): ?array {
             $current = $this->store->get('tasks', $taskId);
             $previous = $this->latestIntake($taskId, $projectId);
-            if ($previous === null) {
+            if (null === $previous) {
                 if (in_array($current['origin'], ['mcp', 'technical_api'], true)) {
                     return $this->acceptTechnicalTask($current, $actor, $this->store->actionId(), $suggestedLabelIds);
                 }
+
                 return $this->acceptManualTask($current, $actor);
             }
 
             $actionId = $this->store->actionId();
             $this->store->context($actor, $actionId);
             $current['classification_required'] = true;
-            $current['intake_outcome'] = 'accepted';
+            $current['intake_outcome'] = IntakeOutcome::ACCEPTED->value;
             $current = $this->store->save('tasks', $current, 'task.classification_invalidated');
             $intake = $this->store->save('intakes', [
                 'task_id' => $taskId,
@@ -204,7 +207,7 @@ final class IntakeHandler implements TaskIntake
                 'requester' => $actor->ref(),
                 'task_version' => $current['version'],
                 'assessed_task_revision' => null,
-                'outcome' => 'accepted',
+                'outcome' => IntakeOutcome::ACCEPTED->value,
                 'assessment_status' => 'queued',
                 'waiting_for' => 'none',
                 'missing_fields' => [],
@@ -215,7 +218,7 @@ final class IntakeHandler implements TaskIntake
                 'routing_rules_version' => $this->routingRules($projectId)['version'],
                 'clarification_round' => $previous['clarification_round'],
                 'answers' => $previous['answers'],
-                'suggested_label_ids' => $suggestedLabelIds !== [] ? $suggestedLabelIds : ($previous['suggested_label_ids'] ?? []),
+                'suggested_label_ids' => [] !== $suggestedLabelIds ? $suggestedLabelIds : ($previous['suggested_label_ids'] ?? []),
                 'generation' => $previous['generation'] + 1,
                 'reason' => trim($reason),
             ], 'intake.reclassification_requested');
@@ -235,12 +238,12 @@ final class IntakeHandler implements TaskIntake
             throw new \InvalidArgumentException('Unbekannter Intake-Command.');
         }
         $intakeId = $payload['intake_id'] ?? null;
-        if (!is_string($intakeId) || $intakeId === '') {
+        if (!is_string($intakeId) || '' === $intakeId) {
             throw new \InvalidArgumentException('Die Intake-ID fehlt im Command.');
         }
 
         $intake = $this->store->find('intakes', $intakeId);
-        if ($intake === null || $intake['assessment_status'] === 'completed') {
+        if (null === $intake || 'completed' === $intake['assessment_status']) {
             return;
         }
         if (isset($payload['generation']) && $payload['generation'] !== $intake['generation']) {
@@ -250,12 +253,14 @@ final class IntakeHandler implements TaskIntake
         $commandId = is_string($payload['__command_id'] ?? null) ? $payload['__command_id'] : null;
         $this->store->atomic(function () use (&$intake, $commandId): void {
             $fresh = $this->store->get('intakes', $intake['id']);
-            if ($fresh['assessment_status'] === 'completed') {
+            if ('completed' === $fresh['assessment_status']) {
                 $intake = [];
+
                 return;
             }
-            if ($fresh['assessment_status'] === 'running' && ($fresh['lease_until'] ?? 0) > time() && ($fresh['lease_owner'] ?? null) !== $commandId) {
+            if ('running' === $fresh['assessment_status'] && ($fresh['lease_until'] ?? 0) > time() && ($fresh['lease_owner'] ?? null) !== $commandId) {
                 $intake = [];
+
                 return;
             }
             $fresh['assessment_status'] = 'running';
@@ -263,12 +268,12 @@ final class IntakeHandler implements TaskIntake
             $fresh['lease_owner'] = $commandId;
             $intake = $this->store->save('intakes', $fresh, 'intake.assessment_started');
         });
-        if ($intake === [] || $intake['assessment_status'] === 'completed') {
+        if ([] === $intake) {
             return;
         }
 
         $task = $this->store->find('tasks', $intake['task_id']);
-        if ($task === null) {
+        if (null === $task) {
             return;
         }
         $this->store->context(new Actor('system', false, [$task['project_id']], ['tasks.read', 'tasks.write']), $intake['action_id']);
@@ -282,11 +287,12 @@ final class IntakeHandler implements TaskIntake
         }
     }
 
-    /** @param array<string, mixed> $body @return array<string, mixed> */
+    /** @return array<string, mixed> */
     private function getRoutingRules(string $projectId, Actor $actor): array
     {
         $this->project($projectId);
         $actor->requireProject($projectId);
+
         return $this->publicRouting($this->routingRules($projectId));
     }
 
@@ -313,10 +319,10 @@ final class IntakeHandler implements TaskIntake
             }
             $label = $this->store->find('labels', $labelId);
             $workflow = $this->store->find('workflows', $workflowId);
-            if ($label === null || $label['project_id'] !== $projectId || $label['kind'] !== 'workflow' || !$label['active']) {
+            if (null === $label || $label['project_id'] !== $projectId || 'workflow' !== $label['kind'] || !$label['active']) {
                 throw new Problem(422, 'validation_failed', 'Die Route benötigt ein aktives Workflowlabel dieses Projekts.');
             }
-            if ($workflow === null || $workflow['project_id'] !== $projectId || ($workflow['definition_version'] ?? $workflow['version']) !== $definitionVersion) {
+            if (null === $workflow || $workflow['project_id'] !== $projectId || ($workflow['definition_version'] ?? $workflow['version']) !== $definitionVersion) {
                 throw new Problem(422, 'validation_failed', 'Die Route benötigt eine vorhandene Workflowversion dieses Projekts.');
             }
             $seen[$labelId] = true;
@@ -344,13 +350,13 @@ final class IntakeHandler implements TaskIntake
         });
     }
 
-    /** @param array<string, mixed> $body @return array<string, mixed> */
+    /** @return array<string, mixed> */
     private function getIntake(string $taskId, Actor $actor): array
     {
         $task = $this->task($taskId);
         $actor->requireProject($task['project_id']);
         $intake = $this->latestIntake($taskId, $task['project_id']);
-        if ($intake === null) {
+        if (null === $intake) {
             throw new Problem(404, 'resource_not_found', 'Für dieses Ticket gibt es keinen technischen Intake.');
         }
 
@@ -363,15 +369,15 @@ final class IntakeHandler implements TaskIntake
         $task = $this->task($taskId);
         $actor->requireProject($task['project_id']);
         $intake = $this->requireIntake($taskId, $task['project_id']);
-        if (!in_array($intake['outcome'], ['needs_information', 'needs_human_decision'], true)) {
+        if (!in_array($intake['outcome'], [IntakeOutcome::NEEDS_INFORMATION->value, IntakeOutcome::NEEDS_HUMAN_DECISION->value], true)) {
             throw new Problem(409, 'intake_not_waiting', 'Dieser Intake wartet derzeit nicht auf ergänzende Angaben.');
         }
-        if (!$actor->owner && ($intake['waiting_for'] !== 'requester' || ($intake['requester']['id'] ?? null) !== $actor->id)) {
+        if (!$actor->owner && ('requester' !== $intake['waiting_for'] || ($intake['requester']['id'] ?? null) !== $actor->id)) {
             throw new Problem(403, 'forbidden', 'Nur der ursprüngliche Melder darf diese Rückfrage beantworten.');
         }
 
         $answers = $body['answers'] ?? null;
-        if (!is_array($answers) || $answers === []) {
+        if (!is_array($answers) || [] === $answers) {
             throw new Problem(422, 'validation_failed', 'Mindestens eine angefragte Angabe ist erforderlich.');
         }
         $requested = array_column($intake['missing_fields'], 'field_key');
@@ -383,7 +389,7 @@ final class IntakeHandler implements TaskIntake
             }
             $field = trim($answer['field_key']);
             $value = trim($answer['value']);
-            if (!in_array($field, $requested, true) || in_array($field, $alreadyAnswered, true) || isset($received[$field]) || $value === '') {
+            if (!in_array($field, $requested, true) || in_array($field, $alreadyAnswered, true) || isset($received[$field]) || '' === $value) {
                 throw new Problem(422, 'intake_field_not_requested', 'Es dürfen nur angefragte und noch unbeantwortete Felder ergänzt werden.');
             }
             $received[$field] = $value;
@@ -400,7 +406,7 @@ final class IntakeHandler implements TaskIntake
                 array_values($received),
             ));
             $task['classification_required'] = true;
-            $task['intake_outcome'] = 'accepted';
+            $task['intake_outcome'] = IntakeOutcome::ACCEPTED->value;
             $task = $this->store->save('tasks', $task, 'task.intake_information_supplied');
             $intake['task_version'] = $task['version'];
             $intake['action_id'] = $this->store->actionId();
@@ -408,9 +414,9 @@ final class IntakeHandler implements TaskIntake
             $intake['clarification_round'] = $round;
             $intake['missing_fields'] = [];
             $intake['waiting_for'] = 'none';
-            $intake['outcome'] = 'accepted';
+            $intake['outcome'] = IntakeOutcome::ACCEPTED->value;
             $intake['assessment_status'] = 'queued';
-            $intake['generation']++;
+            ++$intake['generation'];
             $intake = $this->store->save('intakes', $intake, 'intake.information_supplied');
             $this->resolveIntakeReasons($task['id'], $intake['id']);
             $this->queueClassification($intake);
@@ -434,7 +440,7 @@ final class IntakeHandler implements TaskIntake
             throw new Problem(403, 'forbidden', 'Für eine erneute Einordnung fehlt die Berechtigung.');
         }
         $reason = trim((string) ($body['reason'] ?? ''));
-        if ($reason === '') {
+        if ('' === $reason) {
             throw new Problem(422, 'validation_failed', 'Ein Grund für die erneute Einordnung ist erforderlich.');
         }
 
@@ -445,7 +451,7 @@ final class IntakeHandler implements TaskIntake
             $actionId = $this->store->actionId();
             $this->store->context($actor, $actionId);
             $task['classification_required'] = true;
-            $task['intake_outcome'] = 'accepted';
+            $task['intake_outcome'] = IntakeOutcome::ACCEPTED->value;
             $task = $this->store->save('tasks', $task, 'task.reclassification_requested');
             $intake = $this->store->save('intakes', [
                 'task_id' => $task['id'],
@@ -454,7 +460,7 @@ final class IntakeHandler implements TaskIntake
                 'requester' => $actor->ref(),
                 'task_version' => $task['version'],
                 'assessed_task_revision' => null,
-                'outcome' => 'accepted',
+                'outcome' => IntakeOutcome::ACCEPTED->value,
                 'assessment_status' => 'queued',
                 'waiting_for' => 'none',
                 'missing_fields' => [],
@@ -481,17 +487,17 @@ final class IntakeHandler implements TaskIntake
         $actor->requireOwner();
         $task = $this->task($taskId);
         $intake = $this->requireIntake($taskId, $task['project_id']);
-        if ($intake['outcome'] !== 'needs_human_decision' || !$intake['human_attention']['required']) {
+        if ($intake['outcome'] !== IntakeOutcome::NEEDS_HUMAN_DECISION->value || !$intake['human_attention']['required']) {
             throw new Problem(409, 'intake_not_waiting', 'Dieser Intake wartet nicht auf eine menschliche Entscheidung.');
         }
         $reason = trim((string) ($body['reason'] ?? ''));
         $labels = $body['label_ids'] ?? null;
         $primaryTopicId = $body['primary_topic_label_id'] ?? null;
         $workflowLabelId = $body['workflow_label_id'] ?? null;
-        if ($reason === '' || !is_array($labels) || !is_string($primaryTopicId) || !is_string($workflowLabelId)) {
+        if ('' === $reason || !is_array($labels) || !is_string($primaryTopicId) || !is_string($workflowLabelId)) {
             throw new Problem(422, 'validation_failed', 'Die menschliche Einordnung ist unvollständig.');
         }
-        if (array_filter($labels, static fn (mixed $labelId): bool => !is_string($labelId)) !== []) {
+        if ([] !== array_filter($labels, static fn (mixed $labelId): bool => !is_string($labelId))) {
             throw new Problem(422, 'validation_failed', 'Die Label-IDs sind ungültig.');
         }
         $labelIds = array_values(array_unique(array_merge($labels, [$primaryTopicId])));
@@ -501,16 +507,16 @@ final class IntakeHandler implements TaskIntake
         }
         $primary = $labelById[$primaryTopicId] ?? null;
         $workflow = $labelById[$workflowLabelId] ?? null;
-        if ($primary === null || $primary['kind'] !== 'topic' || !$primary['active'] || $workflow === null || $workflow['kind'] !== 'workflow' || !$workflow['active']) {
+        if (null === $primary || 'topic' !== $primary['kind'] || !$primary['active'] || null === $workflow || 'workflow' !== $workflow['kind'] || !$workflow['active']) {
             throw new Problem(422, 'validation_failed', 'Die menschliche Einordnung muss ein aktives Themen- und Workflowlabel enthalten.');
         }
         foreach ($labelIds as $labelId) {
-            if (!is_string($labelId) || !isset($labelById[$labelId]) || !$labelById[$labelId]['active'] || $labelById[$labelId]['kind'] !== 'topic') {
+            if (!is_string($labelId) || !isset($labelById[$labelId]) || !$labelById[$labelId]['active'] || 'topic' !== $labelById[$labelId]['kind']) {
                 throw new Problem(422, 'validation_failed', 'Zusätzliche Einordnungen müssen aktive Themenlabels sein.');
             }
         }
         $route = $this->routeFor($task['project_id'], $workflowLabelId);
-        if ($route === null) {
+        if (null === $route) {
             throw new Problem(409, 'workflow_route_conflict', 'Für das Workflowlabel ist keine gültige Version zugeordnet.');
         }
 
@@ -521,7 +527,7 @@ final class IntakeHandler implements TaskIntake
             $task['primary_topic_label_id'] = $primaryTopicId;
             $task['workflow_label_id'] = $workflowLabelId;
             $task['classification_required'] = false;
-            $task['intake_outcome'] = 'ready';
+            $task['intake_outcome'] = IntakeOutcome::READY->value;
             $task = $this->store->save('tasks', $task, 'task.intake_owner_decision');
             $this->store->save('classification_controls', [
                 'id' => $task['id'],
@@ -536,12 +542,12 @@ final class IntakeHandler implements TaskIntake
                 'project_id' => $task['project_id'],
                 ...$route,
             ], 'task.routing_snapshot_saved');
-            $this->resolveIntakeReasons($task['id'], $intake['id']);
+            $this->resolveIntakeReasons($task['id']);
             $task['human_attention'] = $this->humanAttention($task['id'], $task['project_id']);
             $task = $this->store->save('tasks', $task, 'task.human_attention_updated');
             $intake['task_version'] = $task['version'];
             $intake['action_id'] = $this->store->actionId();
-            $intake['outcome'] = 'ready';
+            $intake['outcome'] = IntakeOutcome::READY->value;
             $intake['waiting_for'] = 'none';
             $intake['assessment_status'] = 'completed';
             $intake['missing_fields'] = [];
@@ -562,7 +568,7 @@ final class IntakeHandler implements TaskIntake
         $task = $this->task($taskId);
         $actor->requireProject($task['project_id']);
         $classification = $this->store->find('classifications', $classificationId);
-        if ($classification === null || $classification['task_id'] !== $taskId) {
+        if (null === $classification || $classification['task_id'] !== $taskId) {
             throw new Problem(404, 'resource_not_found', 'Die Klassifikationsentscheidung wurde nicht gefunden.');
         }
 
@@ -574,6 +580,7 @@ final class IntakeHandler implements TaskIntake
     {
         $this->project($projectId);
         $actor->requireProject($projectId);
+
         return $this->publicPolicy($this->policy($projectId));
     }
 
@@ -598,6 +605,7 @@ final class IntakeHandler implements TaskIntake
     private function getDecisionConfiguration(Actor $actor): array
     {
         $actor->requireOwner();
+
         return $this->publicDecisionConfiguration($this->decisionConfiguration());
     }
 
@@ -606,7 +614,7 @@ final class IntakeHandler implements TaskIntake
     {
         $actor->requireOwner();
         $secretId = $body['secret_reference_id'] ?? null;
-        if (!is_string($secretId) || $this->store->find('secret_references', $secretId) === null) {
+        if (!is_string($secretId) || null === $this->store->find('secret_references', $secretId)) {
             throw new Problem(422, 'validation_failed', 'Es muss eine vorhandene OpenAI-Secret-Referenz gewählt werden.');
         }
         foreach (['timeout_ms' => [500, 30000], 'max_attempts' => [1, 3], 'max_requests_per_hour' => [1, 10000]] as $field => [$min, $max]) {
@@ -632,7 +640,7 @@ final class IntakeHandler implements TaskIntake
     /** @param array<string, mixed> $intake @param array<string, mixed> $task */
     private function classify(array $intake, array $task): void
     {
-        if ($this->decisionGateway === null) {
+        if (null === $this->decisionGateway) {
             throw new DecisionProviderException('Die Decisions-Anbindung ist nicht verfügbar.', retryable: false);
         }
         $projectId = $task['project_id'];
@@ -641,6 +649,7 @@ final class IntakeHandler implements TaskIntake
         $taxonomy = $this->taxonomySnapshot($projectId);
         if ($this->stale($task, $intake, $policy, $routing, $taxonomy)) {
             $this->markStale($task, $intake);
+
             return;
         }
 
@@ -659,8 +668,9 @@ final class IntakeHandler implements TaskIntake
         $failure = null;
         $response = $this->requestDecisions($request, $apiKey, $configuration, $attemptNo, $failure);
 
-        if ($failure !== null || $response === null) {
+        if (null !== $failure || null === $response) {
             $this->saveFailedClassification($task, $intake, $taxonomy, $policy, $routing, $inputFingerprint, $requestFingerprint, $attemptNo, $failure);
+
             return;
         }
 
@@ -668,21 +678,22 @@ final class IntakeHandler implements TaskIntake
         unset($response['_provider_metadata']);
         $answers = $this->validateAnswers($response, $request['questions']);
         $workflowAnswer = array_column($answers, null, 'name')['workflow'] ?? null;
-        if ($workflowAnswer !== null && $workflowAnswer['type'] === 'choice' && $workflowAnswer['choice'] !== 'unknown' && $this->choiceIsConfident($workflowAnswer, $policy) && $this->routeFor($projectId, $workflowAnswer['choice'], $routing) !== null) {
+        if (null !== $workflowAnswer && 'choice' === $workflowAnswer['type'] && 'unknown' !== $workflowAnswer['choice'] && $this->choiceIsConfident($workflowAnswer, $policy) && null !== $this->routeFor($projectId, $workflowAnswer['choice'], $routing)) {
             $followUp = $this->classificationRequest($task, $intake, $policy, $routing, $taxonomy, $workflowAnswer['choice'], missingOnly: true);
-            if ($followUp['questions'] !== []) {
+            if ([] !== $followUp['questions']) {
                 $requests[] = $followUp;
                 $followUpResponse = $this->requestDecisions($followUp, $apiKey, $configuration, $attemptNo, $failure);
                 $requestFingerprint = $this->fingerprint($requests);
-                if ($failure !== null || $followUpResponse === null) {
+                if (null !== $failure || null === $followUpResponse) {
                     $this->saveFailedClassification($task, $intake, $taxonomy, $policy, $routing, $inputFingerprint, $requestFingerprint, $attemptNo, $failure);
+
                     return;
                 }
                 $followUpMetadata = $followUpResponse['_provider_metadata'] ?? [];
                 unset($followUpResponse['_provider_metadata']);
                 $followUpAnswers = $this->validateAnswers($followUpResponse, $followUp['questions']);
                 $answers = array_merge($answers, $followUpAnswers);
-                $providerMetadata = array_merge($providerMetadata, array_filter($followUpMetadata, static fn (mixed $value, string $key): bool => $key !== 'input_tokens' || is_int($value), ARRAY_FILTER_USE_BOTH));
+                $providerMetadata = array_merge($providerMetadata, array_filter($followUpMetadata, static fn (mixed $value, string $key): bool => 'input_tokens' !== $key || is_int($value), ARRAY_FILTER_USE_BOTH));
                 if (is_int($providerMetadata['input_tokens'] ?? null) && is_int($followUpMetadata['input_tokens'] ?? null)) {
                     $providerMetadata['input_tokens'] += $followUpMetadata['input_tokens'];
                 }
@@ -692,7 +703,7 @@ final class IntakeHandler implements TaskIntake
         $classification = $this->store->atomic(function () use ($task, $intake, $taxonomy, $policy, $routing, $inputFingerprint, $requestFingerprint, $attemptNo, $answers, $evaluation, $providerMetadata): array {
             $freshTask = $this->store->get('tasks', $task['id']);
             $freshIntake = $this->store->get('intakes', $intake['id']);
-            if ($freshIntake['assessment_status'] === 'completed') {
+            if ('completed' === $freshIntake['assessment_status']) {
                 return [];
             }
             if ($freshTask['version'] !== $task['version'] || $freshIntake['generation'] !== $intake['generation'] || $this->taxonomyVersion($task['project_id']) !== $taxonomy['version'] || $this->policy($task['project_id'])['version'] !== $policy['version'] || $this->routingRules($task['project_id'])['version'] !== $routing['version']) {
@@ -719,6 +730,7 @@ final class IntakeHandler implements TaskIntake
                     'taxonomy_snapshot' => $taxonomy['items'],
                 ], 'classification.assessment_stale');
                 $this->markStale($freshTask, $freshIntake);
+
                 return [];
             }
 
@@ -750,7 +762,7 @@ final class IntakeHandler implements TaskIntake
             return $record;
         });
 
-        if ($classification === []) {
+        if ([] === $classification) {
             return;
         }
     }
@@ -761,11 +773,16 @@ final class IntakeHandler implements TaskIntake
         $this->store->atomic(function () use ($task, $intake, $taxonomy, $policy, $routing, $inputFingerprint, $requestFingerprint, $attemptNo, $failure): void {
             $freshTask = $this->store->get('tasks', $task['id']);
             $freshIntake = $this->store->get('intakes', $intake['id']);
-            if ($freshIntake['assessment_status'] === 'completed') {
+            if ('completed' === $freshIntake['assessment_status']) {
                 return;
             }
-            if ($freshTask['version'] !== $task['version'] || $freshIntake['generation'] !== $intake['generation']) {
+            if ($freshTask['version'] !== $task['version']
+                || $freshIntake['generation'] !== $intake['generation']
+                || $this->taxonomyVersion($task['project_id']) !== $taxonomy['version']
+                || $this->policy($task['project_id'])['version'] !== $policy['version']
+                || $this->routingRules($task['project_id'])['version'] !== $routing['version']) {
                 $this->markStale($freshTask, $freshIntake);
+
                 return;
             }
             $record = $this->store->save('classifications', [
@@ -783,7 +800,7 @@ final class IntakeHandler implements TaskIntake
                 'primary_topic_label_id' => null,
                 'suggested_label_ids' => [],
                 'suggested_workflow_label_id' => null,
-                'outcome' => 'classification_unavailable',
+                'outcome' => IntakeOutcome::CLASSIFICATION_UNAVAILABLE->value,
                 'applied' => false,
                 'input_tokens' => null,
                 'attempt_no' => max(1, $attemptNo),
@@ -791,27 +808,28 @@ final class IntakeHandler implements TaskIntake
                 'taxonomy_snapshot' => $taxonomy['items'],
                 'failure_code' => $failure?->retryable ? 'provider_temporarily_unavailable' : 'provider_unavailable',
             ], 'classification.unavailable');
-            $this->setIntakeOutcome($freshTask, $freshIntake, 'classification_unavailable', 'failed', $record['id'], [], 'owner', 'classification_unavailable');
+            $this->setIntakeOutcome($freshTask, $freshIntake, IntakeOutcome::CLASSIFICATION_UNAVAILABLE, 'failed', $record['id'], [], 'owner', 'classification_unavailable');
         });
     }
 
     /** @param array<string, mixed> $task @param array<string, mixed> $intake @param array<string, mixed> $record @param array<string, mixed> $evaluation @param array<string, mixed> $routing */
     private function applyEvaluation(array $task, array $intake, array $record, array $evaluation, array $routing): void
     {
-        $outcome = $evaluation['outcome'];
-        $route = $evaluation['workflow_label_id'] === null ? null : $this->routeFor($task['project_id'], $evaluation['workflow_label_id'], $routing);
+        $outcome = IntakeOutcome::from($evaluation['outcome']);
+        $route = null === $evaluation['workflow_label_id'] ? null : $this->routeFor($task['project_id'], $evaluation['workflow_label_id'], $routing);
         if ($this->ownerOverrideExists($task['id'])) {
-            $this->setIntakeOutcome($task, $intake, 'needs_human_decision', 'completed', $record['id'], [], 'owner', 'routing_ambiguous');
+            $this->setIntakeOutcome($task, $intake, IntakeOutcome::NEEDS_HUMAN_DECISION, 'completed', $record['id'], [], 'owner', 'routing_ambiguous');
+
             return;
         }
 
-        if ($outcome === 'ready') {
+        if (IntakeOutcome::READY === $outcome) {
             $task['primary_topic_label_id'] = $evaluation['primary_topic_label_id'];
             $task['workflow_label_id'] = $evaluation['workflow_label_id'];
             $task['label_ids'] = array_values(array_unique(array_merge($evaluation['suggested_label_ids'], [$evaluation['workflow_label_id']])));
             $task['classification_id'] = $record['id'];
             $task['classification_required'] = false;
-            if ($route !== null) {
+            if (null !== $route) {
                 $this->store->save('task_routing_snapshots', [
                     'id' => $task['id'],
                     'task_id' => $task['id'],
@@ -822,40 +840,41 @@ final class IntakeHandler implements TaskIntake
             $record['applied'] = true;
             $record = $this->store->save('classifications', $record, 'classification.applied');
             $this->store->save('tasks', $task, 'task.classification_applied');
-            $this->setIntakeOutcome($task, $intake, 'ready', 'completed', $record['id'], [], 'none');
+            $this->setIntakeOutcome($task, $intake, IntakeOutcome::READY, 'completed', $record['id'], [], 'none');
+
             return;
         }
 
-        if ($outcome === 'needs_information') {
-            $this->setIntakeOutcome($task, $intake, 'needs_information', 'completed', $record['id'], $evaluation['missing_fields'], $evaluation['waiting_for']);
+        if (IntakeOutcome::NEEDS_INFORMATION === $outcome) {
+            $this->setIntakeOutcome($task, $intake, IntakeOutcome::NEEDS_INFORMATION, 'completed', $record['id'], $evaluation['missing_fields'], $evaluation['waiting_for']);
+
             return;
         }
 
         $reason = $evaluation['reason'] ?? 'routing_ambiguous';
-        $this->setIntakeOutcome($task, $intake, 'needs_human_decision', 'completed', $record['id'], [], 'owner', $reason);
+        $this->setIntakeOutcome($task, $intake, IntakeOutcome::NEEDS_HUMAN_DECISION, 'completed', $record['id'], [], 'owner', $reason);
     }
 
     /** @param array<string, mixed> $task @param array<string, mixed> $intake @param array<string, mixed> $record @param list<array<string, mixed>> $missingFields */
-    private function setIntakeOutcome(array $task, array $intake, string $outcome, string $assessmentStatus, string $classificationId, array $missingFields, string $waitingFor, ?string $reason = null): void
+    private function setIntakeOutcome(array $task, array $intake, IntakeOutcome $outcome, string $assessmentStatus, string $classificationId, array $missingFields, string $waitingFor, ?string $reason = null): void
     {
         $task = $this->store->get('tasks', $task['id']);
         $intake = $this->store->get('intakes', $intake['id']);
         $task['classification_id'] = $classificationId;
-        $task['classification_required'] = $outcome !== 'ready';
-        $task['intake_outcome'] = $outcome;
+        $task['classification_required'] = IntakeOutcome::READY !== $outcome;
+        $task['intake_outcome'] = $outcome->value;
         $this->store->save('tasks', $task, 'task.intake_outcome_changed');
 
-        if ($reason !== null) {
+        $this->resolveIntakeReasons($task['id']);
+        if (null !== $reason) {
             $this->openAttentionReason($task, $intake, $reason, 'owner');
-        } else {
-            $this->resolveIntakeReasons($task['id'], $intake['id']);
         }
         $task = $this->store->get('tasks', $task['id']);
         $task['human_attention'] = $this->humanAttention($task['id'], $task['project_id']);
         $task = $this->store->save('tasks', $task, 'task.human_attention_updated');
 
         foreach ($missingFields as $missing) {
-            if ($missing['addressed_to'] === 'owner') {
+            if ('owner' === $missing['addressed_to']) {
                 $this->openAttentionReason($task, $intake, 'intake_escalated', 'owner');
             }
         }
@@ -864,7 +883,7 @@ final class IntakeHandler implements TaskIntake
         $task = $this->store->save('tasks', $task, 'task.human_attention_updated');
 
         $intake['task_version'] = $task['version'];
-        $intake['outcome'] = $outcome;
+        $intake['outcome'] = $outcome->value;
         $intake['assessment_status'] = $assessmentStatus;
         $intake['waiting_for'] = $waitingFor;
         $intake['missing_fields'] = $missingFields;
@@ -881,7 +900,7 @@ final class IntakeHandler implements TaskIntake
     private function finishUnavailable(array $intake, array $task, DecisionProviderException $exception): void
     {
         $existing = $this->latestClassification($task['id']);
-        if ($existing !== null && $existing['task_revision'] === $task['version'] && $existing['outcome'] === 'classification_unavailable') {
+        if (null !== $existing && $existing['task_revision'] === $task['version'] && $existing['outcome'] === IntakeOutcome::CLASSIFICATION_UNAVAILABLE->value) {
             return;
         }
         $policy = $this->policy($task['project_id']);
@@ -895,23 +914,24 @@ final class IntakeHandler implements TaskIntake
     private function markStale(array $task, array $intake): void
     {
         $latest = $this->latestIntake($task['id'], $task['project_id']);
-        if ($latest !== null && $latest['id'] !== $intake['id']) {
+        if (null !== $latest && $latest['id'] !== $intake['id']) {
             $intake['assessment_status'] = 'stale';
-            $intake['outcome'] = 'accepted';
+            $intake['outcome'] = IntakeOutcome::ACCEPTED->value;
             $intake['assessed_task_revision'] = $task['version'];
             $intake['lease_until'] = null;
             $intake['lease_owner'] = null;
             $this->store->save('intakes', $intake, 'intake.assessment_stale');
+
             return;
         }
 
         $intake['assessment_status'] = 'queued';
-        $intake['outcome'] = 'accepted';
+        $intake['outcome'] = IntakeOutcome::ACCEPTED->value;
         $intake['task_version'] = $task['version'];
         $intake['taxonomy_version'] = $this->taxonomyVersion($task['project_id']);
         $intake['policy_version'] = $this->policy($task['project_id'])['version'];
         $intake['routing_rules_version'] = $this->routingRules($task['project_id'])['version'];
-        $intake['generation']++;
+        ++$intake['generation'];
         $intake['lease_until'] = null;
         $intake['lease_owner'] = null;
         $intake = $this->store->save('intakes', $intake, 'intake.assessment_stale');
@@ -923,13 +943,14 @@ final class IntakeHandler implements TaskIntake
     /** @param array<string, mixed> $task @param array<string, mixed> $intake */
     private function escalateIntake(array $task, array $intake, string $reason): void
     {
+        $this->resolveIntakeReasons($task['id']);
         $this->openAttentionReason($task, $intake, $reason, 'owner');
-        $task['intake_outcome'] = 'needs_human_decision';
+        $task['intake_outcome'] = IntakeOutcome::NEEDS_HUMAN_DECISION->value;
         $task['classification_required'] = false;
         $task['human_attention'] = $this->humanAttention($task['id'], $task['project_id']);
         $task = $this->store->save('tasks', $task, 'task.intake_escalated');
         $intake['task_version'] = $task['version'];
-        $intake['outcome'] = 'needs_human_decision';
+        $intake['outcome'] = IntakeOutcome::NEEDS_HUMAN_DECISION->value;
         $intake['waiting_for'] = 'owner';
         $intake['assessment_status'] = 'completed';
         $intake['human_attention'] = $task['human_attention'];
@@ -957,10 +978,13 @@ final class IntakeHandler implements TaskIntake
         ], 'attention_reason.opened');
     }
 
-    private function resolveIntakeReasons(string $taskId, string $intakeId): void
+    private function resolveIntakeReasons(string $taskId, ?string $intakeId = null): void
     {
         foreach ($this->store->all('attention_reasons') as $reason) {
-            if (($reason['task_id'] ?? null) !== $taskId || ($reason['intake_id'] ?? null) !== $intakeId || ($reason['open'] ?? false) !== true || ($reason['source'] ?? null) !== 'intake') {
+            if (($reason['task_id'] ?? null) !== $taskId
+                || (null !== $intakeId && ($reason['intake_id'] ?? null) !== $intakeId)
+                || ($reason['open'] ?? false) !== true
+                || ($reason['source'] ?? null) !== 'intake') {
                 continue;
             }
             $reason['open'] = false;
@@ -978,21 +1002,21 @@ final class IntakeHandler implements TaskIntake
                 continue;
             }
             $code = $reason['code'] ?? null;
-            if (is_string($code) && in_array($code, ['routing_ambiguous', 'classification_unavailable', 'decision_refused', 'intake_escalated', 'approval_pending', 'agent_question', 'run_failed', 'auth_required', 'reconciliation_required', 'plugin_drain_blocked'], true)) {
+            if (is_string($code) && '' !== $code) {
                 $reasons[] = $code;
             }
         }
         $reasons = array_values(array_unique($reasons));
 
-        return ['required' => $reasons !== [], 'reasons' => $reasons];
+        return ['required' => [] !== $reasons, 'reasons' => $reasons];
     }
 
     /** @param array<string, mixed> $task @param array<string, mixed> $intake @param array<string, mixed> $policy @param array<string, mixed> $routing @param array<string, mixed> $taxonomy @return array<string, mixed> */
     private function classificationRequest(array $task, array $intake, array $policy, array $routing, array $taxonomy, ?string $selectedWorkflow = null, bool $missingOnly = false): array
     {
-        $topics = array_values(array_filter($taxonomy['items'], static fn (array $label): bool => $label['kind'] === 'topic'));
+        $topics = array_values(array_filter($taxonomy['items'], static fn (array $label): bool => 'topic' === $label['kind']));
         $routes = array_column($routing['rules'], null, 'workflow_label_id');
-        $workflows = array_values(array_filter($taxonomy['items'], static fn (array $label): bool => $label['kind'] === 'workflow'));
+        $workflows = array_values(array_filter($taxonomy['items'], static fn (array $label): bool => 'workflow' === $label['kind']));
         $eligibleWorkflows = array_values(array_filter($workflows, static fn (array $label): bool => isset($routes[$label['label_id']])));
 
         $questions = [];
@@ -1015,7 +1039,7 @@ final class IntakeHandler implements TaskIntake
             ];
         }
         foreach ($policy['requirements'] as $requirement) {
-            $requirementIsApplicable = $requirement['workflow_label_ids'] === []
+            $requirementIsApplicable = [] === $requirement['workflow_label_ids']
                 ? !$missingOnly
                 : $missingOnly && in_array($selectedWorkflow, $requirement['workflow_label_ids'], true);
             if (!$requirement['required'] || !$requirementIsApplicable) {
@@ -1076,7 +1100,7 @@ final class IntakeHandler implements TaskIntake
     private function validateAnswers(array $response, array $questions): array
     {
         $answers = $response['answers'] ?? null;
-        if (!is_array($answers) || count($answers) !== count($questions)) {
+        if (!is_array($answers) || !array_is_list($answers) || count($answers) !== count($questions)) {
             throw new DecisionProviderException('OpenAI Decisions lieferte unvollständige Antworten.', retryable: false);
         }
         $expected = [];
@@ -1095,19 +1119,19 @@ final class IntakeHandler implements TaskIntake
             if (($answer['type'] ?? null) !== $expected[$answer['name']]) {
                 throw new DecisionProviderException('OpenAI Decisions lieferte einen unerwarteten Antworttyp.', retryable: false);
             }
-            if ($answer['type'] === 'predicate') {
+            if ('predicate' === $answer['type']) {
                 $this->probability($answer['probability'] ?? null);
-            } elseif ($answer['type'] === 'choice') {
-                if (!is_string($answer['choice'] ?? null) || !is_numeric($answer['confidence'] ?? null)) {
+            } elseif ('choice' === $answer['type']) {
+                if (!is_string($answer['choice'] ?? null)) {
                     throw new DecisionProviderException('OpenAI Decisions lieferte eine ungültige Auswahl.', retryable: false);
                 }
-                $this->probability((float) $answer['confidence']);
+                $this->probability($answer['confidence'] ?? null);
                 $allowed = array_column($questions[$answer['name']]['choices'] ?? [], 'value');
                 if (!in_array($answer['choice'], $allowed, true)) {
                     throw new DecisionProviderException('OpenAI Decisions wählte einen nicht freigegebenen Wert.', retryable: false);
                 }
                 $probabilities = $answer['probabilities'] ?? null;
-                if (!is_array($probabilities) || count($probabilities) !== count($allowed)) {
+                if (!is_array($probabilities) || !array_is_list($probabilities) || [] === $probabilities) {
                     throw new DecisionProviderException('OpenAI Decisions lieferte keine Auswahlverteilung.', retryable: false);
                 }
                 $probabilityValues = [];
@@ -1120,7 +1144,7 @@ final class IntakeHandler implements TaskIntake
                     $probabilityValues[$probability['value']] = true;
                     $totalProbability += (float) $probability['probability'];
                 }
-                if (count($probabilityValues) !== count($allowed) || abs($totalProbability - 1.0) > 0.05) {
+                if (!isset($probabilityValues[$answer['choice']]) || abs($totalProbability - 1.0) > 0.05) {
                     throw new DecisionProviderException('OpenAI Decisions lieferte eine unplausible Auswahlverteilung.', retryable: false);
                 }
             }
@@ -1131,7 +1155,7 @@ final class IntakeHandler implements TaskIntake
             throw new DecisionProviderException('OpenAI Decisions beantwortete nicht alle Fragen.', retryable: false);
         }
 
-        return array_values($answers);
+        return $answers;
     }
 
     /** @param list<array<string, mixed>> $answers @param array<string, mixed> $taxonomy @param array<string, mixed> $policy @param array<string, mixed> $routing @param array<string, mixed> $intake @return array<string, mixed> */
@@ -1140,30 +1164,30 @@ final class IntakeHandler implements TaskIntake
         $byName = array_column($answers, null, 'name');
         foreach ($byName as $answer) {
             if (($answer['type'] ?? null) === 'refusal') {
-                return $this->decisionResult('needs_human_decision', null, [], null, [], 'owner', 'decision_refused');
+                return $this->decisionResult(IntakeOutcome::NEEDS_HUMAN_DECISION, null, [], null, [], 'owner', 'decision_refused');
             }
         }
 
         $primary = $byName['primary_topic'] ?? null;
         $workflow = $byName['workflow'] ?? null;
-        if ($primary === null || $workflow === null || $primary['type'] !== 'choice' || $workflow['type'] !== 'choice') {
+        if (null === $primary || null === $workflow || 'choice' !== $primary['type'] || 'choice' !== $workflow['type']) {
             throw new DecisionProviderException('OpenAI Decisions beantwortete die Klassifikationsfragen unvollständig.', retryable: false);
         }
 
-        $topicLabels = array_column(array_filter($taxonomy['items'], static fn (array $label): bool => $label['kind'] === 'topic'), null, 'label_id');
-        $workflowLabels = array_column(array_filter($taxonomy['items'], static fn (array $label): bool => $label['kind'] === 'workflow'), null, 'label_id');
-        if ($primary['choice'] === 'unknown' || !isset($topicLabels[$primary['choice']]) || !$this->choiceIsConfident($primary, $policy)) {
-            return $this->decisionResult('needs_human_decision', null, [], null, [], 'owner', 'routing_ambiguous');
+        $topicLabels = array_column(array_filter($taxonomy['items'], static fn (array $label): bool => 'topic' === $label['kind']), null, 'label_id');
+        $workflowLabels = array_column(array_filter($taxonomy['items'], static fn (array $label): bool => 'workflow' === $label['kind']), null, 'label_id');
+        if ('unknown' === $primary['choice'] || !isset($topicLabels[$primary['choice']]) || !$this->choiceIsConfident($primary, $policy)) {
+            return $this->decisionResult(IntakeOutcome::NEEDS_HUMAN_DECISION, null, [], null, [], 'owner', 'routing_ambiguous');
         }
 
-        $route = $this->routeFor($intake['project_id'], $workflow['choice'], $this->routingRules($intake['project_id']));
-        if ($workflow['choice'] === 'unknown' || !isset($workflowLabels[$workflow['choice']]) || !$this->choiceIsConfident($workflow, $policy) || $route === null) {
-            return $this->decisionResult('needs_human_decision', $primary['choice'], [], null, [], 'owner', 'routing_ambiguous');
+        $route = $this->routeFor($intake['project_id'], $workflow['choice'], $routing);
+        if ('unknown' === $workflow['choice'] || !isset($workflowLabels[$workflow['choice']]) || !$this->choiceIsConfident($workflow, $policy) || null === $route) {
+            return $this->decisionResult(IntakeOutcome::NEEDS_HUMAN_DECISION, $primary['choice'], [], null, [], 'owner', 'routing_ambiguous');
         }
 
         $suggested = [$primary['choice']];
         foreach ($byName as $name => $answer) {
-            if (!str_starts_with($name, 'tag.') || $answer['type'] !== 'predicate' || $answer['probability'] < $policy['positive_tag_threshold']) {
+            if (!str_starts_with($name, 'tag.') || 'predicate' !== $answer['type'] || $answer['probability'] < $policy['positive_tag_threshold']) {
                 continue;
             }
             $labelId = substr($name, 4);
@@ -1174,11 +1198,11 @@ final class IntakeHandler implements TaskIntake
 
         $missing = [];
         foreach ($policy['requirements'] as $requirement) {
-            if (!$requirement['required'] || ($requirement['workflow_label_ids'] !== [] && !in_array($workflow['choice'], $requirement['workflow_label_ids'], true))) {
+            if (!$requirement['required'] || ([] !== $requirement['workflow_label_ids'] && !in_array($workflow['choice'], $requirement['workflow_label_ids'], true))) {
                 continue;
             }
             $answer = $byName['missing.'.$requirement['field_key']] ?? null;
-            if ($answer === null || $answer['type'] !== 'predicate' || $answer['probability'] < $policy['missing_field_threshold']) {
+            if (null === $answer || 'predicate' !== $answer['type'] || $answer['probability'] < $policy['missing_field_threshold']) {
                 continue;
             }
             $addressedTo = $intake['clarification_round'] >= $policy['max_clarification_rounds'] ? 'owner' : 'requester';
@@ -1189,16 +1213,16 @@ final class IntakeHandler implements TaskIntake
                 'addressed_to' => $addressedTo,
             ];
         }
-        if ($missing !== []) {
-            $ownerQuestion = array_filter($missing, static fn (array $field): bool => $field['addressed_to'] === 'owner') !== [];
+        if ([] !== $missing) {
+            $ownerQuestion = [] !== array_filter($missing, static fn (array $field): bool => 'owner' === $field['addressed_to']);
             if ($ownerQuestion) {
-                return $this->decisionResult('needs_human_decision', $primary['choice'], $suggested, $workflow['choice'], $missing, 'owner', 'intake_escalated');
+                return $this->decisionResult(IntakeOutcome::NEEDS_HUMAN_DECISION, $primary['choice'], $suggested, $workflow['choice'], $missing, 'owner', 'intake_escalated');
             }
 
-            return $this->decisionResult('needs_information', $primary['choice'], $suggested, $workflow['choice'], $missing, 'requester');
+            return $this->decisionResult(IntakeOutcome::NEEDS_INFORMATION, $primary['choice'], $suggested, $workflow['choice'], $missing, 'requester');
         }
 
-        return $this->decisionResult('ready', $primary['choice'], $suggested, $workflow['choice'], [], 'none');
+        return $this->decisionResult(IntakeOutcome::READY, $primary['choice'], $suggested, $workflow['choice'], [], 'none');
     }
 
     /** @param array<string, mixed> $answer @param array<string, mixed> $policy */
@@ -1216,25 +1240,24 @@ final class IntakeHandler implements TaskIntake
         rsort($values, SORT_NUMERIC);
         $margin = ($values[0] ?? 0.0) - ($values[1] ?? 0.0);
 
-        return $selectedProbability !== null
+        return null !== $selectedProbability
             && $selectedProbability >= $policy['minimum_choice_probability']
             && $answer['confidence'] >= $policy['minimum_choice_confidence']
             && $margin >= $policy['minimum_choice_margin'];
     }
 
-    /** @param array<string, mixed> $answer */
     private function probability(mixed $value): void
     {
-        if (!is_numeric($value) || (float) $value < 0 || (float) $value > 1) {
+        if ((!is_int($value) && !is_float($value)) || $value < 0 || $value > 1) {
             throw new DecisionProviderException('OpenAI Decisions lieferte eine ungültige Wahrscheinlichkeit.', retryable: false);
         }
     }
 
     /** @return array<string, mixed> */
-    private function decisionResult(string $outcome, ?string $primaryTopicId, array $suggestedLabels, ?string $workflowLabelId, array $missing, string $waitingFor, ?string $reason = null): array
+    private function decisionResult(IntakeOutcome $outcome, ?string $primaryTopicId, array $suggestedLabels, ?string $workflowLabelId, array $missing, string $waitingFor, ?string $reason = null): array
     {
         return [
-            'outcome' => $outcome,
+            'outcome' => $outcome->value,
             'primary_topic_label_id' => $primaryTopicId,
             'suggested_label_ids' => array_values(array_unique($suggestedLabels)),
             'workflow_label_id' => $workflowLabelId,
@@ -1248,7 +1271,7 @@ final class IntakeHandler implements TaskIntake
     private function policy(string $projectId): array
     {
         $policy = $this->store->find('decision_policies', $projectId);
-        if ($policy !== null) {
+        if (null !== $policy) {
             return $policy;
         }
 
@@ -1259,7 +1282,7 @@ final class IntakeHandler implements TaskIntake
     private function routingRules(string $projectId): array
     {
         $routing = $this->store->find('routing_rules', $projectId);
-        if ($routing !== null) {
+        if (null !== $routing) {
             return $routing;
         }
 
@@ -1270,10 +1293,11 @@ final class IntakeHandler implements TaskIntake
     private function decisionConfiguration(): array
     {
         $configuration = $this->store->all('decision_configuration')[0] ?? null;
-        if ($configuration !== null) {
+        if (null !== $configuration) {
             $configuration['configured'] = is_string($configuration['secret_reference_id'] ?? null)
-                && $this->store->find('secret_references', $configuration['secret_reference_id']) !== null;
+                && null !== $this->store->find('secret_references', $configuration['secret_reference_id']);
             $configuration['state'] = $configuration['configured'] ? 'ready' : 'not_configured';
+
             return $configuration;
         }
 
@@ -1353,12 +1377,12 @@ final class IntakeHandler implements TaskIntake
         return (int) ($this->store->find('label_taxonomies', $projectId)['taxonomy_version'] ?? 1);
     }
 
-    /** @param list<string> $suggestedLabelIds @return list<string> */
+    /** @param list<mixed> $suggestedLabelIds @return list<string> */
     private function validateSuggestions(string $projectId, array $suggestedLabelIds): array
     {
         $available = [];
         foreach ($this->store->all('labels', $projectId) as $label) {
-            if ($label['active'] && $label['kind'] === 'topic') {
+            if ($label['active'] && 'topic' === $label['kind']) {
                 $available[$label['id']] = true;
             }
         }
@@ -1387,7 +1411,7 @@ final class IntakeHandler implements TaskIntake
                 continue;
             }
             $workflow = $this->store->find('workflows', $rule['workflow_id']);
-            if ($workflow === null || $workflow['project_id'] !== $projectId || ($workflow['definition_version'] ?? $workflow['version']) !== $rule['workflow_definition_version']) {
+            if (null === $workflow || $workflow['project_id'] !== $projectId || ($workflow['definition_version'] ?? $workflow['version']) !== $rule['workflow_definition_version']) {
                 return null;
             }
 
@@ -1416,11 +1440,11 @@ final class IntakeHandler implements TaskIntake
             if (!in_array($intake['assessment_status'], ['queued', 'running'], true)) {
                 continue;
             }
-            if ($routingVersion !== null && $intake['routing_rules_version'] === $routingVersion) {
+            if (null !== $routingVersion && $intake['routing_rules_version'] === $routingVersion) {
                 continue;
             }
             $task = $this->store->find('tasks', $intake['task_id']);
-            if ($task === null) {
+            if (null === $task) {
                 continue;
             }
             $this->markStale($task, $intake);
@@ -1452,7 +1476,7 @@ final class IntakeHandler implements TaskIntake
             }
             foreach ($requirement['workflow_label_ids'] as $labelId) {
                 $label = is_string($labelId) ? $this->store->find('labels', $labelId) : null;
-                if ($label === null || $label['project_id'] !== $projectId || $label['kind'] !== 'workflow') {
+                if (null === $label || $label['project_id'] !== $projectId || 'workflow' !== $label['kind']) {
                     throw new Problem(422, 'validation_failed', 'Workflowabhängige Anforderungen müssen Workflowlabels dieses Projekts verwenden.');
                 }
             }
@@ -1470,6 +1494,7 @@ final class IntakeHandler implements TaskIntake
     private function fingerprint(array $value): string
     {
         $normalized = $this->sortRecursively($value);
+
         return hash('sha256', json_encode($normalized, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
@@ -1483,6 +1508,7 @@ final class IntakeHandler implements TaskIntake
                 $value[$key] = $this->sortRecursively($child);
             }
         }
+
         return $value;
     }
 
@@ -1557,9 +1583,10 @@ final class IntakeHandler implements TaskIntake
     private function stringField(array $record, string $key): string
     {
         $value = $record[$key] ?? null;
-        if (!is_string($value) || $value === '') {
+        if (!is_string($value) || '' === $value) {
             throw new Problem(400, 'validation_failed', 'Ein erforderlicher Bezeichner fehlt.');
         }
+
         return $value;
     }
 }

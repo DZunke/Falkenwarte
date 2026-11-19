@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Presentation;
 
 use App\Access\Presentation\Access;
+use App\Extensions\Application\PluginRegistry;
 use Mcp\Schema\Enum\ProtocolVersion;
 use Mcp\Schema\Tool;
 use Mcp\Server;
@@ -18,7 +19,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 final readonly class McpEndpoint
 {
-    public function __construct(private Access $access, private Gateway $gateway, private Contract $contract)
+    public function __construct(private Access $access, private Gateway $gateway, private Contract $contract, private PluginRegistry $plugins)
     {
     }
 
@@ -27,11 +28,13 @@ final readonly class McpEndpoint
         $actor = $this->access->authenticate($r, true);
         $dir = dirname(getenv('FALKENWARTE_DB') ?: dirname(__DIR__, 2).'/var/falkenwarte.sqlite').'/mcp/'.hash('sha256', $actor->id);
         $builder = Server::builder()->setServerInfo('Falkenwarte', trim(file_get_contents(dirname(__DIR__, 2).'/version.txt')))->setProtocolVersion(ProtocolVersion::V2025_06_18)->withoutModernEra()->setSession(new FileSessionStore($dir))->setSessionLock(new FileSessionLock($dir));
-        foreach ($this->contract->tools() as $spec) {
-            if (!($spec['default_enabled'] ?? true) || array_diff($spec['required_capabilities'], $actor->capabilities)) {
+        foreach ($this->contract->tools($this->plugins) as $spec) {
+            if (!($spec['default_enabled'] ?? true)
+                || array_diff($spec['required_capabilities'] ?? [], $actor->capabilities)
+                || (isset($spec['required_plugin']) && !$this->plugins->enabled($spec['required_plugin']))) {
                 continue;
             }
-            $builder->add(Tool::fromArray($spec), new McpTool($spec, $actor, $this->gateway, $this->contract));
+            $builder->add(Tool::fromArray($spec), new McpTool($spec, $actor, $this->gateway, $this->contract, $this->plugins));
         }
         $request = new ServerRequest($r->getMethod(), $r->getUri(), $r->headers->all(), $r->getContent());
         $result = $builder->build()->run(new StreamableHttpTransport($request, middleware: [new PassthroughMiddleware()]));

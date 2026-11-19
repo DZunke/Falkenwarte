@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Presentation;
 
 use App\Access\Presentation\Access;
+use App\Extensions\Application\PluginRegistry;
 use App\Shared\Application\Actor;
 use App\Shared\Application\IdempotencyStore;
 use App\Shared\Application\Store;
@@ -12,7 +13,7 @@ use App\Shared\Domain\Problem;
 
 final class Gateway
 {
-    public function __construct(private readonly Store $store, private readonly IdempotencyStore $idempotency, private readonly Contract $contract, private readonly iterable $handlers)
+    public function __construct(private readonly Store $store, private readonly IdempotencyStore $idempotency, private readonly Contract $contract, private readonly iterable $handlers, private readonly PluginRegistry $plugins)
     {
     }
 
@@ -26,6 +27,9 @@ final class Gateway
         }
         if (!$actor->owner && array_diff($op['x-required-capabilities'] ?? [], $actor->capabilities)) {
             throw new Problem(403, 'forbidden', 'Dem Token fehlt die erforderliche Berechtigung.');
+        }
+        if (isset($op['x-required-plugin']) && !$this->plugins->enabled($op['x-required-plugin'])) {
+            throw new Problem(409, 'capability_unavailable', 'Die erforderliche Plugin-Funktion ist nicht aktiviert.');
         }
         if (isset($p['project_id'])) {
             $actor->requireProject($p['project_id']);
@@ -191,9 +195,9 @@ final class Gateway
     {
         foreach ($this->handlers as $handler) {
             if ($handler->handles($name)) {
-                return $handler->handle($name,$p,$b,$a);
+                return $handler->handle($name, $p, $b, $a);
             }
         }
-        throw new Problem(501,'operation_unavailable','Diese Operation ist nicht verfügbar: '.$name);
+        throw new Problem(501, 'operation_unavailable', 'Diese Operation ist nicht verfügbar: '.$name);
     }
 }

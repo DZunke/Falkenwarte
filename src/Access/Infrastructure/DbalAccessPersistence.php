@@ -20,14 +20,14 @@ final readonly class DbalAccessPersistence implements AccessPersistence
             [$hash],
         );
 
-        return $data === false ? null : json_decode($data, true, flags: JSON_THROW_ON_ERROR);
+        return false === $data ? null : json_decode($data, true, flags: JSON_THROW_ON_ERROR);
     }
 
     public function findSession(string $hash, int $now): ?array
     {
         $session = $this->connection->fetchAssociative('SELECT * FROM sessions WHERE hash=? AND expires>?', [$hash, $now]);
 
-        return $session === false ? null : $session;
+        return false === $session ? null : $session;
     }
 
     public function saveSession(array $session): void
@@ -49,7 +49,7 @@ final readonly class DbalAccessPersistence implements AccessPersistence
     {
         $attempts = $this->connection->fetchAssociative('SELECT * FROM login_attempts WHERE address=?', [$address]);
 
-        return $attempts === false ? null : $attempts;
+        return false === $attempts ? null : $attempts;
     }
 
     public function recordLoginFailure(string $address, int $now): void
