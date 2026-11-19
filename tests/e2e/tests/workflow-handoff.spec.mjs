@@ -111,8 +111,12 @@ async function startWorkflow(ownerApi, task, workflow) {
 
 async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'reported_success', summary, label, text }) {
   const run = await readUntil(ownerApi, `/runs/${runId}`, (item) => ['running', 'verifying'].includes(item.state) && Boolean(item.attempts[0]?.external_thread_id), 'Der zugehörige T3-Run muss gestartet und beobachtbar sein.');
+  expect(run.snapshot.task_revision).toBe(taskRevision);
+  const taskId = run.task_id;
+  const attemptIdentity = run.attempts.map((attempt) => ({ attempt_no: attempt.attempt_no, dispatch_id: attempt.dispatch_id }));
   const reportId = randomUUID();
-  const report = await agent.call('runs_report_result', {
+  const clientRequestId = randomUUID();
+  const payload = Object.freeze({
     run_id: runId,
     report_id: reportId,
     attempt_no: run.attempt_no,
@@ -120,12 +124,53 @@ async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'r
     outcome,
     summary,
     artifacts: [{ kind: 'note', label, text }],
-    client_request_id: randomUUID(),
-    expected_version: run.version,
+    client_request_id: clientRequestId,
   });
-  expect(report.isError, JSON.stringify(report.structuredContent)).toBe(false);
+  let reportResult;
+  let expectedVersion = run.version;
+  for (let submission = 0; submission < 3; submission += 1) {
+    reportResult = await agent.call('runs_report_result', { ...payload, expected_version: expectedVersion });
+    if (!reportResult?.isError) break;
+
+    const problem = reportResult.structuredContent;
+    const isRunVersionConflict = problem?.status === 412
+      && problem?.code === 'version_conflict'
+      && Number.isInteger(problem?.current_version);
+    expect(isRunVersionConflict, JSON.stringify(problem)).toBe(true);
+    expect(submission, 'Der Report darf höchstens zweimal nach einem konkreten Versionskonflikt erneut gelesen und gesendet werden.').toBeLessThan(2);
+
+    const latestResponse = await ownerApi.get(`/runs/${runId}`);
+    expect(latestResponse.response.status(), JSON.stringify(latestResponse.data)).toBe(200);
+    const latest = latestResponse.data;
+    expect(latest.id).toBe(run.id);
+    expect(latest.project_id).toBe(run.project_id);
+    expect(latest.task_id).toBe(taskId);
+    expect(latest.version).toBeGreaterThan(expectedVersion);
+    expect(latest.version).toBeGreaterThanOrEqual(problem.current_version);
+    expect(latest.attempt_no).toBe(run.attempt_no);
+    expect(latest.snapshot.task_revision).toBe(taskRevision);
+    expect(latest.attempts.map((attempt) => ({ attempt_no: attempt.attempt_no, dispatch_id: attempt.dispatch_id }))).toEqual(attemptIdentity);
+    expect(['running', 'verifying']).toContain(latest.state);
+    expect(latest.report_ids ?? []).toEqual(run.report_ids ?? []);
+
+    const latestTask = await ownerApi.get(`/tasks/${taskId}`);
+    expect(latestTask.response.status(), JSON.stringify(latestTask.data)).toBe(200);
+    expect(latestTask.data.id).toBe(taskId);
+    expect(latestTask.data.version).toBe(taskRevision);
+
+    const existingReport = await ownerApi.get(`/runs/${runId}/result-reports/${reportId}`);
+    expect(existingReport.response.status(), JSON.stringify(existingReport.data)).toBe(404);
+    expectedVersion = latest.version;
+  }
+  expect(reportResult?.isError, JSON.stringify(reportResult?.structuredContent)).toBe(false);
+
   const reportedRun = await readUntil(ownerApi, `/runs/${runId}`, (item) => item.report_ids?.includes(reportId) === true, 'Der Ergebnisbericht muss dauerhaft diesem Run zugeordnet werden.');
   const storedReport = await readUntil(ownerApi, `/runs/${runId}/result-reports/${reportId}`, (item) => item.id === reportId, 'Der gespeicherte Ergebnisbericht muss öffentlich lesbar sein.');
+  expect(storedReport.run_id).toBe(runId);
+  expect(storedReport.attempt_no).toBe(run.attempt_no);
+  expect(storedReport.task_revision).toBe(taskRevision);
+  expect(storedReport.outcome).toBe(outcome);
+  expect(storedReport.summary).toBe(summary);
   expect(storedReport.accepted_for_reconciliation).toBe(true);
   return { run: reportedRun, report: storedReport, reportId };
 }
