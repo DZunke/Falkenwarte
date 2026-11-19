@@ -71,11 +71,11 @@ if [[ -f "$control/reports/public/board.png" ]]; then
     cp "$control/reports/public/board.png" var/ci-evidence/board.png
 fi
 if (( status == 0 )); then
-    # A03/A23/A32 are static, A05 is checked with a terminated Messenger
-    # worker, A19 exercises the production image, A31 uses real GitHub checks.
+    # A03 is static, A05 restarts Messenger, A19 uses the production profile,
+    # and A31 exercises GitHub. Handbook coverage A23/A32 also runs in Chromium.
     jq -e '
       .overall_status == "passed" and all(.cases[]; .status == "passed")
-      and ((["A01","A02","A04","A06","A07","A08","A09","A10","A11","A12","A13","A14","A15","A16","A17","A18","A20","A21","A22","A24","A25","A26","A27","A28","A29","A30","A33"] - [.cases[].acceptance_id]) | length == 0)
+      and ((["A01","A02","A04","A06","A07","A08","A09","A10","A11","A12","A13","A14","A15","A16","A17","A18","A20","A21","A22","A23","A24","A25","A26","A27","A28","A29","A30","A32","A33"] - [.cases[].acceptance_id]) | length == 0)
     ' var/ci-evidence/acceptance.json >/dev/null
 fi
 exit "$status"
