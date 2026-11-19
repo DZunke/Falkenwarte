@@ -284,6 +284,7 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     const journal = await qaMocks.t3Journal();
     expect(journal.unexpected).toEqual([]);
     recordEvidence(
+      'Ein Backup lässt sich nach Neustart wiederherstellen. Die Inventur sperrt neue Starts bis zur Klärung bekannter und zusätzlicher externer T3-Arbeit.',
       'Backup ' + backupId + ' enthielt App-Schema ' + backup.manifest.schema_version + ', Linknotizen ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.link-notes')?.version + ' und T3-Bridge ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.t3-mcp-bridge')?.version + '; ZIP-CRC und SQLite-SHA-256 stimmten. Nach Neustart wurde Ticket "' + originalTitle + '" aus dem Snapshot wiederhergestellt, Run ' + runId + ' samt T3-Thread ' + knownThreadId + ' abgeglichen und der zusätzliche T3-Lauf ' + lateExternal.thread_id + ' einzeln registriert. Neue Starts erhielten recovery_inventory_required; bekannte und unbekannte externe Aktivität hielten Plugin ' + bridgePluginId + ' im Drain, bis alle drei begründeten Entscheidungen das Gate lösten.',
       { t3: journal },
     );

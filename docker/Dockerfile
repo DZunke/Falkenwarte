@@ -19,7 +19,6 @@ RUN npm --prefix frontend sbom --sbom-format=cyclonedx --sbom-type=application -
 FROM ${COMPOSER_IMAGE} AS composer
 
 FROM ${FRANKENPHP_IMAGE} AS app
-ARG FRANKENPHP_IMAGE
 ARG SQLITE_VERSION=3510300
 ARG SQLITE_SHA256=81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a
 
@@ -70,8 +69,11 @@ ENV APP_ENV=prod \
     MERCURE_INTERNAL_URL=http://127.0.0.1:8080/.well-known/mercure
 
 WORKDIR /app
+ARG FRANKENPHP_IMAGE
 ARG VCS_REF=unknown
+# x-release-please-start-version
 ARG APP_VERSION=0.1.0
+# x-release-please-end
 ARG DEBIAN_SNAPSHOT=20261104T212339Z
 ARG SOURCE_DATE_EPOCH
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer

@@ -403,6 +403,9 @@ function sanitizeMockJournal(name, journal) {
 }
 
 export function recordEvidence(expected, observed, mockJournals = {}) {
+  if (typeof expected !== 'string' || !expected.trim() || typeof observed !== 'string' || !observed.trim()) {
+    throw new Error('An acceptance result requires a written expectation and a written observation.');
+  }
   test.info().annotations.push({ type: 'expected', description: expected });
   test.info().annotations.push({ type: 'observed', description: observed });
   for (const [name, journal] of Object.entries(mockJournals)) {

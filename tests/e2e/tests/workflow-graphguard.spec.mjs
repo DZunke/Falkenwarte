@@ -116,37 +116,79 @@ test('A12 accepted workflow transition stays paused until its evidence condition
   });
   expect(profileResult.response.status(), JSON.stringify(profileResult.data)).toBe(201);
 
-  const workflowResult = await ownerApi.post('/workflows', {
-    project_id: project.id,
-    name: 'A12 Bedingungsgebundener Übergang',
-    preset_id: 'manual',
-    stages: [
-      {
-        id: 'implementation',
-        kind: 'implementation',
-        name: 'Bearbeitung',
-        agent_profile_id: profileResult.data.id,
-        entry_conditions: [],
-        run_completion_policy: runPolicy,
-      },
-      {
-        id: 'review',
-        kind: 'review',
-        name: 'Prüfung',
-        agent_profile_id: profileResult.data.id,
-        entry_conditions: [],
-        run_completion_policy: runPolicy,
-      },
-    ],
-    transitions: [{
+  const stages = [
+    {
+      id: 'implementation',
+      kind: 'implementation',
+      name: 'Bearbeitung',
+      agent_profile_id: profileResult.data.id,
+      entry_conditions: [],
+      run_completion_policy: runPolicy,
+    },
+    {
+      id: 'review',
+      kind: 'review',
+      name: 'Prüfung',
+      agent_profile_id: profileResult.data.id,
+      entry_conditions: [{ type: 'run_succeeded' }],
+      run_completion_policy: { ...runPolicy, require_human_phase_decision: true },
+    },
+    {
+      id: 'release',
+      kind: 'approval',
+      name: 'Freigabe',
+      agent_profile_id: profileResult.data.id,
+      entry_conditions: [],
+      run_completion_policy: runPolicy,
+    },
+  ];
+  const transitions = [
+    {
       from_stage_id: 'implementation',
       to_stage_id: 'review',
       on: 'accepted',
       conditions: [{ type: 'required_evidence_human_confirmed', evidence_kind: 'note' }],
-    }],
-    limits: { max_repair_rounds: 1, max_depth: 2, max_parallel_runs: 1, max_total_seconds: 3600 },
+    },
+    { from_stage_id: 'implementation', to_stage_id: 'implementation', on: 'needs_changes', conditions: [] },
+    {
+      from_stage_id: 'review',
+      to_stage_id: 'release',
+      on: 'accepted',
+      conditions: [{ type: 'review_report_accepted' }, { type: 'human_approval_granted' }],
+    },
+    { from_stage_id: 'review', to_stage_id: 'implementation', on: 'needs_changes', conditions: [] },
+  ];
+  const workflowWrite = {
+    project_id: project.id,
+    name: 'A12 Bedingungsgebundener Übergang',
+    preset_id: 'manual',
+    stages,
+    transitions,
+    limits: { max_repair_rounds: 1, max_depth: 3, max_parallel_runs: 1, max_total_seconds: 3600 },
     enabled: true,
+  };
+  const invalidFirstStage = await ownerApi.post('/workflows', {
+    ...workflowWrite,
+    name: 'A12 ungültiger erster Stageabschluss',
+    stages: [{ ...stages[0], entry_conditions: [{ type: 'run_succeeded' }] }, stages[1], stages[2]],
   });
+  expect(invalidFirstStage.response.status(), JSON.stringify(invalidFirstStage.data)).toBe(422);
+  expect(invalidFirstStage.data.code).toBe('workflow_condition_future_stage');
+  const invalidMissingReview = await ownerApi.post('/workflows', {
+    ...workflowWrite,
+    name: 'A12 ungültige fehlende Vorprüfung',
+    stages: [stages[0], stages[2]],
+    transitions: [{
+      from_stage_id: 'implementation',
+      to_stage_id: 'release',
+      on: 'accepted',
+      conditions: [{ type: 'review_report_accepted' }],
+    }],
+  });
+  expect(invalidMissingReview.response.status(), JSON.stringify(invalidMissingReview.data)).toBe(422);
+  expect(invalidMissingReview.data.code).toBe('workflow_condition_future_stage');
+
+  const workflowResult = await ownerApi.post('/workflows', workflowWrite);
   expect(workflowResult.response.status(), JSON.stringify(workflowResult.data)).toBe(201);
   const workflow = workflowResult.data.workflow ?? workflowResult.data;
 
@@ -226,8 +268,8 @@ test('A12 accepted workflow transition stays paused until its evidence condition
     expect(finalJournal.accepted_launches).toHaveLength(2);
     expect(finalJournal.unexpected).toEqual([]);
     recordEvidence(
-      'A12/M4: Ein konfigurierter akzeptierter Übergang bleibt blockiert, solange der erforderliche Nachweis nur gemeldet ist; nach Ownerprüfung und Resume entsteht genau ein Folgerun.',
-      `Workflow ${instanceId} blieb nach erfolgreichem Run ${firstRunId} in der Phase implementation pausiert und behielt genau einen Run; der T3-Mock hatte einen Launch. Die Owner-API bestätigte Evidence ${evidenceId}, der Browser-gestartete Resume erzeugte genau einen Review-Run ${secondRunId}; der Workflow endete mit zwei eindeutigen Runs und genau zwei T3-Launches.`,
+      'A12/M4: Die Workflow-Graphprüfung weist unmögliche Erstphasenbedingungen zurück; ein gültiger Implementierung→Review→Freigabe-Graph mit Reparaturpfad bleibt bei offenem Nachweis pausiert und startet nach Ownerprüfung und Resume genau einen Folgerun.',
+      `Öffentliche Workflow-POSTs wiesen die unmöglichen Erstphasenbedingungen mit ${invalidFirstStage.data.code} und ${invalidMissingReview.data.code} (HTTP 422) ab. Workflow ${instanceId} blieb nach erfolgreichem Run ${firstRunId} in der Phase implementation pausiert und behielt genau einen Run; der T3-Mock hatte einen Launch. Die Owner-API bestätigte Evidence ${evidenceId}, der Browser-gestartete Resume erzeugte genau einen Review-Run ${secondRunId}; der Workflow endete mit zwei eindeutigen Runs und genau zwei T3-Launches.`,
       { t3: finalJournal },
     );
   } finally {

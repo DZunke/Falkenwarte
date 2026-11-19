@@ -8,7 +8,9 @@ from zipfile import ZipFile, BadZipFile
 
 raw = Path(sys.argv[1])
 out = Path(sys.argv[2])
-report = json.loads((out / "acceptance.json").read_text())
+source = Path(sys.argv[3])
+filename = sys.argv[4] if len(sys.argv) > 4 else "acceptance.json"
+report = json.loads(source.read_text())
 diagnostics = []
 for trace in sorted(raw.rglob("trace.zip")):
     steps = []
@@ -40,14 +42,16 @@ if diagnostics:
 rows = []
 for case in report["cases"]:
     status = case["status"]
-    if status != "passed":
-        case["observed_outcome"] = []
+    # Observations are authored text. Failed assertions and malformed legacy objects can contain raw request data.
+    case["observed_outcome"] = [item for item in case.get("observed_outcome", []) if isinstance(item, str) and item.strip()] if status == "passed" else []
     case.pop("error", None)
     escape = html.escape
     observation = " ".join(case["observed_outcome"])
     rows.append(f'<tr><td>{escape(case["acceptance_id"])}</td><td>{escape(case["title"])}</td>'
                 f'<td>{escape(status)}</td><td>{escape(observation)}</td></tr>')
-(out / "acceptance.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+(out / filename).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+if filename != "acceptance.json":
+    sys.exit(0)
 (out / "index.html").write_text(
     '<!doctype html><html lang="de"><meta charset="utf-8"><title>Falkenwarte · Browserabnahme</title>'
     '<style>body{max-width:95rem;margin:3rem auto;padding:0 2rem;font:1rem/1.5 system-ui;color:#17392c}'

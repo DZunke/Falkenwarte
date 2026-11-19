@@ -78,22 +78,8 @@ export function CustomFieldInputs({ fields, value, onChange, idPrefix, disabled 
       const raw = value[field.key]
       const choices = field.choices
       return <div key={field.id} className="grid gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Label htmlFor={id}>{field.label}</Label>
-          {field.required && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">Erforderlich</Badge>}
-        </div>
-        {field.value_type === 'text' && <Input id={id} value={typeof raw === 'string' ? raw : ''} onChange={(event) => onChange(field.key, event.target.value)} maxLength={10000} disabled={disabled} required={field.required} />}
-        {field.value_type === 'number' && <Input id={id} type="number" step="any" value={typeof raw === 'string' ? raw : ''} onChange={(event) => onChange(field.key, event.target.value)} disabled={disabled} required={field.required} />}
-        {field.value_type === 'date' && <Input id={id} type="date" value={typeof raw === 'string' ? raw : ''} onChange={(event) => onChange(field.key, event.target.value)} disabled={disabled} required={field.required} />}
-        {field.value_type === 'boolean' && <Select value={typeof raw === 'boolean' ? String(raw) : ''} onValueChange={(selected) => onChange(field.key, selected === 'true')} disabled={disabled}>
-          <SelectTrigger id={id} aria-label={field.label}><SelectValue placeholder="Bitte auswählen" /></SelectTrigger>
-          <SelectContent><SelectItem value="true">Ja</SelectItem><SelectItem value="false">Nein</SelectItem></SelectContent>
-        </Select>}
-        {field.value_type === 'choice' && <Select value={typeof raw === 'string' ? raw : ''} onValueChange={(selected) => onChange(field.key, selected)} disabled={disabled}>
-          <SelectTrigger id={id} aria-label={field.label}><SelectValue placeholder="Bitte auswählen" /></SelectTrigger>
-          <SelectContent>{choices.map((choice) => <SelectItem key={choice} value={choice}>{choice}</SelectItem>)}</SelectContent>
-        </Select>}
-        {field.value_type === 'multi_choice' && <div className="grid gap-2">
+        {field.value_type === 'multi_choice' ? <fieldset className="grid gap-2">
+          <legend className="flex flex-wrap items-center gap-2 text-sm font-medium">{field.label}{field.required && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">Erforderlich</Badge>}</legend>
           {choices.map((choice, index) => <label key={choice} className="flex min-h-8 items-center gap-2 text-sm">
             <Checkbox id={`${id}-${index}`} checked={Array.isArray(raw) && raw.includes(choice)} disabled={disabled} onCheckedChange={(checked) => {
               const current = Array.isArray(raw) ? raw : []
@@ -101,7 +87,23 @@ export function CustomFieldInputs({ fields, value, onChange, idPrefix, disabled 
             }} />
             <span>{choice}</span>
           </label>)}
-        </div>}
+        </fieldset> : <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor={id}>{field.label}</Label>
+            {field.required && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">Erforderlich</Badge>}
+          </div>
+          {field.value_type === 'text' && <Input id={id} value={typeof raw === 'string' ? raw : ''} onChange={(event) => onChange(field.key, event.target.value)} maxLength={10000} disabled={disabled} required={field.required} />}
+          {field.value_type === 'number' && <Input id={id} type="number" step="any" value={typeof raw === 'string' ? raw : ''} onChange={(event) => onChange(field.key, event.target.value)} disabled={disabled} required={field.required} />}
+          {field.value_type === 'date' && <Input id={id} type="date" value={typeof raw === 'string' ? raw : ''} onChange={(event) => onChange(field.key, event.target.value)} disabled={disabled} required={field.required} />}
+          {field.value_type === 'boolean' && <Select value={typeof raw === 'boolean' ? String(raw) : ''} onValueChange={(selected) => onChange(field.key, selected === 'true')} disabled={disabled}>
+            <SelectTrigger id={id} aria-label={field.label}><SelectValue placeholder="Bitte auswählen" /></SelectTrigger>
+            <SelectContent><SelectItem value="true">Ja</SelectItem><SelectItem value="false">Nein</SelectItem></SelectContent>
+          </Select>}
+          {field.value_type === 'choice' && <Select value={typeof raw === 'string' ? raw : ''} onValueChange={(selected) => onChange(field.key, selected)} disabled={disabled}>
+            <SelectTrigger id={id} aria-label={field.label}><SelectValue placeholder="Bitte auswählen" /></SelectTrigger>
+            <SelectContent>{choices.map((choice) => <SelectItem key={choice} value={choice}>{choice}</SelectItem>)}</SelectContent>
+          </Select>}
+        </>}
         <span className="text-xs text-muted-foreground">{typeLabels[field.value_type]}{field.plugin_id ? ' · Von einer Erweiterung verwaltet' : ''}</span>
       </div>
     })}

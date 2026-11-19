@@ -518,7 +518,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     expect(t3.unexpected).toEqual([]);
     recordEvidence(
       'A27: Routingentscheidung und Laufzeitfreigabe bleiben als getrennte Gründe sichtbar; die alte Freigabe ist revisionsgebunden und die neue schließt nur den aktuellen Grund.',
-      `Nach der zweiten Intakebewertung bestanden approval_pending und routing_ambiguous gleichzeitig samt beider Systemlabels. Das Auslassen des Routinglabels änderte keinen Grund. Die Ownerentscheidung entfernte routing_ambiguous; die erste Approval wurde wegen Revisionsabweichung invalidiert. Ein frischer Run ${freshRunId} mit passender Revision wurde anschließend ausdrücklich freigegeben und löste approval_pending auf.`,
+      `Nach der zweiten Intakebewertung bestanden approval_pending und routing_ambiguous gleichzeitig samt beider Systemlabels. Das Auslassen des Routinglabels änderte keinen Grund. Die Ownerentscheidung entfernte routing_ambiguous; die erste Approval für Ergebnisdigest ${awaitingApproval.result_digest} wurde wegen Revisionsabweichung invalidiert. Der frische Run ${freshRunId} mit Ergebnisdigest ${freshResult.result_digest} und passender Revision wurde anschließend ausdrücklich freigegeben und löste approval_pending auf.`,
       { t3 },
     );
   } finally {

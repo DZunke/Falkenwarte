@@ -9,7 +9,9 @@ services:
       target: app
       args:
         VCS_REF: ${FALKENWARTE_TEST_COMMIT:-unknown}
+        # x-release-please-start-version
         APP_VERSION: ${APP_VERSION:-0.1.0}
+        # x-release-please-end
     environment:
       APP_ENV: prod
       APP_DEBUG: "0"

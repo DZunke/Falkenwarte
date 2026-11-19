@@ -29,7 +29,13 @@
   "subscriptions": [],
   "settings_schema": {
     "type": "object",
-    "properties": {},
+    "properties": {
+      "retention_marker": {
+        "type": "string",
+        "maxLength": 120,
+        "description": "QA marker proving plugin-owned configuration remains stored after image removal."
+      }
+    },
     "required": [],
     "additionalProperties": false
   },

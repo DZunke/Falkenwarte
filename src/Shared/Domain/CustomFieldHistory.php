@@ -22,7 +22,7 @@ final class CustomFieldHistory
                 'text', 'choice', 'date' => is_string($value) ? ['type' => 'text', 'value' => mb_substr($value, 0, 20000)] : null,
                 'number' => is_int($value) || is_float($value) ? ['type' => 'number', 'value' => $value] : null,
                 'boolean' => is_bool($value) ? ['type' => 'boolean', 'value' => $value] : null,
-                'multi_choice' => is_array($value) && array_is_list($value) && array_all($value, is_string(...))
+                'multi_choice' => is_array($value) && array_is_list($value) && array_all($value, static fn (mixed $choice): bool => is_string($choice))
                     ? ['type' => 'text_list', 'value' => array_map(static fn (string $choice): string => mb_substr($choice, 0, 2000), array_slice($value, 0, 200))] : null,
                 default => null,
             };

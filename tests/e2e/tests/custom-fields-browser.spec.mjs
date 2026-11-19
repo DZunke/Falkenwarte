@@ -25,6 +25,10 @@ async function defineField(ownerPage, definitionsDialog, field) {
 }
 
 test('project field definitions and typed values are available across ticket forms', async ({ ownerApi, ownerPage }) => {
+  test.info().annotations.push({
+    type: 'acceptance_ids',
+    description: 'A06 typed project-field definitions and values in the owner browser flow.',
+  });
   const project = await ownerApi.createProject({ name: 'Projektfelder im Ticketformular' });
   const board = await ownerApi.ensureDefaultBoard(project.id);
 

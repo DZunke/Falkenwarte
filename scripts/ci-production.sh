@@ -11,10 +11,12 @@ export APP_SETUP_TOKEN=test-setup-token-ONLY-for-isolated-qa
 export FALKENWARTE_BASE_URL="$FALKENWARTE_PUBLIC_ORIGIN" FALKENWARTE_SETUP_TOKEN="$APP_SETUP_TOKEN"
 runner="${project}-runner"
 reports="${project}-reports"
+private_reports=$(mktemp -d)
 cleanup() {
     docker rm -f "$runner" >/dev/null 2>&1 || true
     "${compose[@]}" down --volumes >/dev/null
     docker volume rm "$reports" >/dev/null 2>&1 || true
+    rm -rf "$private_reports"
 }
 trap cleanup EXIT
 test "$("${compose[@]}" config --services)" = app
@@ -39,6 +41,7 @@ for phase in 0 1; do
         -e FALKENWARTE_QA_RESULTS_DIR=/qa-results -e FALKENWARTE_PRIVATE_DIR=/tmp/owner \
         -v "${project}_falkenwarte-certs:/certificates:ro" -v "$reports:/qa-results" \
         "${FALKENWARTE_E2E_IMAGE:-falkenwarte-e2e:local}" bash /usr/local/bin/run-browser-qa
-    docker cp "$runner:/app/qa/results.json" "var/ci-evidence/production-$phase.json"
+    docker cp "$runner:/app/qa/results.json" "$private_reports/result.json"
+    python3 scripts/prepare-evidence.py "$private_reports" var/ci-evidence "$private_reports/result.json" "production-$phase.json"
     docker rm "$runner" >/dev/null
 done

@@ -1422,6 +1422,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugin-install-plans/{plan_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Einen vorbereiteten Entfernungsplan zurücknehmen */
+        post: operations["plugin_install_plan_cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/actions": {
         parameters: {
             query?: never;
@@ -3527,6 +3546,9 @@ export interface components {
             retained_data_bytes: number;
             /** Format: uri-reference */
             configuration_schema_id: string | null;
+            /** @description Ob eine gespeicherte Pluginkonfiguration nach der Paketentfernung erhalten blieb; Werte werden nicht offengelegt. */
+            configuration_retained?: boolean;
+            removal_plan_id?: components["schemas"]["Id"] | null;
             restart_required: boolean;
             last_error: string | null;
             allowed_actions: components["schemas"]["AllowedAction"][];
@@ -3581,7 +3603,7 @@ export interface components {
             source?: "registry" | "local_build";
             manifest_sha256?: components["schemas"]["Sha256"];
             /** @enum {string} */
-            status: "prepared" | "blocked";
+            status: "prepared" | "blocked" | "completed" | "cancelled";
             requires_build: boolean;
             requires_restart: boolean;
             requires_migration: boolean;
@@ -7322,6 +7344,25 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["InstallPlan"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    plugin_install_plan_cancel: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Neue UUID pro fachlichem Command empfohlen. Derselbe Schlüssel plus unveränderter Request ergibt dieselbe Action-/Ressourcenidentität; andere Payload 409. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                plan_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["InstallPlan"];
+            409: components["responses"]["Conflict"];
             default: components["responses"]["Problem"];
         };
     };

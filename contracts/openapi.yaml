@@ -2972,6 +2972,34 @@ paths:
       security:
       - browser_session: []
       x-owner-only: true
+  /plugin-install-plans/{plan_id}/cancel:
+    parameters:
+    - name: plan_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    post:
+      operationId: plugin_install_plan_cancel
+      tags:
+      - plugins
+      summary: Einen vorbereiteten Entfernungsplan zurücknehmen
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/InstallPlan'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: plugin_install_plan_cancel
+      x-required-capabilities:
+      - plugins.manage
+      security:
+      - browser_session: []
+        csrf_token: []
+      x-owner-only: true
   /actions:
     get:
       operationId: actions_list
@@ -9764,6 +9792,13 @@ components:
           - string
           - 'null'
           format: uri-reference
+        configuration_retained:
+          type: boolean
+          description: Ob eine gespeicherte Pluginkonfiguration nach der Paketentfernung erhalten blieb; Werte werden nicht offengelegt.
+        removal_plan_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
         restart_required:
           type: boolean
         last_error:
@@ -9924,6 +9959,8 @@ components:
           enum:
           - prepared
           - blocked
+          - completed
+          - cancelled
         requires_build:
           type: boolean
         requires_restart:

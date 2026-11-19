@@ -70,7 +70,6 @@ export default function ProjectCustomFields({ project }: { project: Project }) {
       if (['choice', 'multi_choice'].includes(valueType) && choices.length === 0) throw new Error('Füge mindestens eine Auswahloption hinzu.')
       const body: DefinitionWrite = {
         key: key.trim(),
-        plugin_id: editingField?.plugin_id ?? null,
         label: label.trim(),
         value_type: valueType,
         required,

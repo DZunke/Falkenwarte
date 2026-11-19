@@ -36,6 +36,7 @@ final class PluginHandler
             'plugin_install_plan_create',
             'plugin_install_plan_get',
             'plugin_install_plans_list',
+            'plugin_install_plan_cancel',
             'task_link_notes_list',
             'task_link_note_create',
             'task_link_note_update',
@@ -56,6 +57,7 @@ final class PluginHandler
             'plugin_install_plan_create' => $this->createInstallPlan($body, $actor),
             'plugin_install_plan_get' => $this->installPlan($this->requiredId($p, 'plan_id')),
             'plugin_install_plans_list' => $this->listInstallPlans($p, $actor),
+            'plugin_install_plan_cancel' => $this->cancelRemovalPlan($this->requiredId($p, 'plan_id'), $actor),
             'task_link_notes_list' => $this->linkNotes($this->requiredId($p, 'task_id'), $actor),
             'task_link_note_create' => $this->createLinkNote($this->requiredId($p, 'task_id'), $body, $actor),
             'task_link_note_update' => $this->updateLinkNote($this->requiredId($p, 'task_id'), $this->requiredId($p, 'note_id'), $body, $actor),
@@ -116,7 +118,17 @@ final class PluginHandler
     private function list(array $p, Actor $actor): array
     {
         $actor->requireOwner();
-        $plugins = array_map(fn (array $manifest): array => $this->plugin((string) $manifest['id']), $this->registry->manifests());
+        $plugins = [];
+        foreach ($this->registry->manifests() as $manifest) {
+            $plugins[] = $this->plugin((string) $manifest['id']);
+        }
+        foreach ($this->store->all('plugins') as $stored) {
+            $pluginId = $stored['id'] ?? null;
+            if (!is_string($pluginId) || $this->registry->has($pluginId) || !$this->hasPreparedRemoval($pluginId, $stored)) {
+                continue;
+            }
+            $plugins[] = $this->removedPlugin($pluginId, $stored);
+        }
 
         usort($plugins, static fn (array $left, array $right): int => strcmp($left['id'], $right['id']));
 
@@ -125,11 +137,16 @@ final class PluginHandler
 
     private function get(string $pluginId): array
     {
-        if (!$this->knownPlugin($pluginId)) {
-            throw new Problem(404, 'resource_not_found', 'The requested plugin is not installed.');
+        if ($this->knownPlugin($pluginId)) {
+            return $this->plugin($pluginId);
         }
 
-        return $this->plugin($pluginId);
+        $stored = $this->store->find('plugins', $pluginId);
+        if (null !== $stored && $this->hasPreparedRemoval($pluginId, $stored)) {
+            return $this->removedPlugin($pluginId, $stored);
+        }
+
+        throw new Problem(404, 'resource_not_found', 'The requested plugin is not installed.');
     }
 
     private function activate(string $pluginId, array $body, Actor $actor): array
@@ -249,6 +266,9 @@ final class PluginHandler
     {
         $actor->requireOwner();
         $plugin = $this->requireInstalledPlugin($pluginId);
+        if (!in_array($plugin['state'], ['installed_disabled', 'disabled', 'enabled'], true)) {
+            throw new Problem(409, 'plugin_state_conflict', 'Configuration cannot change while the plugin is transitioning or pending removal.');
+        }
 
         $values = $body['values'] ?? null;
         $manifest = $this->registry->manifest($pluginId);
@@ -377,6 +397,7 @@ final class PluginHandler
             'plugin_id' => $pluginId,
             'target_version' => $plugin['installed_version'],
             'status' => 'prepared',
+            'previous_plugin_state' => $plugin['state'],
             'requires_build' => true,
             'requires_restart' => true,
             'requires_migration' => false,
@@ -388,11 +409,52 @@ final class PluginHandler
                 ['kind' => 'restart', 'description' => 'Die Entfernung mit dem geprüften Image neu starten.', 'operator_required' => true],
                 ['kind' => 'verify', 'description' => 'Prüfen, dass das Paket entfernt ist und lokale Daten lesbar bleiben.', 'operator_required' => true],
             ],
-            'warnings' => ['Dieser Plan führt keine Paket-, Shell-, Composer- oder Containeraktion aus.', 'Die Erstellung des Plans ändert weder den Pluginstatus noch dessen lokale Daten.'],
+            'warnings' => ['Dieser Plan führt keine Paket-, Shell-, Composer- oder Containeraktion aus.', 'Das Plugin bleibt als uninstall_pending gesperrt; Paket und lokale Daten bleiben bis zum Betreiberwechsel vorhanden.'],
             'created_at' => $this->store->now(),
         ];
+        $plugin['state'] = 'uninstall_pending';
+        $plugin['last_safe_state'] = $plan['previous_plugin_state'];
+        $plugin['removal_plan_id'] = $plan['id'];
+        $this->store->save('plugins', $plugin, 'PluginRemovalPlanPrepared');
 
         return $this->planView($this->store->save('plugin_install_plans', $plan, 'PluginRemovalPlanPrepared'));
+    }
+
+    private function cancelRemovalPlan(string $planId, Actor $actor): array
+    {
+        $actor->requireOwner();
+
+        return $this->store->atomic(function () use ($planId): array {
+            $plan = $this->store->find('plugin_install_plans', $planId);
+            if (null === $plan) {
+                throw new Problem(404, 'resource_not_found', 'The requested plugin change plan does not exist.');
+            }
+            if ('remove' !== ($plan['operation'] ?? null) || 'prepared' !== ($plan['status'] ?? null)) {
+                throw new Problem(409, 'plugin_plan_conflict', 'Only a pending removal plan can be cancelled.');
+            }
+
+            $pluginId = (string) $plan['plugin_id'];
+            if (!$this->registry->has($pluginId)) {
+                throw new Problem(409, 'plugin_plan_conflict', 'The package is absent from the running image and cannot be restored by cancelling this plan.');
+            }
+            $plugin = $this->requireInstalledPlugin($pluginId);
+            if ('uninstall_pending' !== $plugin['state'] || ($plugin['removal_plan_id'] ?? null) !== $planId) {
+                throw new Problem(409, 'plugin_plan_conflict', 'The plugin no longer matches this pending removal plan.');
+            }
+            $previousState = $plan['previous_plugin_state'] ?? $plugin['last_safe_state'] ?? null;
+            if (!in_array($previousState, ['installed_disabled', 'disabled'], true)) {
+                throw new Problem(409, 'plugin_plan_conflict', 'The previous safe plugin state cannot be restored.');
+            }
+
+            $plugin['state'] = $previousState;
+            $plugin['last_safe_state'] = $previousState;
+            unset($plugin['removal_plan_id']);
+            $this->store->save('plugins', $plugin, 'PluginRemovalPlanCancelled');
+
+            $plan['status'] = 'cancelled';
+
+            return $this->planView($this->store->save('plugin_install_plans', $plan, 'PluginRemovalPlanCancelled'));
+        });
     }
 
     private function linkNotes(string $taskId, Actor $actor): array
@@ -532,6 +594,13 @@ final class PluginHandler
             'requires_build', 'requires_restart', 'requires_migration', 'steps', 'warnings', 'created_at',
         ]));
         $view['operation'] ??= 'install';
+        if ('remove' === $view['operation'] && 'prepared' === ($view['status'] ?? null)) {
+            $pluginId = (string) ($view['plugin_id'] ?? '');
+            $stored = '' !== $pluginId ? $this->store->find('plugins', $pluginId) : null;
+            if (!$this->registry->has($pluginId) && null !== $stored && $this->hasPreparedRemoval($pluginId, $stored)) {
+                $view['status'] = 'completed';
+            }
+        }
 
         return $view;
     }
@@ -579,10 +648,59 @@ final class PluginHandler
             'unresolved_external_activity_count' => $counts['external'],
             'retained_data_bytes' => self::LINK_NOTES_ID === $pluginId ? $this->linkNotes->retainedBytes() : (int) ($stored['retained_data_bytes'] ?? 0),
             'configuration_schema_id' => $this->settingsSchemaId($pluginId),
+            'configuration_retained' => [] !== $configuration,
+            'removal_plan_id' => is_string($stored['removal_plan_id'] ?? null) ? $stored['removal_plan_id'] : null,
             'restart_required' => (bool) ($stored['restart_required'] ?? false),
             'last_error' => $stored['last_error'] ?? null,
             'allowed_actions' => $this->allowedActions($state),
         ];
+    }
+
+    /** @param array<string, mixed> $stored */
+    private function removedPlugin(string $pluginId, array $stored): array
+    {
+        $counts = $this->activeWorkCounts($pluginId);
+        $configuration = $this->storedConfiguration($pluginId);
+
+        return [
+            'id' => $pluginId,
+            'version' => (int) ($stored['version'] ?? 1),
+            'name' => (string) ($stored['name'] ?? $pluginId),
+            'installed_version' => (string) ($stored['installed_version'] ?? 'unknown'),
+            'contract_version' => (string) ($stored['contract_version'] ?? 'unknown'),
+            'state' => 'removed',
+            'last_safe_state' => $stored['last_safe_state'] ?? 'installed_disabled',
+            'description' => (string) ($stored['description'] ?? ''),
+            'dependencies' => is_array($stored['dependencies'] ?? null) ? $stored['dependencies'] : [],
+            'capabilities' => [],
+            'ui_contributions' => [],
+            'active_run_count' => $counts['runs'],
+            'pending_job_count' => $counts['jobs'],
+            'unresolved_external_activity_count' => $counts['external'],
+            'retained_data_bytes' => (int) ($stored['retained_data_bytes'] ?? 0),
+            'configuration_schema_id' => null,
+            'configuration_retained' => [] !== $configuration,
+            'removal_plan_id' => (string) $stored['removal_plan_id'],
+            'restart_required' => false,
+            'last_error' => null,
+            'allowed_actions' => $this->allowedActions('removed'),
+        ];
+    }
+
+    /** @param array<string, mixed> $stored */
+    private function hasPreparedRemoval(string $pluginId, array $stored): bool
+    {
+        $planId = $stored['removal_plan_id'] ?? null;
+        if ('uninstall_pending' !== ($stored['state'] ?? null) || !is_string($planId)) {
+            return false;
+        }
+
+        $plan = $this->store->find('plugin_install_plans', $planId);
+
+        return null !== $plan
+            && 'remove' === ($plan['operation'] ?? null)
+            && 'prepared' === ($plan['status'] ?? null)
+            && $pluginId === ($plan['plugin_id'] ?? null);
     }
 
     private function allowedActions(string $state): array
