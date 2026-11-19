@@ -4,6 +4,10 @@ GitHub hat den Implementierungsstand `4f622bdd0ca02a95f38b62c81f363dc7fb4ebd92` 
 
 Der Hauptbericht enthält **49 protokollierte Abnahmebeobachtungen**. Hinzu kommen zwei Produktionsprüfungen für A19 und fünf getrennte A17-Berichte über den Plugin-Imagewechsel. Er nennt die Image-ID `sha256:7f566305ac7c4fcaacaeeae45525716f79b8a8cc5e31bd034ae909def14c8d72` und die Fixtureversion `falkenwarte.qa.scenario-catalog.v1`. Die Abnahme griff auf die gestartete Anwendung, SQLite, Worker und Mercure zu. Die Produktionsprüfung startete dasselbe Image zweimal und las das zuvor angelegte Ticket nach dem Neustart erneut.
 
+## Abnahme des Implementierungs-PRs
+
+Der Implementierungs-PR bestand auf Commit `b33b13ff4f974c3ce171283da0eff5f03544b5b9` alle sieben GitHub-Jobs, darunter die Browserabnahme des gebauten Linux-Images. Der geschützte Hauptzweig hat diesen Stand als Squash-Merge übernommen. [Implementierungs-PR](https://github.com/DZunke/Falkenwarte/pull/1) · [GitHub-QA](https://github.com/DZunke/Falkenwarte/actions/runs/44603788249)
+
 ## Meilensteine
 
 | Meilenstein | Abnahmefälle | Ergebnis | Geprüfter Ablauf |
