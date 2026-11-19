@@ -1,0 +1,68 @@
+name: falkenwarte
+
+services:
+  app:
+    image: ${FALKENWARTE_IMAGE:-falkenwarte:local}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: app
+      args:
+        VCS_REF: ${FALKENWARTE_TEST_COMMIT:-unknown}
+    environment:
+      APP_ENV: prod
+      APP_DEBUG: "0"
+      APP_SECRET: ${APP_SECRET:-}
+      APP_SECRET_FILE: ${APP_SECRET_FILE:-}
+      APP_SETUP_TOKEN: ${APP_SETUP_TOKEN:-}
+      APP_SETUP_TOKEN_FILE: ${APP_SETUP_TOKEN_FILE:-}
+      SERVER_NAME: ${SERVER_NAME:-localhost:8443}
+      SERVER_NAME_ALIAS: ${SERVER_NAME_ALIAS:-127.0.0.1:8443}
+      FALKENWARTE_PUBLIC_ORIGIN: ${FALKENWARTE_PUBLIC_ORIGIN:-https://localhost:8443}
+      FALKENWARTE_DATA_DIR: /data
+      FALKENWARTE_DB: /data/falkenwarte.sqlite
+      FALKENWARTE_BACKUP_DIR: /data/backups
+      MERCURE_ISSUER: ${MERCURE_ISSUER:-https://localhost:8443}
+      MERCURE_RESOURCE_IDENTIFIER: ${MERCURE_RESOURCE_IDENTIFIER:-https://localhost:8443/.well-known/mercure}
+      MERCURE_PUBLIC_URL: ${MERCURE_PUBLIC_URL:-https://localhost:8443/.well-known/mercure}
+      MERCURE_INTERNAL_URL: http://127.0.0.1:8080/.well-known/mercure
+      MERCURE_PUBLISHER_SECRET: ${MERCURE_PUBLISHER_SECRET:-}
+      MERCURE_PUBLISHER_SECRET_FILE: ${MERCURE_PUBLISHER_SECRET_FILE:-}
+      MERCURE_SUBSCRIBER_SECRET: ${MERCURE_SUBSCRIBER_SECRET:-}
+      MERCURE_SUBSCRIBER_SECRET_FILE: ${MERCURE_SUBSCRIBER_SECRET_FILE:-}
+      DECISIONS_API_KEY: ${DECISIONS_API_KEY:-}
+      DECISIONS_API_KEY_FILE: ${DECISIONS_API_KEY_FILE:-}
+    ports:
+      - "127.0.0.1:${FALKENWARTE_PORT:-8443}:8443"
+    volumes:
+      - falkenwarte-data:/data
+      - falkenwarte-certs:/certs
+      - ./secrets:/run/secrets:ro
+    networks:
+      - app
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /app/var/cache:rw,noexec,nosuid,nodev,size=64m
+      - /app/var/log:rw,noexec,nosuid,nodev,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "php", "/usr/local/bin/falkenwarte-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 4
+
+volumes:
+  falkenwarte-data:
+  falkenwarte-certs:
+
+networks:
+  app:
+    driver: bridge

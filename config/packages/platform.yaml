@@ -1,0 +1,28 @@
+parameters:
+  env(APP_SECRET): ''
+  env(FALKENWARTE_DB): '%kernel.project_dir%/var/falkenwarte.sqlite'
+framework:
+  secret: '%env(APP_SECRET)%'
+  trusted_proxies: '127.0.0.1,::1'
+  trusted_headers: [x-forwarded-for, x-forwarded-host, x-forwarded-proto, x-forwarded-port]
+  http_method_override: false
+  handle_all_throwables: true
+  http_client: ~
+  router:
+    utf8: true
+  messenger:
+    transports:
+      async:
+        dsn: 'doctrine://default?queue_name=async&auto_setup=0&redeliver_timeout=90'
+        retry_strategy:
+          max_retries: 3
+    routing:
+      'App\Shared\Infrastructure\Job': async
+doctrine:
+  dbal:
+    driver: pdo_sqlite
+    path: '%env(resolve:FALKENWARTE_DB)%'
+doctrine_migrations:
+  migrations_paths:
+    DoctrineMigrations: '%kernel.project_dir%/migrations'
+  enable_profiler: false
