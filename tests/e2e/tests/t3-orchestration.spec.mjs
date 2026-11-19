@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createAgentSimulator, expect, recordEvidence, test } from '../support/fixtures.mjs';
+import { authorizeT3InBrowser, createAgentSimulator, expect, recordEvidence, test } from '../support/fixtures.mjs';
 
 const defaultPolicy = {
   require_external_settled: true,
@@ -50,18 +50,7 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E
   await ownerPage.goto('/#/agents');
   await expect(ownerPage.getByRole('heading', { name: 'T3-Verbindung' })).toBeVisible();
   await ownerPage.locator('main').getByRole('button', { name: new RegExp(uniqueName) }).click();
-  const callback = new URL('/auth/t3/callback', baseURL);
-  const [callbackResponse] = await Promise.all([
-    ownerPage.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return url.origin === callback.origin && url.pathname === callback.pathname && response.request().isNavigationRequest();
-    }),
-    ownerPage.waitForRequest((request) => request.url().startsWith(`${qaMocks.t3URL}/authorize?`)),
-    ownerPage.getByRole('button', { name: /Bei T3 anmelden/ }).click(),
-  ]);
-  expect(callbackResponse.status()).toBe(302);
-  await ownerPage.waitForURL((url) => url.origin === callback.origin && url.hash === '#/agents', { waitUntil: 'domcontentloaded' });
-  await expect(ownerPage.getByRole('heading', { name: 'T3-Verbindung' })).toBeVisible();
+  await authorizeT3InBrowser(ownerPage, baseURL, qaMocks.t3URL);
   await readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.auth_status === 'valid', 'Browser-OAuth muss T3 autorisieren.');
   await ownerPage.locator('main').getByRole('button', { name: new RegExp(uniqueName) }).click();
   await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();

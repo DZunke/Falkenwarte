@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createAgentSimulator, expect, recordEvidence, test } from '../support/fixtures.mjs';
+import { authorizeT3InBrowser, createAgentSimulator, expect, recordEvidence, test } from '../support/fixtures.mjs';
 
 const LINK_NOTES = 'falkenwarte.link-notes';
 const T3_BRIDGE = 'falkenwarte.t3-mcp-bridge';
@@ -148,10 +148,8 @@ async function createT3Connection(ownerApi, ownerPage, baseURL, qaMocks, name) {
   const connection = created.data;
   await ownerPage.goto('/#/agents');
   await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
-  const authorization = ownerPage.waitForRequest((request) => request.url().startsWith(`${qaMocks.t3URL}/authorize?`));
-  await Promise.all([authorization, ownerPage.getByRole('button', { name: /Bei T3 anmelden/ }).click()]);
+  await authorizeT3InBrowser(ownerPage, baseURL, qaMocks.t3URL);
   await readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.auth_status === 'valid', 'Der T3-Mock muss über den Browser angemeldet sein.');
-  await ownerPage.reload();
   await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
   await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
   await expect.poll(async () => {
