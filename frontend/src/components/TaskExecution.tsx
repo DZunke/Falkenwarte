@@ -65,12 +65,12 @@ function runSource(target: Run['snapshot']['execution_target']): string {
     : 'T3-Projektstandard'
 }
 
-function attemptReference(attempt: RunAttempt, label: string, value: string | null) {
+function attemptReference(label: string, value: string | null) {
   if (!value) return null
   return <p key={label} className="break-all text-xs text-muted-foreground">{label}: {value}</p>
 }
 
-export default function TaskExecution({ task, project, onChanged }: { task: Task; project: Project; onChanged: () => Promise<void> }) {
+export default function TaskExecution({ task, project, onChanged, onOpenDecisions }: { task: Task; project: Project; onChanged: () => Promise<void>; onOpenDecisions: () => void }) {
   const queryClient = useQueryClient()
   const [selectedProfileId, setSelectedProfileId] = useState('')
   const [selectedStageId, setSelectedStageId] = useState('task')
@@ -83,7 +83,6 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
   const [approvalKind, setApprovalKind] = useState<'review' | 'completion'>('review')
   const [approvalRequestReason, setApprovalRequestReason] = useState('')
-  const [approvalDecisionReason, setApprovalDecisionReason] = useState('')
   const [actionError, setActionError] = useState('')
 
   const runsQuery = useQuery({
@@ -110,10 +109,16 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
   })
 
   const profiles = profilesQuery.data?.items.filter((profile) => profile.allowed_project_ids.includes(project.id)) ?? []
-  const workflows = workflowsQuery.data?.items.filter((workflow) => workflow.enabled && (workflow.project_id === null || workflow.project_id === project.id)) ?? []
+  const workflows = useMemo<Workflow[]>(
+    () => workflowsQuery.data?.items.filter((workflow) => workflow.enabled && (workflow.project_id === null || workflow.project_id === project.id)) ?? [],
+    [project.id, workflowsQuery.data],
+  )
   const route = task.workflow_label_id
     ? routingQuery.data?.rules.find((rule) => rule.workflow_label_id === task.workflow_label_id)
     : undefined
+  const routedWorkflowRequired = Boolean(task.workflow_label_id)
+  const routingUnavailable = routedWorkflowRequired && !routingQuery.isSuccess
+  const routedWorkflowMissing = routedWorkflowRequired && routingQuery.isSuccess && !route
   const routedWorkflowQuery = useQuery({
     queryKey: ['routed-workflow', route?.workflow_id, route?.workflow_definition_version],
     enabled: Boolean(route),
@@ -146,6 +151,7 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
   const profilesForStage = selectedStage?.agent_profile_id
     ? profiles.filter((profile) => profile.id === selectedStage.agent_profile_id)
     : profiles
+  const selectedProfile = profilesForStage.find((profile) => profile.id === selectedProfileId)
 
   useEffect(() => {
     if (selectedStage?.agent_profile_id) {
@@ -156,7 +162,7 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
     const preferred = profiles.find((profile) => profile.id === task.agent_profile_id && profile.enabled)
       ?? profiles.find((profile) => profile.enabled && profile.configuration_valid)
     if (preferred) setSelectedProfileId(preferred.id)
-  }, [profiles, selectedProfile?.id, selectedProfileId, selectedStage?.agent_profile_id, task.agent_profile_id])
+  }, [profiles, selectedProfileId, selectedStage?.agent_profile_id, task.agent_profile_id])
 
   useEffect(() => {
     if (!selectedWorkflow || selectedWorkflow.stages.length === 0) return
@@ -213,12 +219,16 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
     ...(task.classification_required && task.intake_outcome !== 'ready' ? ['Die Eingangsklassifikation ist für diese Ticketrevision noch nicht bereit.'] : []),
     ...(!['ready', 'active', 'review'].includes(task.status_category) ? ['Verschiebe das Ticket zuerst in einen bearbeitbaren Status.'] : []),
   ]
-  const selectedProfile = profilesForStage.find((profile) => profile.id === selectedProfileId)
   const stageProfileMismatch = Boolean(selectedStage?.agent_profile_id && selectedProfileId !== selectedStage.agent_profile_id)
   const startBlocked = constraints.length > 0
   const canRequestRun = !startBlocked && Boolean(selectedProfile?.enabled && selectedProfile.configuration_valid) && !stageProfileMismatch && Boolean(selectedStageId.trim())
   const routedWorkflowMismatch = Boolean(route && selectedWorkflow && (selectedWorkflow.id !== route.workflow_id || selectedWorkflow.definition_version !== route.workflow_definition_version))
-  const workflowCanStart = !startBlocked && Boolean(selectedWorkflow?.enabled && selectedWorkflow.stages.length > 0) && !routedWorkflowMismatch
+  const workflowCanStart = !startBlocked
+    && !routingUnavailable
+    && !routedWorkflowMissing
+    && (!route || routedWorkflowQuery.isSuccess)
+    && Boolean(selectedWorkflow?.enabled && selectedWorkflow.stages.length > 0)
+    && !routedWorkflowMismatch
 
   const refresh = async () => {
     await Promise.all([
@@ -226,6 +236,7 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
       queryClient.invalidateQueries({ queryKey: ['run'] }),
       queryClient.invalidateQueries({ queryKey: ['run-report'] }),
       queryClient.invalidateQueries({ queryKey: ['run-approvals', project.id] }),
+      queryClient.invalidateQueries({ queryKey: ['task-approvals', task.id] }),
       queryClient.invalidateQueries({ queryKey: ['task-workflow-instances', project.id, task.id] }),
       queryClient.invalidateQueries({ queryKey: ['workflow-instance'] }),
     ])
@@ -259,9 +270,9 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
         body: { workflow_id: selectedWorkflow.id, definition_version: selectedWorkflow.definition_version, task_revision: task.version },
       }))
     },
-    onSuccess: async (instance) => {
+    onSuccess: async (accepted) => {
       setActionError('')
-      setSelectedInstanceId(instance.id)
+      if (accepted.resource?.resource_type === 'workflow_instance') setSelectedInstanceId(accepted.resource.id)
       await refresh()
     },
     onError: fail,
@@ -352,21 +363,15 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
     onSuccess: async () => { setActionError(''); setApprovalRequestReason(''); await refresh() },
     onError: fail,
   })
-  const decideApproval = useMutation({
-    mutationFn: async ({ approval, decision }: { approval: Approval; decision: 'approved' | 'rejected' }) => {
-      if (!approvalDecisionReason.trim()) throw new Error('Gib eine Begründung für die Entscheidung an.')
-      return request(api.POST('/approvals/{approval_id}/decision', {
-        params: { path: { approval_id: approval.id }, ...mutationParams(approval.version) },
-        body: { decision, result_digest: approval.result_digest, reason: approvalDecisionReason.trim() },
-      }))
-    },
-    onSuccess: async () => { setActionError(''); setApprovalDecisionReason(''); await refresh() },
-    onError: fail,
-  })
-
   const pendingInput = selectedRun?.pending_input
   const isQuestionAnswer = pendingInput?.kind === 'question' && pendingInput.answerable_via_api
-  const canSendInput = Boolean(selectedRun && ['waiting_input', 'running'].includes(selectedRun.state) && pendingInput?.kind !== 'permission' && pendingInput?.kind !== 'workflow_decision')
+  const canSendInput = Boolean(
+    selectedRun
+      && ['waiting_input', 'running'].includes(selectedRun.state)
+      && pendingInput?.kind !== 'permission'
+      && pendingInput?.kind !== 'workflow_decision'
+      && !(pendingInput?.kind === 'question' && !pendingInput.answerable_via_api),
+  )
   const reportsForCurrentAttempt = reports.filter((report) => selectedRun && report.attempt_no === selectedRun.attempt_no)
   const currentReport = reportsForCurrentAttempt.find((report) => report.accepted_for_reconciliation && report.task_revision === task.version)
   const approvalAlreadyOpen = approvals.some((approval) => approval.status === 'pending' && approval.kind === approvalKind && approval.result_digest === selectedRun?.result_digest)
@@ -378,11 +383,12 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
   return (
     <div className="space-y-5 pb-6">
       {actionError && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{actionError}</div>}
-      {(runsQuery.isError || profilesQuery.isError || workflowsQuery.isError || workflowInstancesQuery.isError) && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formatError(runsQuery.error ?? profilesQuery.error ?? workflowsQuery.error ?? workflowInstancesQuery.error)}</div>}
+      {(runsQuery.isError || profilesQuery.isError || workflowsQuery.isError || routingQuery.isError || workflowInstancesQuery.isError) && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formatError(runsQuery.error ?? profilesQuery.error ?? workflowsQuery.error ?? routingQuery.error ?? workflowInstancesQuery.error)}</div>}
 
       <section className="space-y-3 rounded-lg border p-4">
         <div><h3 className="text-sm font-semibold">Startbedingungen</h3><p className="mt-1 text-xs text-muted-foreground">Falkenwarte prüft Ticketstand, Rolle, T3-Verbindung und freien Ausführungsplatz erneut beim Start.</p></div>
         {constraints.length > 0 ? <ul className="list-disc space-y-1 pl-5 text-sm text-amber-900">{constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}</ul> : <p className="text-sm text-muted-foreground">Für Ticket und Projekt sind keine bekannten Startblockaden offen.</p>}
+        {task.human_attention.reasons.includes('approval_pending') && <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-50 p-3"><p className="text-sm text-amber-950">Eine Ergebnismeldung wartet auf deine fachliche Entscheidung.</p><Button size="sm" variant="outline" onClick={onOpenDecisions}><ShieldCheck />Entscheidung öffnen</Button></div>}
         <p className="text-xs text-muted-foreground">Ein Phasenlauf schließt das Ticket nicht automatisch ab. Berichte bleiben Agentenmeldungen; Ticketkriterien und Projektabschlussregeln gelten unabhängig davon.</p>
       </section>
 
@@ -399,10 +405,14 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
         <div className="flex items-center gap-2"><WorkflowIcon className="size-4 text-primary" /><h3 className="text-sm font-semibold">Workflow starten</h3></div>
         {route && <p className="text-xs text-muted-foreground">Das Workflowlabel fixiert Version {route.workflow_definition_version} des zugeordneten Workflows.</p>}
         {workflowsQuery.isPending ? <p className="text-sm text-muted-foreground">Workflows werden geladen…</p> : workflowOptions.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein aktiver Workflow verfügbar.</p> : <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-          <div className="grid gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={selectedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={Boolean(route)}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>{selectedWorkflow && <p className="text-xs text-muted-foreground">{selectedWorkflow.stages.length} Phasen · Version {selectedWorkflow.definition_version}</p>}</div>
+          <div className="grid gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={selectedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={routedWorkflowRequired}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>{selectedWorkflow && <p className="text-xs text-muted-foreground">{selectedWorkflow.stages.length} Phasen · Version {selectedWorkflow.definition_version}</p>}</div>
           <Button onClick={() => startWorkflow.mutate()} disabled={!workflowCanStart || startWorkflow.isPending}><WorkflowIcon />{startWorkflow.isPending ? 'Wird gestartet…' : 'Workflow starten'}</Button>
         </div>}
         {selectedWorkflowStage?.agent_profile_id === null && <p className="text-xs text-amber-900">Die ausgewählte Phase hat kein automatisches Rollenprofil und kann auf menschliche Bearbeitung warten.</p>}
+        {routedWorkflowRequired && routingQuery.isPending && <p className="text-xs text-muted-foreground">Die Aufgabenroute wird geladen. Ein anderer Workflow kann bis dahin nicht gestartet werden.</p>}
+        {routedWorkflowRequired && routingQuery.isError && <p role="alert" className="text-xs text-destructive">Die versionierte Aufgabenroute konnte nicht geladen werden: {formatError(routingQuery.error)}</p>}
+        {routedWorkflowMissing && <p role="alert" className="text-xs text-destructive">Für das Workflowlabel dieser Aufgabe wurde keine versionierte Route gefunden. Der Workflowstart ist gesperrt.</p>}
+        {route && routedWorkflowQuery.isPending && <p className="text-xs text-muted-foreground">Die eingefrorene Workflowversion wird geladen. Der Start bleibt bis dahin gesperrt.</p>}
         {route && !routedWorkflowQuery.data && routedWorkflowQuery.isError && <p role="alert" className="text-xs text-destructive">Die eingefrorene Workflowversion konnte nicht geladen werden: {formatError(routedWorkflowQuery.error)}</p>}
       </section>
 
@@ -424,7 +434,7 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
         <div className="space-y-3 rounded-md border p-3"><div><h4 className="text-sm font-semibold">Ergebnisentscheidung</h4><p className="mt-1 text-xs text-muted-foreground">Eine Freigabe bezieht sich auf Versuch, Ticketrevision und Ergebnisdigest. Sie bestätigt eine Phasenmeldung, nicht den Abschluss des Tickets.</p></div>{selectedRun.result_digest ? <p className="break-all font-mono text-[11px] text-muted-foreground">Ergebnisdigest: {selectedRun.result_digest}</p> : <p className="text-xs text-muted-foreground">Noch kein aktueller Ergebnisdigest.</p>}
           {approvalsQuery.isError && <p role="alert" className="text-xs text-destructive">{formatError(approvalsQuery.error)}</p>}
           {approvals.length > 0 && <div className="space-y-2">{approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} currentRun={selectedRun} task={task} />)}</div>}
-          {approvals.some((approval) => approval.status === 'pending' && approval.attempt_no === selectedRun.attempt_no && approval.task_revision === task.version && approval.result_digest === selectedRun.result_digest) && <div className="grid gap-2"><Label htmlFor="approval-decision-reason">Begründung der Entscheidung</Label><Textarea id="approval-decision-reason" value={approvalDecisionReason} onChange={(event) => setApprovalDecisionReason(event.target.value)} maxLength={2000} rows={2} /><div className="flex flex-wrap justify-end gap-2">{approvals.filter((approval) => approval.status === 'pending' && approval.attempt_no === selectedRun.attempt_no && approval.task_revision === task.version && approval.result_digest === selectedRun.result_digest).map((approval) => <span key={approval.id} className="flex gap-2"><Button size="sm" variant="outline" onClick={() => decideApproval.mutate({ approval, decision: 'rejected' })} disabled={!approvalDecisionReason.trim() || decideApproval.isPending}>Zurückweisen</Button><Button size="sm" onClick={() => decideApproval.mutate({ approval, decision: 'approved' })} disabled={!approvalDecisionReason.trim() || decideApproval.isPending}><ShieldCheck />Annehmen</Button></span>)}</div></div>}
+          {approvals.some((approval) => approval.status === 'pending' && approval.attempt_no === selectedRun.attempt_no && approval.task_revision === task.version && approval.result_digest === selectedRun.result_digest) && <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-950">Eine Freigabe dieses Versuchs wartet auf deine fachliche Entscheidung im Tab „Entscheidungen“.</p>}
           {selectedRun.result_digest && <div className="grid gap-2 border-t pt-3 sm:grid-cols-[140px_1fr_auto] sm:items-end"><div className="grid gap-2"><Label htmlFor="approval-kind">Entscheidungstyp</Label><Select value={approvalKind} onValueChange={(value) => setApprovalKind(value as typeof approvalKind)}><SelectTrigger id="approval-kind"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="review">Phasenreview</SelectItem><SelectItem value="completion">Phasenabschluss</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="approval-request-reason">Hinweis (optional)</Label><Input id="approval-request-reason" value={approvalRequestReason} onChange={(event) => setApprovalRequestReason(event.target.value)} maxLength={2000} /></div><Button variant="outline" onClick={() => requestApproval.mutate()} disabled={!canRequestApproval || requestApproval.isPending || approvalsQuery.isPending}>{requestApproval.isPending ? 'Wird angefordert…' : 'Freigabe anfordern'}</Button></div>}
           {selectedRun.result_digest && !currentReport && <p className="text-xs text-amber-900">Der aktuelle Versuch enthält keinen zur aktuellen Ticketrevision passenden angenommenen Bericht; eine Freigabe ist deshalb gesperrt.</p>}
         </div>
@@ -446,14 +456,14 @@ export default function TaskExecution({ task, project, onChanged }: { task: Task
           const workflow = workflowOptions.find((candidate) => candidate.id === instance.workflow_id && candidate.definition_version === instance.definition_version)
           return <button key={instance.id} type="button" onClick={() => setSelectedInstanceId(instance.id)} className={`flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 ${instance.id === selectedInstance?.id ? 'border-primary bg-accent/50' : ''}`}><span className="min-w-0"><span className="block truncate text-sm font-medium">{workflow?.name ?? 'Workflow'} · Version {instance.definition_version}</span><span className="mt-1 block text-xs text-muted-foreground">{instance.current_stage_id ? `Phase ${instance.current_stage_id}` : 'Keine aktive Phase'} · Reparaturrunde ${instance.repair_round}</span></span><Badge variant={instance.state === 'failed' ? 'destructive' : instance.state === 'succeeded' ? 'secondary' : 'outline'}>{workflowStateNames[instance.state]}</Badge></button>
         })}</div>}
-        {selectedInstance && <div className="space-y-3 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">Aktuelle Phase: {selectedInstance.current_stage_id ?? 'keine'}</p><Badge variant="outline">{workflowStateNames[selectedInstance.state]}</Badge></div>{selectedInstance.pause_reason && <p role="status" className="rounded-md bg-amber-50 p-2 text-sm text-amber-950">{selectedInstance.pause_reason}</p>}<p className="text-xs text-muted-foreground">{selectedInstance.run_ids.length} Phasenlauf/-läufe · Version {selectedInstance.definition_version}</p><div className="grid gap-2"><Label htmlFor="workflow-action-reason">Begründung für die Workflowsteuerung</Label><Input id="workflow-action-reason" value={actionReason} onChange={(event) => setActionReason(event.target.value)} maxLength={2000} /></div><div className="flex flex-wrap justify-end gap-2">{selectedInstance.state === 'running' && <Button size="sm" variant="outline" onClick={() => controlWorkflow.mutate('pause')} disabled={!actionReason.trim() || controlWorkflow.isPending}>Pausieren</Button>}{selectedInstance.state === 'paused' && <Button size="sm" variant="outline" onClick={() => controlWorkflow.mutate('resume')} disabled={!actionReason.trim() || controlWorkflow.isPending}>Fortsetzen</Button>}{activeWorkflowStates.has(selectedInstance.state) && <Button size="sm" variant="destructive" onClick={() => controlWorkflow.mutate('cancel')} disabled={!actionReason.trim() || controlWorkflow.isPending}>Workflow abbrechen</Button>}</div></div>}
+        {selectedInstance && <div className="space-y-3 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">Aktuelle Phase: {selectedInstance.current_stage_id ?? 'keine'}</p><Badge variant="outline">{workflowStateNames[selectedInstance.state]}</Badge></div>{selectedInstance.pause_reason && <p role="status" className="rounded-md bg-amber-50 p-2 text-sm text-amber-950">{selectedInstance.pause_reason}</p>}<p className="text-xs text-muted-foreground">{selectedInstance.run_ids.length} Phasenlauf/-läufe · Version {selectedInstance.definition_version}</p><div className="grid gap-2"><Label htmlFor="workflow-action-reason">Begründung für die Workflowsteuerung</Label><Input id="workflow-action-reason" value={actionReason} onChange={(event) => setActionReason(event.target.value)} maxLength={2000} /></div><div className="flex flex-wrap justify-end gap-2">{selectedInstance.state === 'running' && <Button size="sm" variant="outline" onClick={() => controlWorkflow.mutate('pause')} disabled={!actionReason.trim() || controlWorkflow.isPending}>Pausieren</Button>}{selectedInstance.state === 'paused' && <Button size="sm" variant="outline" onClick={() => controlWorkflow.mutate('resume')} disabled={!actionReason.trim() || controlWorkflow.isPending}>Fortsetzen</Button>}{activeWorkflowStates.has(selectedInstance.state) && <Button size="sm" variant="destructive" onClick={() => controlWorkflow.mutate('cancel')} disabled={!actionReason.trim() || controlWorkflow.isPending}>Workflow abbrechen</Button>}</div><p className="text-xs text-muted-foreground">Ein Workflowabbruch fordert auch den Abbruch aktiver Phasenläufe an. Ob T3 sie beendet hat, bleibt im jeweiligen Laufstatus sichtbar.</p></div>}
       </section>
     </div>
   )
 }
 
 function AttemptCard({ attempt, current }: { attempt: RunAttempt; current: boolean }) {
-  return <div className={`space-y-1 rounded-md border p-3 ${current ? 'border-primary/60' : ''}`}><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">Versuch {attempt.attempt_no}{current ? ' · aktuell' : ''}</span><Badge variant="outline">{attempt.remote_status ?? (attempt.ended_at ? 'Beendet' : attempt.started_at ? 'Gestartet' : 'Noch nicht angenommen')}</Badge></div><div className="grid gap-1 text-xs sm:grid-cols-2"><p>Gestartet: {attempt.started_at ? new Date(attempt.started_at).toLocaleString('de-DE') : 'Noch nicht bestätigt'}</p><p>Letzte Beobachtung: {attempt.last_observed_at ? new Date(attempt.last_observed_at).toLocaleString('de-DE') : 'Keine'}</p><p>Verbindung: {attempt.connection_id}</p><p>Autorisierungsgeneration: {attempt.auth_epoch}</p></div>{attemptReference(attempt, 'Externer Thread', attempt.external_thread_id)}{attemptReference(attempt, 'T3-Run', attempt.external_observed_run_id ?? attempt.external_dispatch_run_id ?? attempt.external_result_run_id)}{attempt.external_url && <a className="inline-flex items-center gap-1 text-xs text-primary underline" href={attempt.external_url} target="_blank" rel="noreferrer">In T3 öffnen <ExternalLink className="size-3" /></a>}{attempt.ended_at && <p className="text-xs text-muted-foreground">Beendet: {new Date(attempt.ended_at).toLocaleString('de-DE')}</p>}</div>
+  return <div className={`space-y-1 rounded-md border p-3 ${current ? 'border-primary/60' : ''}`}><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">Versuch {attempt.attempt_no}{current ? ' · aktuell' : ''}</span><Badge variant="outline">{attempt.remote_status ?? (attempt.ended_at ? 'Beendet' : attempt.started_at ? 'Gestartet' : 'Noch nicht angenommen')}</Badge></div><div className="grid gap-1 text-xs sm:grid-cols-2"><p>Gestartet: {attempt.started_at ? new Date(attempt.started_at).toLocaleString('de-DE') : 'Noch nicht bestätigt'}</p><p>Letzte Beobachtung: {attempt.last_observed_at ? new Date(attempt.last_observed_at).toLocaleString('de-DE') : 'Keine'}</p><p>Verbindung: {attempt.connection_id}</p><p>Autorisierungsgeneration: {attempt.auth_epoch}</p></div>{attemptReference('Externer Thread', attempt.external_thread_id)}{attemptReference('T3-Run', attempt.external_observed_run_id ?? attempt.external_dispatch_run_id ?? attempt.external_result_run_id)}{attempt.external_url && <a className="inline-flex items-center gap-1 text-xs text-primary underline" href={attempt.external_url} target="_blank" rel="noreferrer">In T3 öffnen <ExternalLink className="size-3" /></a>}{attempt.ended_at && <p className="text-xs text-muted-foreground">Beendet: {new Date(attempt.ended_at).toLocaleString('de-DE')}</p>}</div>
 }
 
 function ApprovalCard({ approval, currentRun, task }: { approval: Approval; currentRun: Run; task: Task }) {

@@ -41,6 +41,13 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     connection = (await ownerApi.get('/connections/' + connection.id)).data;
     const connectionCheck = await ownerApi.post('/connections/' + connection.id + '/check', {}, { version: connection.version });
     expect(connectionCheck.response.status(), JSON.stringify(connectionCheck.data)).toBe(202);
+    expect(connectionCheck.data).toMatchObject({
+      action_url: `/api/v1/actions/${connectionCheck.data.action_id}`,
+      resource: { resource_type: 'connection', id: connection.id, url: `/api/v1/connections/${connection.id}` },
+    });
+    const checkAction = await ownerApi.get('/actions/' + connectionCheck.data.action_id);
+    expect(checkAction.response.status(), JSON.stringify(checkAction.data)).toBe(200);
+    expect(checkAction.data.id).toBe(connectionCheck.data.action_id);
     await expect.poll(async () => (await ownerApi.get('/connections/' + connection.id)).data.health, { timeout: 30_000 }).toBe('ready');
     const remoteProjects = await ownerApi.get('/connections/' + connection.id + '/projects');
     expect(remoteProjects.response.status(), JSON.stringify(remoteProjects.data)).toBe(200);
@@ -100,6 +107,7 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     }, { timeout: 60_000 }).toBe(true);
     expect(backup.manifest.schema_version).toMatch(/^DoctrineMigrations\\Version\d+$/);
     expect(backup.manifest.plugin_versions).toContainEqual({ plugin_id: 'falkenwarte.link-notes', version: '1.0.0' });
+    expect(backup.manifest.plugin_versions).toContainEqual({ plugin_id: 'falkenwarte.t3-mcp-bridge', version: '1.0.0' });
     expect(backup.manifest.artifact_count).toBe(0);
 
     const archiveResponse = await ownerApi.context.get(ownerApi.apiPrefix + '/backups/' + backupId + '/content');
@@ -115,7 +123,7 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     expect(createHash('sha256').update(databaseBytes).digest('hex')).toBe(backup.manifest.database_sha256);
 
     await ownerPage.goto('/#/settings');
-    await expect(ownerPage.getByRole('heading', { name: 'Backup und Wiederherstellung' })).toBeVisible();
+    await expect(ownerPage.getByText('Backup und Wiederherstellung', { exact: true })).toBeVisible();
     await expect(ownerPage.getByText(new RegExp(backup.manifest.database_sha256))).toBeVisible();
     await ownerPage.locator('#maintenance-mode').check();
     await ownerPage.getByRole('button', { name: 'Einstellungen speichern', exact: true }).click();
@@ -222,7 +230,7 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
     expect(journal.unexpected).toEqual([]);
     recordEvidence(
       'Ein echtes ZIP-Backup wird per SHA-256 geprüft und über den überwachten Einzelservice restauriert; bekannte und nach dem Backup entstandene T3-Arbeit werden inventarisiert, Starts bleiben bis zu begründeten Ownerentscheidungen gesperrt.',
-      'Backup ' + backupId + ' enthielt App-Schema ' + backup.manifest.schema_version + ' und Linknotizen ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.link-notes')?.version + '; ZIP-CRC und SQLite-SHA-256 stimmten. Nach Neustart wurde Ticket "' + originalTitle + '" aus dem Snapshot wiederhergestellt, Run ' + runId + ' samt T3-Thread ' + knownThreadId + ' abgeglichen und der zusätzliche T3-Lauf ' + lateExternal.thread_id + ' einzeln registriert. Neue Starts erhielten recovery_inventory_required; drei begründete Entscheidungen lösten anschließend das Gate.',
+      'Backup ' + backupId + ' enthielt App-Schema ' + backup.manifest.schema_version + ', Linknotizen ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.link-notes')?.version + ' und T3-Bridge ' + backup.manifest.plugin_versions.find((item) => item.plugin_id === 'falkenwarte.t3-mcp-bridge')?.version + '; ZIP-CRC und SQLite-SHA-256 stimmten. Nach Neustart wurde Ticket "' + originalTitle + '" aus dem Snapshot wiederhergestellt, Run ' + runId + ' samt T3-Thread ' + knownThreadId + ' abgeglichen und der zusätzliche T3-Lauf ' + lateExternal.thread_id + ' einzeln registriert. Neue Starts erhielten recovery_inventory_required; drei begründete Entscheidungen lösten anschließend das Gate.',
       { t3: journal },
     );
   } finally {

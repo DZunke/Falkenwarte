@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import RecoveryInventoryPanel from '@/features/settings/RecoveryInventoryPanel'
+import DecisionSettingsPanel from '@/features/settings/DecisionSettingsPanel'
 
 const capabilityOptions = [
   ['tasks.read', 'Tickets lesen'], ['tasks.write', 'Tickets bearbeiten'], ['tasks.links.write', 'Ticketlinks melden'],
@@ -212,6 +213,8 @@ export default function SettingsView() {
           {selectedBackup && <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"><p className="text-sm font-medium">Wiederherstellung für Backup vom {new Date(selectedBackup.created_at).toLocaleString()}</p><p className="text-xs text-muted-foreground">Die Wiederherstellung verlangt Wartungsmodus und angehaltene Worker.</p><Label htmlFor="restore-reason">Grund</Label><Textarea id="restore-reason" value={restoreReason} onChange={(event) => setRestoreReason(event.target.value)} maxLength={2000} /><Button variant="outline" disabled={!settings!.maintenance_mode || !restoreReason.trim() || restoreBackup.isPending} onClick={() => restoreBackup.mutate()}>Wiederherstellung anfordern</Button></div>}
         </CardContent></Card>
       </section>
+
+      <DecisionSettingsPanel projects={projects} />
 
       <RecoveryInventoryPanel />
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Blocks, Download, Pause, Play, Settings2, ShieldCheck } from 'lucide-react'
+import { Blocks, Download, Pause, Play, RefreshCw, Settings2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, formatError, mutationParams, request } from '@/lib/api'
 import { useProjects } from '@/lib/queries'
@@ -95,6 +95,7 @@ export default function PluginsView() {
 
   const installedPlans = plansQuery.data?.items ?? []
   const anyMutationPending = activate.isPending || drain.isPending || deactivate.isPending || saveConfiguration.isPending
+  const actionAllowed = (action: string) => plugin?.allowed_actions.some((item) => item.action === action && item.enabled) ?? false
 
   return (
     <main className="space-y-6">
@@ -113,9 +114,13 @@ export default function PluginsView() {
           <div className="grid gap-3 sm:grid-cols-3"><Metric label="Aktive Aufträge" value={plugin.active_run_count} /><Metric label="Wartende Arbeit" value={plugin.pending_job_count} /><Metric label="Behaltene Daten" value={`${plugin.retained_data_bytes.toLocaleString()} Byte`} /></div>
           {plugin.last_error && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm">{plugin.last_error}</div>}
           <div className="flex flex-wrap gap-2">
-            {(plugin.state === 'installed_disabled' || plugin.state === 'disabled') && <Button disabled={anyMutationPending} onClick={() => activate.mutate()}><Play />Aktivieren</Button>}
-            {plugin.state === 'enabled' && <Button variant="outline" disabled={anyMutationPending} onClick={() => drain.mutate()}><Pause />Drain starten</Button>}
-            {plugin.state === 'draining' && <Button variant="outline" disabled={anyMutationPending} onClick={() => deactivate.mutate()}>Nach Drain deaktivieren</Button>}
+            {actionAllowed('activate') && <Button disabled={anyMutationPending} onClick={() => activate.mutate()}><Play />Aktivieren</Button>}
+            {actionAllowed('drain') && plugin.state === 'enabled' && <Button variant="outline" disabled={anyMutationPending} onClick={() => drain.mutate()}><Pause />Drain starten</Button>}
+            {plugin.state === 'draining' && <>
+              <p className="basis-full text-sm text-muted-foreground">Aktive Arbeit wird abgeschlossen. Danach kannst du die Erweiterung deaktivieren.</p>
+              <Button variant="outline" disabled={pluginsQuery.isFetching} onClick={() => void pluginsQuery.refetch()}><RefreshCw />Status aktualisieren</Button>
+            </>}
+            {actionAllowed('deactivate') && <Button variant="outline" disabled={anyMutationPending} onClick={() => deactivate.mutate()}>Deaktivieren</Button>}
           </div>
 
           {plugin.id === 'falkenwarte.link-notes' && <section className="space-y-3 border-t pt-4">

@@ -91,3 +91,5 @@ Die reguläre Folge ist `discovered` → `installed_disabled` → `enabling` →
 Ein Projekt ist aktiv oder archiviert. Archivierung bewahrt Geschichte und offene externe Referenzen. Eine Wiederaktivierung erzeugt eine neue Revision und stellt nicht automatisch frühere Zeitpläne scharf.
 
 Nach Restore wechselt die Installation in einen Wiederherstellungsmodus: Daten-/Paketstand prüfen, bekannte und mögliche spätere externe T3-Arbeit inventarisieren, ungeklärte Slots sperren, anschließend automatische Starts ausdrücklich wieder freigeben. Ein Datenbankbackup kann externe Arbeit nicht zurückspulen.
+
+Ein aktiver Ereignistrigger hält seine letzte verarbeitete Journalposition fest. Die Wartung liest passende Fachereignisse seines Projekts in Reihenfolge, schreibt Folgeaufträge und aktualisiert die Position in derselben Transaktion. Unbeteiligte Trigger behalten ihre Version. Nach einer erneuten Aktivierung beginnt die Verarbeitung am aktuellen Journalstand.

@@ -1,10 +1,52 @@
 # Anforderungs- und Abnahmenachweis
 
-Dieser Bericht wird aus `requirements.json` und den aktuellen Produktdateien erzeugt. Ein vorhandener Codepfad belegt nur, dass eine Umsetzung begonnen oder vorhanden ist; fehlende Quellbereiche sind ausdrücklich markiert. Eine Abnahme zählt erst dann als release-fester Laufbeleg, wenn der Reporter Commit, Image, Fixtureversion und beobachtete Wirkung benennt.
+Dieser Bericht ordnet jede Konzeptanforderung dem Umsetzungspfad, der Dokumentation und den Abnahmefällen zu. Ein vorhandener Codepfad zeigt den Implementierungsort; erst ein passender Laufbeleg bestätigt beobachtetes Verhalten.
+
+Die Traceability zählt Hosted-Abnahmen nur nach Prüfung des abgeschlossenen QA-Workflows, des unveränderlichen Commits und des gebauten Images. A03 und A05 stammen aus den erfolgreichen `static-quality`- und `background-functional`-Jobs desselben vollständigen QA-Laufs. A19 braucht beide Produktionsberichte für Start und Neustart mit exakt demselben Commit, Image und Fixturestand wie der Hauptlauf.
+
+Die GitHub-Quellen werden als Markdown-Links in diese Tabelle geschrieben und beim statischen Handbuchbau in HTML-Links übernommen. Entwicklerreport `qa/results.json`, fehlgeschlagene oder partielle Fälle und lokale Laufbelege werden nicht als Hosted-Abnahme ausgegeben.
+
+Ein reproduzierbarer Lauf liest den Workflowdatensatz direkt aus GitHub und die Berichte des dazugehörigen Artefakts:
+
+```sh
+gh run view "$RUN_ID" --repo DZunke/Falkenwarte --json databaseId,headSha,status,conclusion,url,jobs > var/ci-evidence/workflow.json
+php scripts/prepare-traceability-evidence.php \
+  --run=var/ci-evidence/workflow.json \
+  --acceptance=var/ci-evidence/acceptance.json \
+  --production-boot=var/ci-evidence/production-0.json \
+  --production-restart=var/ci-evidence/production-1.json \
+  --a31=var/ci-evidence/a31.json
+php scripts/build-traceability.php
+php scripts/build-docs.php
+```
+
+Der optionale A31-Eingang verwendet `falkenwarte.github-delivery-evidence.v1` und enthält die Quell-URLs sowie die getrennten Ergebnisse für normalen PR, Dokumentationsjob, Release-Please-PR, absichtlichen Fehler, absichtliches Überspringen und Release. Normaler PR und Release-Please-PR müssen `conclusion=success` und `quality_gate_conclusion=success` ausweisen; der Release-Please-PR muss zusätzlich `head_sha`, `dispatch_expected_sha` und `checked_out_sha` identisch ausweisen. Jede Fehler- und Skip-Probe enthält `head_sha`, `workflow_conclusion=failure`, `quality_gate_conclusion=failure` und das erwartete `e2e_conclusion` (`failure` beziehungsweise `skipped`). Probe-Hashes und PR-Hashes bleiben untereinander eigenständig. Beim veröffentlichten Release müssen Tag-Commit, getesteter Commit und Image-Revision übereinstimmen. Die Fork-Prüfung bleibt auf ausdrückliche Nutzerentscheidung zurückgestellt und wird getrennt ausgewiesen.
+
+Die sichtbare Ausnahme für eine noch nicht getestete reale T3-/OpenAI-Verbindung bedeutet nicht, dass ein Konzept-Gate fehlschlägt, wenn dessen festgelegte Vertrags- und Netzwerk-Mock-Abnahmen erfolgreich sind. Es wird kein echter Anbieterzugriff aus Mockverkehr abgeleitet.
+
+## Verifizierte Laufbelege
+
+<!-- generated evidence start -->
+
+| Beleg | Status | Commit | Image oder Digest | Fixture | Quelle |
+|---|---|---|---|---|---|
+| Hauptlauf | Nicht belegt | `—` | `—` | — | — |
+| A03 · static-quality | Nicht belegt | `—` | `—` | — | — |
+| A05 · background-functional | Nicht belegt | `—` | `—` | — | — |
+| A19 · Produktionsstart und Neustart | Nicht belegt | `—` | `—` | — | — |
+| A31 · Normaler PR | Nicht belegt | `—` | `—` | — | — |
+| A31 · Dokumentationsjob | Nicht belegt | `—` | `—` | — | — |
+| A31 · Release-Please-PR | Nicht belegt | `—` | `—` | — | — |
+| A31 · Fehlerprobe | Nicht belegt | `—` | `—` | — | — |
+| A31 · Skip-Probe | Nicht belegt | `—` | `—` | — | — |
+| A31 · Veröffentlichung | Nicht belegt | `—` | `—` | — | — |
+| M6 · Fork-Prüfung | Zurückgestellt | — | — | — | Ausdrückliche Nutzerentscheidung |
+
+<!-- generated evidence end -->
 
 <!-- generated requirements start -->
 
-| ID | Anforderung | Umsetzung | Dokumentation | Abnahme | Nachweisstatus |
+| ID | Anforderung | Umsetzung | Dokumentation | Abnahme und Laufquellen | Nachweisstatus |
 |---|---|---|---|---|---|
 | R01 | Projekttrennung mit Name, Icon und Farbe | `src/Portfolio` · `frontend/src` | [PRODUCT_CONCEPT.md](PRODUCT_CONCEPT.md) · [USER_GUIDE.md](USER_GUIDE.md) | [A01](ACCEPTANCE.md#a01---projektidentitat-und-archivierung), [A02](ACCEPTANCE.md#a02---projektgrenzen-uber-ui-json-und-mcp) | Abnahmen offen |
 | R02 | Agentrollen und robustes T3-Ping-Pong ohne Modellverwaltung | `src/AgentCatalog` · `src/Orchestration` | [T3_INTEGRATION.md](T3_INTEGRATION.md) · [USER_GUIDE.md](USER_GUIDE.md) | [A09](ACCEPTANCE.md#a09---t3-adapter-mit-echtem-http-verkehr), [A10](ACCEPTANCE.md#a10---launch-angenommen-antwort-verloren), [A11](ACCEPTANCE.md#a11---neue-autorisierung-bei-ungeklartem-auftrag), [A12](ACCEPTANCE.md#a12---agentbericht-menschliche-annahme-und-phasenabschluss), [A29](ACCEPTANCE.md#a29---t3-verwaltet-provider-und-ausfuhrungsdetails) | Abnahmen offen |
@@ -49,15 +91,15 @@ Dieser Bericht wird aus `requirements.json` und den aktuellen Produktdateien erz
 
 <!-- generated gates start -->
 
-| Meilenstein | Konzept-Gate | Bestanden mit referenziertem Laufbeleg |
-|---|---|---|
-| M0 | A03, A23 | 0/2 Abnahmen mit Laufbeleg |
-| M1 | A01, A04, A06, A07, A08, A14, A21, A24, A28 | 0/9 Abnahmen mit Laufbeleg |
-| M2 | A02, A13, A22, A25, A26, A27, A33 | 0/7 Abnahmen mit Laufbeleg |
-| M3 | A05, A09, A10, A11, A12, A29, A30 | 0/7 Abnahmen mit Laufbeleg |
-| M4 | A12, A16, A27, A33 | 0/4 Abnahmen mit Laufbeleg |
-| M5 | A17, A18, A23, A32 | 0/4 Abnahmen mit Laufbeleg |
-| M6 | A15, A19, A20, A21, A31 | 0/5 Abnahmen mit Laufbeleg |
+| Meilenstein | Konzept-Gate | Abnahmen mit Laufbeleg | Sichtbare Ausnahme |
+|---|---|---|---|
+| M0 | A03, A23 | 0/2 Abnahmen mit Laufbeleg | — |
+| M1 | A01, A04, A06, A07, A08, A14, A21, A24, A28 | 0/9 Abnahmen mit Laufbeleg | — |
+| M2 | A02, A13, A22, A25, A26, A27, A33 | 0/7 Abnahmen mit Laufbeleg | — |
+| M3 | A05, A09, A10, A11, A12, A29, A30 | 0/7 Abnahmen mit Laufbeleg | Echte T3-/OpenAI-Verbindung mangels aktiver Konfiguration nicht geprüft; Vertrags-E2E läuft gegen isolierte Netzwerk-Mocks. |
+| M4 | A12, A16, A27, A33 | 0/4 Abnahmen mit Laufbeleg | — |
+| M5 | A17, A18, A23, A32 | 0/4 Abnahmen mit Laufbeleg | — |
+| M6 | A15, A19, A20, A21, A31 | 0/5 Abnahmen mit Laufbeleg | Fork-Prüfung bleibt auf ausdrückliche Nutzerentscheidung zurückgestellt. |
 
 <!-- generated gates end -->
 

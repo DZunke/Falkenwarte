@@ -37,9 +37,9 @@ Der moderne Tokenvertrag verwendet `typ: at+jwt`, `iss`, `aud`, `exp`, `sub`, `c
 
 Der Subscriber-JWT wird ausschließlich als `__Secure-mercure_access_token` mit HttpOnly, Secure, SameSite=Strict und Hub-Pfad gesetzt. Für dieselbe Origin bleibt das Cookie hostgebunden. Der Produkt-TTL beträgt 600 Sekunden; nur das isolierte Testprofil kann ihn über `MERCURE_SUBSCRIBER_TTL` auf 60 bis 600 Sekunden überschreiben und setzt ihn im Compose-Testprofil auf 60 Sekunden. Der API-Vertrag begrenzt die Topics auf höchstens 200, damit die Cookie-Nutzlast nicht unbeschränkt mit der Projektzahl wächst. JWTs erscheinen weder in URLs noch in JavaScript-Speichern oder API-Antwortkörpern. T3-Tokens, OpenAI-Zugänge, MCP-Bearer und Publisher-Secrets gelangen nie an das Frontend. [Cookie-Implementierung v0.10.0](https://github.com/symfony/mercure/blob/v0.10.0/src/Authorization.php)
 
-## 5. Vorgeschlagene JSON-Endpunkte
+## 5. Implementierte JSON-Endpunkte
 
-Die folgenden Namen sind Falkenwarte-API-Entscheidungen, keine eingebauten Symfony-Routen:
+Die Operationen sind im [OpenAPI-Vertrag](../contracts/openapi.yaml) beschrieben und werden über den Laufzeit-Handler in [`Live.php`](../src/Live/Infrastructure/Live.php) ausgeführt; sie sind keine separaten Symfony-Controller.
 
 | Route | Vertrag |
 |---|---|
@@ -72,4 +72,4 @@ Bolt speichert einen begrenzten Replaypuffer auf dem persistenten Volume. Eine p
 
 Caddys öffentliche lokale Root-CA wird aus dem Datenvolume exportiert; ihr privater Schlüssel bleibt geschützt. Linux-Systemvertrauen, ein gegebenenfalls eigener Browser-Zertifikatsspeicher und die tatsächlichen PHP-CLI-/T3-/Agent-Clients werden einzeln berücksichtigt. Node-Clients können `NODE_EXTRA_CA_CERTS` verwenden; die Variable wirkt ab Prozessstart. Der Symfony-HTTP-Client im PHP-CLI-Prozess benötigt Vertrauen in diese CA in seinem Zertifikatsspeicher. Zertifikatsprüfung bleibt aktiviert. [Caddy und Docker](https://caddyserver.com/docs/running#local-https-with-docker), [Node-CA-Konfiguration](https://nodejs.org/api/cli.html#node_extra_ca_certsfile), [Symfony-HTTPS-Client](https://symfony.com/doc/7.4/http_client.html#https-certificates)
 
-M0 fixiert den zusammenpassenden Vertrag und einen minimalen Publish-/Subscribe-Rundlauf. Die E2E-Meilensteine weisen anschließend Same-Origin-Cookie, private Topics, unberechtigten Zugriff, Tokenablauf, Reconnect, doppelte Zustellung, Hub-Neustart und geleerte Replay-History nach. Zusätzlich werden Worker-Publish sowie Agent-Aufrufe zum Falkenwarte-MCP-Endpunkt aus deren echtem Laufzeitkontext geprüft. `localhost` ist nicht automatisch zwischen Linux-Host, Container und einem zweiten Gerät identisch erreichbar. Erst diese Nachweise machen aus dem beschriebenen Vertrag eine funktionierende Laufzeit.
+Die Owner-Topic-Auswahl, der eingeschränkte Projektgrant, das HttpOnly-Cookie und die TTL-Regel sind in der Anwendung implementiert. Der Laufbeleg für private Aktualisierungen und den Produktionscontainer steht getrennt in [TRACEABILITY.md](TRACEABILITY.md); geplante Prüffälle ohne erfolgreichen Lauf bleiben offen. Die lokalen Browser- und Containergrenzen stehen in [VALIDATION.md](VALIDATION.md). `localhost` ist nicht automatisch zwischen Linux-Host, Container und einem zweiten Gerät identisch erreichbar.

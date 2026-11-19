@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, History, Link2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { ExternalLink, History, Link2, Pencil, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request, type Project, type Task, type TaskStatus } from '@/lib/api'
 import { useProjectLabels, useTask, useTaskLinks } from '@/lib/queries'
+import TaskExecution from '@/components/TaskExecution'
 import TaskDecisions from '@/components/TaskDecisions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,7 @@ type TaskLink = components['schemas']['TaskLink']
 
 export default function TaskSheet({ taskId, project, statuses, onClose, onChanged }: { taskId?: string; project: Project; statuses: TaskStatus[]; onClose: () => void; onChanged: () => Promise<void> }) {
   const queryClient = useQueryClient()
+  const [activeTab, setActiveTab] = useState('details')
   const [restoreActionId, setRestoreActionId] = useState<string>()
   const taskQuery = useTask(taskId)
   const linksQuery = useTaskLinks(taskId)
@@ -80,6 +82,8 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const [saveConflict, setSaveConflict] = useState('')
   const [restoreRevision, setRestoreRevision] = useState<string>()
   const [restoreReason, setRestoreReason] = useState('')
+
+  useEffect(() => setActiveTab('details'), [taskId])
 
   useEffect(() => {
     if (!task || editing) return
@@ -262,8 +266,8 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                   {task.intake_outcome === 'needs_information' && <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-900">Rückfrage an Agent</Badge>}
                 </div>
               </SheetHeader>
-              <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
-                <TabsList className="mx-6 mt-4 w-fit"><TabsTrigger value="details">Details</TabsTrigger><TabsTrigger value="decisions"><ShieldCheck />Entscheidungen</TabsTrigger><TabsTrigger value="history"><History />Verlauf</TabsTrigger>{linkNotesContribution && <TabsTrigger value="link-notes"><Link2 />{linkNotesContribution.label}</TabsTrigger>}</TabsList>
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
+                <TabsList className="falkenwarte-scrollbar mx-4 mt-4 max-w-[calc(100vw-2rem)] overflow-x-auto sm:mx-6 sm:max-w-[calc(100vw-3rem)]"><TabsTrigger value="details">Details</TabsTrigger><TabsTrigger value="decisions"><ShieldCheck />Entscheidungen</TabsTrigger><TabsTrigger value="execution"><Play />Ausführung</TabsTrigger><TabsTrigger value="history"><History />Verlauf</TabsTrigger>{linkNotesContribution && <TabsTrigger value="link-notes"><Link2 />{linkNotesContribution.label}</TabsTrigger>}</TabsList>
                 <TabsContent value="details" className="falkenwarte-scrollbar mt-0 flex-1 space-y-6 overflow-y-auto px-6 pb-8 pt-5">
                   <section className="space-y-2"><h3 className="text-sm font-semibold">Beschreibung</h3><p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{task.description || 'Keine Beschreibung hinterlegt.'}</p></section>
                   <section className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-semibold">Erfolgskriterien</h3><Button size="sm" variant="outline" onClick={() => setEvidenceOpen(true)}><Plus />Meldung hinzufügen</Button></div>
@@ -276,9 +280,9 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                   {task.blocked && <section className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>Blockiert</strong><p className="mt-1">{task.blocker_reason}</p></section>}
                   <section className="space-y-3"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Link-Sammlungen</h3><Button size="sm" variant="outline" onClick={() => setLinkForm((value) => !value)}><Plus />Link hinzufügen</Button></div>
                     {linkForm && <div className="grid gap-3 rounded-lg border bg-muted/30 p-4">
-                      <div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label>Sammlung</Label><Input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} maxLength={100} /></div><div className="grid gap-2"><Label>Sammlungstyp</Label><Select value={collectionKind} onValueChange={(value) => setCollectionKind(value as typeof collectionKind)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="source">Quelle</SelectItem><SelectItem value="delivery">Ergebnis</SelectItem><SelectItem value="reference">Referenz</SelectItem></SelectContent></Select></div></div>
-                      <div className="grid gap-2"><Label>Titel</Label><Input value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label>URL</Label><Input type="url" placeholder="https://…" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} maxLength={4000} /></div>
-                      <div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label>Linktyp</Label><Select value={linkKind} onValueChange={(value) => setLinkKind(value as typeof linkKind)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{linkKinds.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-2"><Label>Beziehung</Label><Select value={linkRelation} onValueChange={(value) => setLinkRelation(value as typeof linkRelation)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{linkRelations.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div></div>
+                      <div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="link-collection-name">Sammlung</Label><Input id="link-collection-name" value={collectionName} onChange={(event) => setCollectionName(event.target.value)} maxLength={100} /></div><div className="grid gap-2"><Label htmlFor="link-collection-kind">Sammlungstyp</Label><Select value={collectionKind} onValueChange={(value) => setCollectionKind(value as typeof collectionKind)}><SelectTrigger id="link-collection-kind"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="source">Quelle</SelectItem><SelectItem value="delivery">Ergebnis</SelectItem><SelectItem value="reference">Referenz</SelectItem></SelectContent></Select></div></div>
+                      <div className="grid gap-2"><Label htmlFor="link-title">Titel</Label><Input id="link-title" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label htmlFor="link-url">URL</Label><Input id="link-url" type="url" placeholder="https://…" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} maxLength={4000} /></div>
+                      <div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="link-kind">Linktyp</Label><Select value={linkKind} onValueChange={(value) => setLinkKind(value as typeof linkKind)}><SelectTrigger id="link-kind"><SelectValue /></SelectTrigger><SelectContent>{linkKinds.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="link-relation">Beziehung</Label><Select value={linkRelation} onValueChange={(value) => setLinkRelation(value as typeof linkRelation)}><SelectTrigger id="link-relation"><SelectValue /></SelectTrigger><SelectContent>{linkRelations.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div></div>
                       <div className="flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setLinkForm(false)}>Abbrechen</Button><Button size="sm" onClick={() => registerLink.mutate()} disabled={registerLink.isPending || !linkTitle.trim() || !linkUrl.trim()}>{registerLink.isPending ? 'Wird gespeichert…' : 'Link registrieren'}</Button></div>
                     </div>}
                     {linksQuery.isPending ? <p className="text-sm text-muted-foreground">Links werden geladen…</p> : linksQuery.isError ? <p role="alert" className="text-sm text-destructive">{formatError(linksQuery.error)}</p> : linkCollections.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine externen Referenzen gespeichert.</p> : <div className="space-y-3">{linkCollections.map((collection) => <div key={collection.id} className="rounded-lg border p-3"><div className="mb-2 flex items-center justify-between"><h4 className="text-sm font-medium">{collection.name}</h4><Badge variant="secondary" className="capitalize">{collection.kind === 'delivery' ? 'Ergebnis' : collection.kind === 'source' ? 'Quelle' : 'Referenz'}</Badge></div>{collection.links.length === 0 ? <p className="text-xs text-muted-foreground">Noch keine Links.</p> : <div className="space-y-2">{collection.links.map((link) => <div key={link.id} className="rounded-md px-2 py-2 hover:bg-muted"><a href={link.url} target="_blank" rel="noopener noreferrer" className="flex items-start gap-2 text-sm"><Link2 className="mt-0.5 size-4 shrink-0 text-primary" /><span className="min-w-0 flex-1"><span className="block font-medium">{link.title}</span><span className="block truncate text-xs text-muted-foreground">{link.url}</span></span><ExternalLink className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" /></a><div className="mt-1 flex gap-1 pl-6"><Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setEditingLink({ collectionId: collection.id, taskVersion: collection.task_version, link }); setLinkTitle(link.title); setLinkUrl(link.url); setLinkKind(link.kind); setLinkRelation(link.relation); setLinkForm(false) }}><Pencil />Link bearbeiten</Button><Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive hover:text-destructive" onClick={() => setRemovingLink({ collectionId: collection.id, taskVersion: collection.task_version, link })}><Trash2 />Entfernen</Button></div></div>)}</div>}</div>)}</div>}
@@ -288,6 +292,9 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                 </TabsContent>
                 <TabsContent value="decisions" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   <TaskDecisions task={task} project={project} onChanged={invalidate} />
+                </TabsContent>
+                <TabsContent value="execution" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
+                  <TaskExecution task={task} project={project} onChanged={invalidate} onOpenDecisions={() => setActiveTab('decisions')} />
                 </TabsContent>
                 <TabsContent value="history" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   {restoreActionQuery.data && <div className={`mb-5 rounded-lg border p-3 text-sm ${restoreActionQuery.data.status === 'failed' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-primary/20 bg-accent text-accent-foreground'}`} role="status"><p className="font-medium">{restoreActionQuery.data.status === 'succeeded' ? 'Wiederherstellung abgeschlossen' : restoreActionQuery.data.status === 'failed' ? 'Wiederherstellung fehlgeschlagen' : 'Wiederherstellung läuft'}</p><p className="mt-1 text-xs">Action {restoreActionQuery.data.id}</p></div>}

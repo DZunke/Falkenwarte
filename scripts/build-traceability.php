@@ -9,19 +9,46 @@ $acceptanceAnchors = [];
 preg_match_all('/^##\s+(A\d{2})\s+-\s+(.+)$/m', $acceptance, $acceptanceHeadings, PREG_SET_ORDER);
 foreach ($acceptanceHeadings as $heading) {
     $transliterated = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $heading[2]);
-    $slug = strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', $transliterated === false ? $heading[2] : $transliterated), '-'));
+    $slug = strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', false === $transliterated ? $heading[2] : $transliterated), '-'));
     $acceptanceAnchors[$heading[1]] = strtolower($heading[1]).'---'.$slug;
 }
 $resultPath = getenv('FALKENWARTE_ACCEPTANCE_EVIDENCE') ?: $root.'/var/ci-evidence/acceptance.json';
+$verificationPath = getenv('FALKENWARTE_TRACEABILITY_VERIFICATION') ?: $root.'/var/ci-evidence/verification.json';
 $results = is_file($resultPath) ? json_decode((string) file_get_contents($resultPath), true, 512, JSON_THROW_ON_ERROR) : [];
+$verification = is_file($verificationPath) ? json_decode((string) file_get_contents($verificationPath), true, 512, JSON_THROW_ON_ERROR) : [];
+$primary = $verification['primary'] ?? [];
+$verifiedPrimary = ($verification['format'] ?? null) === 'falkenwarte.traceability-verification.v1'
+    && ($primary['status'] ?? null) === 'passed'
+    && ($primary['workflow_conclusion'] ?? null) === 'success'
+    && ($results['overall_status'] ?? null) === 'passed'
+    && is_string($results['commit'] ?? null)
+    && ($primary['commit'] ?? null) === $results['commit']
+    && is_string($results['image'] ?? null)
+    && ($primary['image'] ?? null) === $results['image']
+    && is_string($results['fixture_version'] ?? null)
+    && ($primary['fixture_version'] ?? null) === $results['fixture_version'];
 $cases = [];
-$completeRunReference = ($results['overall_status'] ?? null) === 'passed'
-    && !empty($results['commit'])
-    && !empty($results['image'])
-    && !empty($results['fixture_version']);
-foreach ($results['cases'] ?? [] as $case) {
-    if ($completeRunReference && ($case['status'] ?? '') === 'passed' && !empty($case['observed_outcome'])) {
+if ($verifiedPrimary) {
+    foreach ($results['cases'] ?? [] as $case) {
+        if (!is_array($case)
+            || ($case['status'] ?? '') !== 'passed'
+            || ($case['coverage'] ?? 'complete') !== 'complete'
+            || !is_string($case['acceptance_id'] ?? null)
+            || !preg_match('/^A\d{2}$/', $case['acceptance_id'])
+            || empty($case['observed_outcome'])
+            || in_array($case['acceptance_id'], ['A03', 'A05', 'A19', 'A31'], true)) {
+            continue;
+        }
+        $case['source_urls'] = $verification['cases'][$case['acceptance_id']]['source_urls'] ?? [$primary['workflow_url'] ?? null];
         $cases[$case['acceptance_id']] = $case;
+    }
+    foreach ($verification['cases'] ?? [] as $acceptanceId => $case) {
+        if (!is_string($acceptanceId) || !preg_match('/^A\d{2}$/', $acceptanceId) || !is_array($case) || ($case['status'] ?? null) !== 'passed') {
+            continue;
+        }
+        if (in_array($acceptanceId, ['A03', 'A05', 'A19', 'A31'], true)) {
+            $cases[$acceptanceId] = $case;
+        }
     }
 }
 
@@ -109,6 +136,7 @@ $link = static function (string $path, bool $showMissing = false) use ($root): s
     }
     if (str_starts_with($path, 'docs/')) {
         $relative = substr($path, strlen('docs/'));
+
         return sprintf('[%s](%s)', $relative, $relative);
     }
     if (str_starts_with($path, 'contracts/')) {
@@ -120,10 +148,90 @@ $link = static function (string $path, bool $showMissing = false) use ($root): s
 
 $formatPaths = static function (array $paths, bool $showMissing = false) use ($link): string {
     $links = array_values(array_filter(array_map(static fn (string $path): string => $link($path, $showMissing), $paths)));
-    return $links === [] ? 'Noch nicht vorhanden' : implode(' · ', $links);
+
+    return [] === $links ? 'Noch nicht vorhanden' : implode(' · ', $links);
 };
 
-$rows = ['| ID | Anforderung | Umsetzung | Dokumentation | Abnahme | Nachweisstatus |', '|---|---|---|---|---|---|'];
+$cell = static fn (mixed $value): string => is_string($value) && '' !== $value ? str_replace('|', '\\|', $value) : '—';
+$sourceLink = static function (mixed $url, string $label): string {
+    if (!is_string($url) || 1 !== preg_match('~^https://~i', $url)) {
+        return '—';
+    }
+
+    return sprintf('[%s](%s)', $label, $url);
+};
+$evidenceRows = [
+    '| Beleg | Status | Commit | Image oder Digest | Fixture | Quelle |',
+    '|---|---|---|---|---|---|',
+];
+$primaryStatus = $verifiedPrimary ? 'Belegt' : 'Nicht belegt';
+$evidenceRows[] = sprintf(
+    '| Hauptlauf | %s | `%s` | `%s` | %s | %s |',
+    $primaryStatus,
+    $verifiedPrimary ? $cell($primary['commit'] ?? null) : '—',
+    $verifiedPrimary ? $cell($primary['image'] ?? null) : '—',
+    $verifiedPrimary ? $cell($primary['fixture_version'] ?? null) : '—',
+    $sourceLink($primary['workflow_url'] ?? null, 'GitHub-Workflow'),
+);
+foreach (['A03' => 'static-quality', 'A05' => 'background-functional'] as $caseId => $jobName) {
+    $job = $primary['jobs'][$jobName] ?? [];
+    $evidenceRows[] = sprintf(
+        '| %s · %s | %s | `%s` | `%s` | %s | %s |',
+        $caseId,
+        $jobName,
+        isset($cases[$caseId]) ? 'Belegt' : 'Nicht belegt',
+        isset($cases[$caseId]) ? $cell($primary['commit'] ?? null) : '—',
+        isset($cases[$caseId]) ? $cell($primary['image'] ?? null) : '—',
+        isset($cases[$caseId]) ? $cell($primary['fixture_version'] ?? null) : '—',
+        $sourceLink($job['source_url'] ?? null, 'Joblauf'),
+    );
+}
+$a19 = $cases['A19'] ?? [];
+$a19Phases = $a19['phases'] ?? [];
+$a19Sources = is_array($a19['source_urls'] ?? null) ? $a19['source_urls'] : [];
+$a19Source = $sourceLink($a19Sources[0] ?? null, 'Start- und Neustartbericht');
+$evidenceRows[] = sprintf(
+    '| A19 · Produktionsstart und Neustart | %s | `%s` | `%s` | %s | %s |',
+    isset($cases['A19']) && 2 === count($a19Phases) ? 'Belegt: Start und Neustart' : 'Nicht belegt',
+    isset($cases['A19']) ? $cell($primary['commit'] ?? null) : '—',
+    isset($cases['A19']) ? $cell($primary['image'] ?? null) : '—',
+    isset($cases['A19']) ? $cell($primary['fixture_version'] ?? null) : '—',
+    $a19Source,
+);
+$a31 = $verification['a31'] ?? [];
+$a31Checks = is_array($a31['checks'] ?? null) ? $a31['checks'] : [];
+foreach (['normal_pr' => 'Normaler PR', 'docs_quality' => 'Dokumentationsjob', 'release_pr' => 'Release-Please-PR', 'fail_probe' => 'Fehlerprobe', 'skip_probe' => 'Skip-Probe', 'release' => 'Veröffentlichung'] as $checkName => $label) {
+    $check = $a31Checks[$checkName] ?? [];
+    $commitParts = [];
+    foreach (['head_sha' => 'head', 'dispatch_expected_sha' => 'dispatch', 'checked_out_sha' => 'checkout', 'tag_commit' => 'tag', 'tested_commit' => 'tested', 'image_revision' => 'image revision'] as $field => $partLabel) {
+        if (is_string($check[$field] ?? null)) {
+            $commitParts[] = $partLabel.': '.$check[$field];
+        }
+    }
+    $commit = [] === $commitParts ? null : implode('; ', $commitParts);
+    $imageOrDigest = $check['image_digest'] ?? null;
+    $outcomeParts = ['passed' === ($check['status'] ?? null) ? 'Belegt' : 'Nicht belegt'];
+    if (is_string($check['conclusion'] ?? null)) {
+        $outcomeParts[] = 'Run/Job '.$check['conclusion'];
+    }
+    foreach (['workflow_conclusion' => 'Workflow', 'quality_gate_conclusion' => 'quality-gate', 'e2e_conclusion' => 'E2E'] as $field => $partLabel) {
+        if (is_string($check[$field] ?? null)) {
+            $outcomeParts[] = $partLabel.' '.$check[$field];
+        }
+    }
+    $outcome = implode('; ', $outcomeParts);
+    $evidenceRows[] = sprintf(
+        '| A31 · %s | %s | `%s` | `%s` | — | %s |',
+        $label,
+        $outcome,
+        $cell($commit),
+        $cell($imageOrDigest),
+        $sourceLink($check['source_url'] ?? null, 'GitHub-Quelle'),
+    );
+}
+$evidenceRows[] = '| M6 · Fork-Prüfung | Zurückgestellt | — | — | — | Ausdrückliche Nutzerentscheidung |';
+
+$rows = ['| ID | Anforderung | Umsetzung | Dokumentation | Abnahme und Laufquellen | Nachweisstatus |', '|---|---|---|---|---|---|'];
 foreach ($requirements['requirements'] as $requirement) {
     $id = $requirement['id'];
     $requiredCases = $requirement['acceptance'];
@@ -140,7 +248,24 @@ foreach ($requirements['requirements'] as $requirement) {
     $caseLinks = [];
     foreach ($requiredCases as $caseId) {
         $anchor = $acceptanceAnchors[$caseId] ?? strtolower($caseId);
-        $caseLinks[] = sprintf('[%s](ACCEPTANCE.md#%s)', $caseId, $anchor);
+        $caseLink = sprintf('[%s](ACCEPTANCE.md#%s)', $caseId, $anchor);
+        $checks = $cases[$caseId]['checks'] ?? [];
+        if ('A31' === $caseId && is_array($checks)) {
+            foreach ($checks as $checkName => $check) {
+                if (!is_array($check) || !is_string($check['source_url'] ?? null) || 1 !== preg_match('~^https://~i', $check['source_url'])) {
+                    continue;
+                }
+                $caseLink .= sprintf(' ([%s](%s))', str_replace('_', ' ', (string) $checkName), $check['source_url']);
+            }
+        } else {
+            $sources = $cases[$caseId]['source_urls'] ?? [];
+            if (is_array($sources)) {
+                foreach (array_values(array_unique(array_filter($sources, static fn (mixed $source): bool => is_string($source) && 1 === preg_match('~^https://~i', $source)))) as $sourceIndex => $source) {
+                    $caseLink .= sprintf(' ([Lauf %d](%s))', $sourceIndex + 1, $source);
+                }
+            }
+        }
+        $caseLinks[] = $caseLink;
     }
 
     $rows[] = sprintf(
@@ -163,10 +288,14 @@ $gates = [
     'M5' => ['A17', 'A18', 'A23', 'A32'],
     'M6' => ['A15', 'A19', 'A20', 'A21', 'A31'],
 ];
-$gateRows = ['| Meilenstein | Konzept-Gate | Bestanden mit referenziertem Laufbeleg |', '|---|---|---|'];
+$gateExceptions = [
+    'M3' => 'Echte T3-/OpenAI-Verbindung mangels aktiver Konfiguration nicht geprüft; Vertrags-E2E läuft gegen isolierte Netzwerk-Mocks.',
+    'M6' => 'Fork-Prüfung bleibt auf ausdrückliche Nutzerentscheidung zurückgestellt.',
+];
+$gateRows = ['| Meilenstein | Konzept-Gate | Abnahmen mit Laufbeleg | Sichtbare Ausnahme |', '|---|---|---|---|'];
 foreach ($gates as $milestone => $requiredCases) {
     $passedCount = count(array_filter($requiredCases, static fn (string $caseId): bool => isset($cases[$caseId])));
-    $gateRows[] = sprintf('| %s | %s | %d/%d Abnahmen mit Laufbeleg |', $milestone, implode(', ', $requiredCases), $passedCount, count($requiredCases));
+    $gateRows[] = sprintf('| %s | %s | %d/%d Abnahmen mit Laufbeleg | %s |', $milestone, implode(', ', $requiredCases), $passedCount, count($requiredCases), $gateExceptions[$milestone] ?? '—');
 }
 
 $reportPath = $root.'/docs/TRACEABILITY.md';
@@ -175,13 +304,15 @@ $replaceGenerated = static function (string $content, string $start, string $end
     $pattern = '/'.preg_quote($start, '/').'\s*.*?\s*'.preg_quote($end, '/').'/s';
     $replacement = $start."\n\n".implode("\n", $generated)."\n\n".$end;
     $updated = preg_replace($pattern, $replacement, $content, 1, $matches);
-    if ($matches !== 1 || $updated === null) {
+    if (1 !== $matches || null === $updated) {
         throw new RuntimeException(sprintf('Generated section %s is missing or duplicated.', $start));
     }
+
     return $updated;
 };
 $report = $replaceGenerated($report, '<!-- generated requirements start -->', '<!-- generated requirements end -->', $rows);
 $report = $replaceGenerated($report, '<!-- generated gates start -->', '<!-- generated gates end -->', $gateRows);
+$report = $replaceGenerated($report, '<!-- generated evidence start -->', '<!-- generated evidence end -->', $evidenceRows);
 file_put_contents($reportPath, $report);
 
-fwrite(STDOUT, sprintf("Generated traceability for %d requirements. %d acceptance cases have release-grade passing evidence.\n", count($requirements['requirements']), count($cases)));
+fwrite(STDOUT, sprintf("Generated traceability for %d requirements. %d acceptance cases have verified hosted evidence.\n", count($requirements['requirements']), count($cases)));

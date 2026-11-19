@@ -14,6 +14,8 @@ test('A19 production container boots and preserves human tickets across restart'
     recordEvidence('Ticket und Projektboard bleiben beim Neustart erhalten.', 'Nach dem Stoppen und Starten des einzigen Produktcontainers waren dieselbe Ticket-ID und die gespeicherte Änderung im Browser und über die API lesbar.');
     return;
   }
+  const ownerCookie = (await ownerPage.context().cookies()).find((cookie) => cookie.name === 'falkenwarte_session');
+  expect(ownerCookie).toMatchObject({ secure: true, httpOnly: true, sameSite: 'Strict' });
   const health = await ownerApi.get('/health');
   expect(health.data.status).toBe('ok');
   const connections = await ownerApi.get('/connections');
@@ -32,5 +34,13 @@ test('A19 production container boots and preserves human tickets across restart'
   await ownerPage.getByText(updated.data.title, { exact: true }).click();
   await expect(ownerPage.getByRole('heading', { name: updated.data.title })).toBeVisible();
   await writeFile(stored, JSON.stringify({ taskId: task.id, projectId: project.id }));
-  recordEvidence('Der Produktcontainer bedient den Browser ohne T3-/Decisions-Zugänge und ignoriert den QA-Fehlerpunkt.', 'Ein menschlich erstelltes Ticket war im privaten Live-Board sichtbar. Die Produktions-App akzeptierte die Änderung trotz Testheader und hatte keine eingerichtete T3-Verbindung.');
+  const disconnected = await ownerApi.post('/connections', { name: 'T3 ohne Zugang', bridge_id: 't3.mcp.v0_1_10', canonical_url: 'https://127.0.0.1:1' });
+  expect(disconnected.response.status(), JSON.stringify(disconnected.data)).toBe(201);
+  await ownerPage.goto('/#/agents');
+  await ownerPage.getByRole('button', { name: /T3 ohne Zugang/ }).click();
+  await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
+  await expect(ownerPage.getByText('Für die T3-Prüfung fehlt eine gültige OAuth-Anmeldung.')).toBeVisible({ timeout: 20_000 });
+  await expect(ownerPage.getByRole('button', { name: /T3 ohne Zugang/ })).toContainText('Eingeschränkt');
+  expect((await ownerPage.request.get('/healthz')).status()).toBe(200);
+  recordEvidence('Der Produktcontainer bedient den Browser ohne T3-/Decisions-Zugänge und ignoriert den QA-Fehlerpunkt.', 'Ein menschlich erstelltes Ticket war im privaten Live-Board sichtbar. Die Produktions-App akzeptierte die Änderung trotz Testheader. Eine ergänzte T3-Verbindung ohne Zugang zeigte anschließend die fehlende OAuth-Anmeldung an, und die App blieb erreichbar.');
 });

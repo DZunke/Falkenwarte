@@ -86,6 +86,6 @@ HTML;
     if (!is_dir(dirname($out))) {
         mkdir(dirname($out), 0775, true);
     }
-    file_put_contents($out,$html);
+    file_put_contents($out, $html);
 }
-copy(__DIR__.'/handbuch.css',$target.'/handbuch.css');
+copy(__DIR__.'/handbuch.css', $target.'/handbuch.css');

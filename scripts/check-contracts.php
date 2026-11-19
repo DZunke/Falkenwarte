@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 require dirname(__DIR__).'/vendor/autoload.php';
 
-use Opis\JsonSchema\Validator;
-use Opis\JsonSchema\SchemaLoader;
 use Opis\JsonSchema\Parsers\SchemaParser;
 use Opis\JsonSchema\Resolvers\SchemaResolver;
+use Opis\JsonSchema\SchemaLoader;
+use Opis\JsonSchema\Validator;
 use Symfony\Component\Yaml\Yaml;
 
 $root = dirname(__DIR__);
@@ -44,17 +44,17 @@ $resolveReference = static function (string $reference) use ($resolvePointer, $o
     }
 
     [$filePath, $fragment] = array_pad(explode('#', $reference, 2), 2, '');
-    if ($filePath === 'openapi.yaml') {
-        return $fragment === '' ? $openApi : $resolvePointer($openApi, '#'.$fragment);
+    if ('openapi.yaml' === $filePath) {
+        return '' === $fragment ? $openApi : $resolvePointer($openApi, '#'.$fragment);
     }
     $targetPath = realpath($root.'/contracts/'.$filePath);
     $contractsPath = realpath($root.'/contracts');
-    if ($targetPath === false || $contractsPath === false || !str_starts_with($targetPath, $contractsPath.DIRECTORY_SEPARATOR)) {
+    if (false === $targetPath || false === $contractsPath || !str_starts_with($targetPath, $contractsPath.DIRECTORY_SEPARATOR)) {
         throw new InvalidArgumentException(sprintf('Unresolved local reference %s', $reference));
     }
 
     $target = json_decode((string) file_get_contents($targetPath), true, 512, JSON_THROW_ON_ERROR);
-    if ($fragment === '') {
+    if ('' === $fragment) {
         return $target;
     }
 
@@ -120,7 +120,7 @@ $exampleForSchema = static function (object $schema) use (&$exampleForSchema, $m
         return $schema->enum[0];
     }
     $type = $schema->type ?? null;
-    if ($type !== 'object') {
+    if ('object' !== $type) {
         foreach (['anyOf', 'oneOf', 'allOf'] as $composition) {
             if (isset($schema->{$composition}[0]) && is_object($schema->{$composition}[0])) {
                 return $exampleForSchema($schema->{$composition}[0]);
@@ -130,10 +130,10 @@ $exampleForSchema = static function (object $schema) use (&$exampleForSchema, $m
     if (is_array($type)) {
         $type = in_array('null', $type, true) ? 'null' : $type[0];
     }
-    if ($type === null && (isset($schema->required) || isset($schema->properties))) {
+    if (null === $type && (isset($schema->required) || isset($schema->properties))) {
         $type = 'object';
     }
-    if ($type === 'object') {
+    if ('object' === $type) {
         $result = new stdClass();
         foreach ($schema->required ?? [] as $key) {
             $result->{$key} = $exampleForSchema($schema->properties->{$key} ?? new stdClass());
@@ -155,17 +155,18 @@ $exampleForSchema = static function (object $schema) use (&$exampleForSchema, $m
 
         return $result;
     }
-    if ($type === 'array') {
+    if ('array' === $type) {
         $items = $exampleForSchema($schema->items ?? new stdClass());
+
         return array_fill(0, max(0, (int) ($schema->minItems ?? 0)), $items);
     }
-    if ($type === 'integer' || $type === 'number') {
+    if ('integer' === $type || 'number' === $type) {
         return max(1, (int) ($schema->minimum ?? 1));
     }
-    if ($type === 'boolean') {
+    if ('boolean' === $type) {
         return true;
     }
-    if ($type === 'null') {
+    if ('null' === $type) {
         return null;
     }
 
@@ -179,6 +180,7 @@ $exampleForSchema = static function (object $schema) use (&$exampleForSchema, $m
     if (($schema->format ?? null) === 'uri') {
         return 'https://example.test/resource';
     }
+
     return str_repeat('x', $minimumLength);
 };
 
@@ -272,7 +274,7 @@ foreach ($requirements['requirements'] ?? [] as $requirement) {
     }
 }
 
-if ($errors !== []) {
+if ([] !== $errors) {
     fwrite(STDERR, implode("\n", array_map(static fn (string $error): string => 'ERROR: '.$error, $errors))."\n");
     exit(1);
 }

@@ -26,7 +26,9 @@ FALKENWARTE_BASE_URL=http://127.0.0.1:18770 FALKENWARTE_SETUP_TOKEN=test-setup-t
 
 Playwright meldete 7/7 Tests bestanden. Die beobachteten Abnahme-IDs waren A02, A13, A22, A24, A25, A26, A27, A28 und A33; A27 ist ausdrücklich `partial` und bleibt offen, weil der gleichzeitige Handlungsbedarf aus `approval_pending` und `routing_ambiguous` noch nicht gemeinsam nachgewiesen ist. Das Reportobjekt nennt `commit: null` und `image: null`; der Lauf ist lokale Entwicklerevidenz, keine hosted Abnahme.
 
-`qa/results.json` ist ein ignorierter Debugreport und wird bei jedem gezielten Lauf überschrieben. Er ist kein kumulatives Abnahmeverzeichnis. Nur ein abgeschlossenes, erfolgreiches und redigiertes CI-Artefakt unter `var/ci-evidence/acceptance.json` kann release-feste Ergebnisse in die Traceability übernehmen.
+`qa/results.json` ist ein ignorierter Debugreport und wird bei jedem gezielten Lauf überschrieben. Er ist kein kumulatives Abnahmeverzeichnis. Die Traceability übernimmt nur einen abgeschlossenen, erfolgreichen und redigierten Hauptlauf, dessen SHA und Image mit dem abgeschlossenen GitHub-Workflow übereinstimmen; A03 und A05 benötigen zusätzlich die erfolgreichen Jobs `static-quality` und `background-functional`, A19 beide erfolgreichen Produktionsberichte für Start und Neustart.
+
+[`scripts/prepare-traceability-evidence.php`](../scripts/prepare-traceability-evidence.php) prüft Workflowjobs, Hauptartefakt und Produktionsberichte und schreibt `var/ci-evidence/verification.json`. Erst danach aktualisieren `scripts/build-traceability.php` und `scripts/build-docs.php` den Bericht und das statische Handbuch. Der Bericht enthält anklickbare GitHub-Quellen; lokale oder partielle Fälle bleiben offen.
 
 ## Hosted-Prüfung
 
@@ -38,7 +40,7 @@ Der hosted E2E-Job startete keinen Playwright-Fall: Der Appcontainer wurde im Co
 
 Kein Meilenstein ist vollständig abgenommen. M0 bleibt offen, bis A03 und A23 an einem festen, erfolgreichen QA-Artefakt belegt sind; die lokale Architekturprüfung sowie die lokalen Browserfälle ersetzen diesen Beleg nicht. M1 bis M5 bleiben offen, bis alle jeweils verpflichtenden Akzeptanzfälle in der vollständigen Suite durchlaufen sind. A27 bleibt trotz erfolgreichem Playwright-Teststatus fachlich `partial`.
 
-Die M6-Forkprüfung ist auf ausdrückliche Nutzerentscheidung vertagt und bleibt unverifiziert. Weiter erforderlich sind ein regulärer PR-Lauf mit wirksamer Branchregel, der exakte SHA-Dispatch des Release-PRs, die deliberate-fail- und deliberate-skip-Proben sowie der Releasepfad bis zum geprüften Image-Tag; siehe [GitHub-Auslieferung](GITHUB_DELIVERY.md).
+Die M6-Forkprüfung ist auf ausdrückliche Nutzerentscheidung vertagt und bleibt als Ausnahme sichtbar; sie wird nicht als bestanden ausgegeben und blockiert die übrigen M6-Abnahmen nicht. Weiter erforderlich sind ein regulärer PR-Lauf mit wirksamer Branchregel, der exakte SHA-Dispatch des Release-PRs, die deliberate-fail- und deliberate-skip-Proben sowie der Releasepfad bis zum geprüften Image-Tag; siehe [GitHub-Auslieferung](GITHUB_DELIVERY.md).
 
 Die automatisierte Abnahme verwendet T3- und Decisions-Mocks an den tatsächlichen Netzwerkgrenzen. Es gibt keinen Nachweis mit aktiver privater T3-Instanz oder echtem OpenAI-Zugang; erfolgreiche Mockläufe belegen diese Verbindungen nicht.
 

@@ -32,7 +32,7 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E
 
   await ownerPage.goto('/#/agents');
   await expect(ownerPage.getByRole('heading', { name: 'T3-Verbindung' })).toBeVisible();
-  await ownerPage.getByRole('button', { name: new RegExp(name) }).click();
+  await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
   const authorizationRequest = ownerPage.waitForRequest((request) => request.url().startsWith(`${qaMocks.t3URL}/authorize?`));
   await Promise.all([
     authorizationRequest,
@@ -41,12 +41,14 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E
   await readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.auth_status === 'valid', 'Browser-OAuth muss T3 autorisieren.');
 
   await ownerPage.reload();
-  await ownerPage.getByRole('button', { name: new RegExp(name) }).click();
+  await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
   await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
   await expect.poll(async () => {
     const check = await ownerApi.get(`/connections/${connection.id}/check`);
-    return check.response.status() === 200 ? check.data.status : null;
-  }, { timeout: 45_000, message: 'MCP-Handshake und T3-Fähigkeiten müssen erfolgreich sein.' }).toBe('succeeded');
+    return check.response.status() === 200
+      ? [check.data.network, check.data.authentication, check.data.mcp_handshake, check.data.capabilities].join(':')
+      : null;
+  }, { timeout: 45_000, message: 'MCP-Handshake und T3-Fähigkeiten müssen erfolgreich sein.' }).toBe('ok:ok:ok:ok');
   const readyConnection = await readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.health === 'ready' && item.auth_status === 'valid', 'Die T3-Verbindung muss als bereit erscheinen.');
 
   await ownerPage.getByRole('button', { name: 'Projekte laden' }).click();
@@ -62,7 +64,7 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E
   return { project, connection: readyConnection, binding: binding.data };
 }
 
-async function createProfile(ownerApi, ownerPage, baseURL, project, connection, suffix = 'QA') {
+async function createProfile(ownerApi, ownerPage, baseURL, project, connection, suffix = 'QA', executionTarget = { mode: 't3_project_default' }, completionPolicy = defaultPolicy) {
   const name = `T3 Rolle ${suffix}`;
   const result = await ownerApi.post('/agent-profiles', {
     name,
@@ -73,16 +75,87 @@ async function createProfile(ownerApi, ownerPage, baseURL, project, connection, 
     max_parallel_runs: 1,
     prompt_template: 'Berichte Beobachtungen über den Falkenwarte-MCP-Server.',
     enabled: true,
-    default_run_completion_policy: defaultPolicy,
-    execution_target: { mode: 't3_project_default' },
+    default_run_completion_policy: completionPolicy,
+    execution_target: executionTarget,
   });
   expect(result.response.status(), JSON.stringify(result.data)).toBe(201);
   const profile = result.data;
   await ownerPage.goto('/#/roles');
   await expect(ownerPage.getByRole('heading', { name: 'Agentrollen' })).toBeVisible();
   await expect(ownerPage.getByText(name, { exact: true })).toBeVisible();
-  await expect(ownerPage.getByText('T3-Projektstandard', { exact: true })).toBeVisible();
+  await expect(ownerPage.getByText(executionTarget.mode === 't3_project_default' ? 'T3-Projektstandard' : `Referenzthread ${executionTarget.reference_thread_id}`, { exact: true })).toBeVisible();
   return profile;
+}
+
+async function configureAmbiguousRouting(ownerApi, project, profile) {
+  const topic = await ownerApi.createLabel(project.id, {
+    key: `topic.t3qa-${randomUUID().slice(0, 6)}`,
+    name: 'T3-Abnahme',
+    color: '#7C97B6',
+    kind: 'topic',
+  });
+  const workflowLabels = [
+    await ownerApi.createLabel(project.id, { key: `workflow.t3qa-a-${randomUUID().slice(0, 6)}`, name: 'T3-Bearbeitung', color: '#C89562', kind: 'workflow' }),
+    await ownerApi.createLabel(project.id, { key: `workflow.t3qa-b-${randomUUID().slice(0, 6)}`, name: 'T3-Dokumentation', color: '#8FA78E', kind: 'workflow' }),
+  ];
+  const workflows = [];
+  for (const name of ['T3-Bearbeitungsablauf', 'T3-Dokumentationsablauf']) {
+    const created = await ownerApi.post('/workflows', {
+      project_id: project.id,
+      name,
+      preset_id: 'manual',
+      stages: [{
+        id: 'work',
+        kind: 'implementation',
+        name: 'Bearbeitung',
+        agent_profile_id: profile.id,
+        entry_conditions: [],
+        run_completion_policy: { ...defaultPolicy, require_human_phase_decision: true },
+      }],
+      transitions: [],
+      limits: { max_repair_rounds: 1, max_depth: 1, max_parallel_runs: 1, max_total_seconds: 3600 },
+      enabled: true,
+    });
+    expect(created.response.status(), JSON.stringify(created.data)).toBe(201);
+    workflows.push(created.data.workflow ?? created.data);
+  }
+  const routing = await ownerApi.get(`/projects/${project.id}/routing-rules`);
+  expect(routing.response.status(), JSON.stringify(routing.data)).toBe(200);
+  const savedRouting = await ownerApi.put(`/projects/${project.id}/routing-rules`, {
+    rules: workflowLabels.map((label, index) => ({
+      workflow_label_id: label.id,
+      workflow_id: workflows[index].id,
+      workflow_definition_version: workflows[index].definition_version ?? 1,
+    })),
+    on_unresolved: 'needs_human_decision',
+  }, { version: routing.data.version });
+  expect(savedRouting.response.status(), JSON.stringify(savedRouting.data)).toBe(200);
+
+  const secret = await ownerApi.post('/secret-references', { label: 'T3 A27 Decisions', value: 'qa-decisions-token' });
+  expect(secret.response.status(), JSON.stringify(secret.data)).toBe(201);
+  const currentConfiguration = await ownerApi.get('/decision-configuration');
+  expect(currentConfiguration.response.status(), JSON.stringify(currentConfiguration.data)).toBe(200);
+  const configuration = await ownerApi.put('/decision-configuration', {
+    secret_reference_id: secret.data.id,
+    timeout_ms: 5000,
+    max_attempts: 2,
+    max_requests_per_hour: 100,
+  }, { version: currentConfiguration.data.version });
+  expect(configuration.response.status(), JSON.stringify(configuration.data)).toBe(200);
+  const currentPolicy = await ownerApi.get(`/projects/${project.id}/decision-policy`);
+  expect(currentPolicy.response.status(), JSON.stringify(currentPolicy.data)).toBe(200);
+  const policy = await ownerApi.put(`/projects/${project.id}/decision-policy`, {
+    enabled_for_manual: false,
+    requirements: [],
+    minimum_choice_probability: 0.65,
+    minimum_choice_confidence: 0.65,
+    minimum_choice_margin: 0.15,
+    positive_tag_threshold: 0.7,
+    missing_field_threshold: 0.7,
+    max_clarification_rounds: 3,
+  }, { version: currentPolicy.data.version });
+  expect(policy.response.status(), JSON.stringify(policy.data)).toBe(200);
+  return { topic, workflowLabels, workflows };
 }
 
 async function createReportingAgent(ownerApi, project, baseURL) {
@@ -93,6 +166,15 @@ async function createReportingAgent(ownerApi, project, baseURL) {
   });
   const simulator = await createAgentSimulator(baseURL, token.token);
   return { token, ...simulator };
+}
+
+async function createReadyTask(ownerApi, projectId, title) {
+  await ownerApi.ensureDefaultBoard(projectId);
+  const statuses = await ownerApi.get(`/projects/${projectId}/statuses`);
+  expect(statuses.response.status(), JSON.stringify(statuses.data)).toBe(200);
+  const ready = statuses.data.items.find((status) => status.category === 'ready');
+  expect(ready, 'A task intended for T3 must start in a runnable ready status.').toBeTruthy();
+  return ownerApi.createTask(projectId, { title, status_id: ready.id });
 }
 
 function reportArguments(run, task, reportId = randomUUID()) {
@@ -129,7 +211,7 @@ test('A09/A10 T3 OAuth and MCP launch replay preserve one immutable dispatch', a
   test.setTimeout(150_000);
   const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'T3 Replay');
   const profile = await createProfile(ownerApi, ownerPage, baseURL, project, connection, 'Replay');
-  const taskResult = await ownerApi.createTask(project.id, { title: 'T3 Replay Auftrag' });
+  const taskResult = await createReadyTask(ownerApi, project.id, 'T3 Replay Auftrag');
   const task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
   const reporter = await createReportingAgent(ownerApi, project, baseURL);
 
@@ -164,7 +246,7 @@ test('A11/A30 early agent report and new OAuth namespace do not create a second 
   test.setTimeout(150_000);
   const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'T3 Übergabe');
   const profile = await createProfile(ownerApi, ownerPage, baseURL, project, connection, 'Übergabe');
-  const taskResult = await ownerApi.createTask(project.id, { title: 'Frühe Agentmeldung' });
+  const taskResult = await createReadyTask(ownerApi, project.id, 'Frühe Agentmeldung');
   const task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
   const reporter = await createReportingAgent(ownerApi, project, baseURL);
   let runId;
@@ -232,7 +314,7 @@ test('M4 workflow phase waits for an owner decision and does not close the task'
   });
   expect(workflowResult.response.status(), JSON.stringify(workflowResult.data)).toBe(201);
   const workflow = workflowResult.data.workflow ?? workflowResult.data;
-  const taskResult = await ownerApi.createTask(project.id, { title: 'Workflow Phase prüfen' });
+  const taskResult = await createReadyTask(ownerApi, project.id, 'Workflow Phase prüfen');
   const task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
   const start = await ownerApi.post(`/tasks/${task.id}/workflow-instances`, {
     workflow_id: workflow.id,
@@ -281,11 +363,238 @@ test('M4 workflow phase waits for an owner decision and does not close the task'
   }
 });
 
+test('A27 simultaneous routing and approval reasons resolve independently across a stale approval', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+  test.setTimeout(240_000);
+  const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'A27 Aufmerksamkeit');
+  const profile = await createProfile(
+    ownerApi,
+    ownerPage,
+    baseURL,
+    project,
+    connection,
+    'A27 Freigabe',
+    { mode: 't3_project_default' },
+    { ...defaultPolicy, require_human_phase_decision: true },
+  );
+  const { topic, workflowLabels } = await configureAmbiguousRouting(ownerApi, project, profile);
+  const taskResult = await createReadyTask(ownerApi, project.id, 'Mehrere offene Entscheidungen');
+  let task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
+  const runId = await requestRun(ownerApi, task, profile);
+  const reporter = await createReportingAgent(ownerApi, project, baseURL);
+
+  try {
+    const beforeReport = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state));
+    await reportThroughMcp(reporter.agent, beforeReport, task);
+    const awaitingApproval = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.result_digest !== null);
+    const oldApprovalResult = await ownerApi.post(`/runs/${runId}/approvals`, {
+      kind: 'completion',
+      result_digest: awaitingApproval.result_digest,
+      reason: 'Die erste gemeldete Revision vor der erneuten Einordnung prüfen.',
+    }, { version: awaitingApproval.version });
+    expect(oldApprovalResult.response.status(), JSON.stringify(oldApprovalResult.data)).toBe(201);
+    const oldApproval = oldApprovalResult.data;
+    task = (await ownerApi.get(`/tasks/${task.id}`)).data;
+    expect(task.human_attention.reasons).toContain('approval_pending');
+
+    await qaMocks.setDecisionsScenario('decisions_ambiguous');
+    const reclassified = await ownerApi.post(`/tasks/${task.id}/intake/reclassify`, {
+      reason: 'Prüfen, ob die erneute Mehrdeutigkeit neben der bestehenden Freigabe sichtbar bleibt.',
+    }, { version: task.version });
+    expect([200, 202], JSON.stringify(reclassified.data)).toContain(reclassified.response.status());
+    task = await readUntil(ownerApi, `/tasks/${task.id}`, (current) => current.human_attention.reasons?.includes('routing_ambiguous'));
+    expect(task.human_attention.reasons).toContain('approval_pending');
+    expect(task.human_attention.reasons).toContain('routing_ambiguous');
+
+    const attentionLabels = await ownerApi.get(`/projects/${project.id}/labels`);
+    expect(attentionLabels.response.status()).toBe(200);
+    const approvalLabel = attentionLabels.data.items.find((label) => label.key === 'attention:approval_pending');
+    const routingLabel = attentionLabels.data.items.find((label) => label.key === 'attention:routing_ambiguous');
+    expect(approvalLabel?.system_managed).toBe(true);
+    expect(routingLabel?.system_managed).toBe(true);
+    expect(task.label_ids).toContain(approvalLabel.id);
+    expect(task.label_ids).toContain(routingLabel.id);
+
+    const omittedRoutingLabel = await ownerApi.put(`/tasks/${task.id}/labels`, {
+      label_ids: task.label_ids.filter((id) => id !== routingLabel.id),
+      primary_topic_label_id: task.primary_topic_label_id,
+      reason: 'Nur die abgeleitete Routinganzeige aus dem Schreibvorschlag weglassen.',
+      routing_application: 'next_instance',
+    }, { version: task.version });
+    expect(omittedRoutingLabel.response.status(), JSON.stringify(omittedRoutingLabel.data)).toBe(200);
+    expect(omittedRoutingLabel.data.human_attention.reasons).toContain('approval_pending');
+    expect(omittedRoutingLabel.data.human_attention.reasons).toContain('routing_ambiguous');
+    expect(omittedRoutingLabel.data.label_ids).toContain(approvalLabel.id);
+    expect(omittedRoutingLabel.data.label_ids).toContain(routingLabel.id);
+
+    const routeDecision = await ownerApi.post(`/tasks/${task.id}/intake/decision`, {
+      label_ids: [topic.id],
+      primary_topic_label_id: topic.id,
+      workflow_label_id: workflowLabels[0].id,
+      reason: 'Die Aufgabe gehört zum T3-Bearbeitungsablauf.',
+    }, { version: omittedRoutingLabel.data.version });
+    expect(routeDecision.response.status(), JSON.stringify(routeDecision.data)).toBe(200);
+    expect(routeDecision.data.human_attention.reasons).toEqual(['approval_pending']);
+    expect(routeDecision.data.label_ids).toContain(approvalLabel.id);
+    expect(routeDecision.data.label_ids).not.toContain(routingLabel.id);
+
+    const staleApproval = await ownerApi.post(`/approvals/${oldApproval.id}/decision`, {
+      decision: 'approved',
+      result_digest: awaitingApproval.result_digest,
+      reason: 'Die veraltete Revision darf nicht freigegeben werden.',
+    }, { version: oldApproval.version });
+    expect(staleApproval.response.status(), JSON.stringify(staleApproval.data)).toBe(200);
+    expect(staleApproval.data.status).toBe('invalidated');
+    task = (await ownerApi.get(`/tasks/${task.id}`)).data;
+    expect(task.human_attention.reasons).toEqual([]);
+
+    const oldRun = (await ownerApi.get(`/runs/${runId}`)).data;
+    const cancelled = await ownerApi.post(`/runs/${runId}/cancel`, {
+      reason: 'Veralteten T3-Lauf nach der Revisionsänderung beenden.',
+    }, { version: oldRun.version });
+    expect(cancelled.response.status(), JSON.stringify(cancelled.data)).toBe(202);
+    await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'cancelled');
+
+    task = (await ownerApi.get(`/tasks/${task.id}`)).data;
+    const freshRunId = await requestRun(ownerApi, task, profile);
+    const freshRun = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => ['running', 'verifying'].includes(run.state));
+    await reportThroughMcp(reporter.agent, freshRun, task);
+    const freshResult = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => run.state === 'verifying' && run.result_digest !== null);
+    const freshApprovalResult = await ownerApi.post(`/runs/${freshRunId}/approvals`, {
+      kind: 'completion',
+      result_digest: freshResult.result_digest,
+      reason: 'Die aktuelle Revision nach der Intakeentscheidung prüfen.',
+    }, { version: freshResult.version });
+    expect(freshApprovalResult.response.status(), JSON.stringify(freshApprovalResult.data)).toBe(201);
+    const freshApproval = freshApprovalResult.data;
+    const decision = await ownerApi.post(`/approvals/${freshApproval.id}/decision`, {
+      decision: 'approved',
+      result_digest: freshResult.result_digest,
+      reason: 'Die aktuelle T3-Meldung für diese Revision ist freigegeben.',
+    }, { version: freshApproval.version });
+    expect(decision.response.status(), JSON.stringify(decision.data)).toBe(200);
+    expect(decision.data.status).toBe('approved');
+    await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => run.state === 'succeeded');
+    task = (await ownerApi.get(`/tasks/${task.id}`)).data;
+    expect(task.human_attention).toEqual({ required: false, reasons: [] });
+    expect(task.label_ids).not.toContain(approvalLabel.id);
+    expect(task.label_ids).not.toContain(routingLabel.id);
+
+    const t3 = await qaMocks.t3Journal();
+    expect(t3.unexpected).toEqual([]);
+    recordEvidence(
+      'A27: Routingentscheidung und Laufzeitfreigabe bleiben als getrennte Gründe sichtbar; die alte Freigabe ist revisionsgebunden und die neue schließt nur den aktuellen Grund.',
+      `Nach der zweiten Intakebewertung bestanden approval_pending und routing_ambiguous gleichzeitig samt beider Systemlabels. Das Auslassen des Routinglabels änderte keinen Grund. Die Ownerentscheidung entfernte routing_ambiguous; die erste Approval wurde wegen Revisionsabweichung invalidiert. Ein frischer Run ${freshRunId} mit passender Revision wurde anschließend ausdrücklich freigegeben und löste approval_pending auf.`,
+      { t3 },
+    );
+  } finally {
+    await reporter.close();
+  }
+});
+
+test('A29 reference threads supply only live T3 routing and block removed or foreign targets', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+  test.setTimeout(240_000);
+  const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'A29 Referenz');
+  const matchingReference = await qaMocks.createExternalT3Activity({ externalProjectId: 'qa-t3-project-1' });
+  const validProfile = await createProfile(
+    ownerApi,
+    ownerPage,
+    baseURL,
+    project,
+    connection,
+    'A29 gültig',
+    { mode: 't3_reference_thread', reference_thread_id: matchingReference.thread_id },
+  );
+  const validTaskResult = await createReadyTask(ownerApi, project.id, 'T3-Referenzzuordnung übernehmen');
+  const validTask = (await ownerApi.get(`/tasks/${validTaskResult.id}`)).data;
+  const validReporter = await createReportingAgent(ownerApi, project, baseURL);
+
+  try {
+    const validRunId = await requestRun(ownerApi, validTask, validProfile);
+    const validRun = await readUntil(ownerApi, `/runs/${validRunId}`, (run) => ['running', 'verifying'].includes(run.state));
+    const journalBeforeReport = await qaMocks.t3Journal();
+    expect(journalBeforeReport.accepted_launches).toHaveLength(1);
+    expect(journalBeforeReport.accepted_launches[0].payload.modelSelection).toEqual({
+      instanceId: 'qa-inherited-provider',
+      model: 'qa-inherited-model',
+    });
+    await reportThroughMcp(validReporter.agent, validRun, validTask);
+    await readUntil(ownerApi, `/runs/${validRunId}`, (run) => run.state === 'succeeded');
+
+    const foreignProject = await ownerApi.createProject({ name: 'A29 Fremdes T3-Ziel' });
+    const foreignBinding = await ownerApi.put(`/projects/${foreignProject.id}/binding`, {
+      connection_id: connection.id,
+      external_project_id: 'qa-t3-project-1',
+      max_active_runs: 1,
+    }, { version: foreignProject.version });
+    expect(foreignBinding.response.status(), JSON.stringify(foreignBinding.data)).toBe(200);
+    const foreignReference = await qaMocks.createExternalT3Activity({ externalProjectId: 'qa-t3-project-foreign' });
+    const foreignProfile = await createProfile(
+      ownerApi,
+      ownerPage,
+      baseURL,
+      foreignProject,
+      connection,
+      'A29 fremdes Ziel',
+      { mode: 't3_reference_thread', reference_thread_id: foreignReference.thread_id },
+    );
+    const foreignTaskResult = await createReadyTask(ownerApi, foreignProject.id, 'Fremden T3-Thread blockieren');
+    const foreignTask = (await ownerApi.get(`/tasks/${foreignTaskResult.id}`)).data;
+    const journalBeforeForeign = await qaMocks.t3Journal();
+    const foreignRunId = await requestRun(ownerApi, foreignTask, foreignProfile);
+    const foreignRun = await readUntil(ownerApi, `/runs/${foreignRunId}`, (run) => run.state === 'auth_blocked');
+    expect(foreignRun.status_reason).toContain('gehört nicht zum gebundenen T3-Projekt');
+    expect(foreignRun.snapshot.execution_target.reference_thread_id).toBe(foreignReference.thread_id);
+    expect((await ownerApi.get(`/tasks/${foreignTask.id}`)).data.human_attention.reasons).toContain('reference_target_invalid');
+
+    const removedProject = await ownerApi.createProject({ name: 'A29 Entfernte T3-Auswahl' });
+    const removedBinding = await ownerApi.put(`/projects/${removedProject.id}/binding`, {
+      connection_id: connection.id,
+      external_project_id: 'qa-t3-project-1',
+      max_active_runs: 1,
+    }, { version: removedProject.version });
+    expect(removedBinding.response.status(), JSON.stringify(removedBinding.data)).toBe(200);
+    const removedReference = await qaMocks.createExternalT3Activity({ externalProjectId: 'qa-t3-project-1' });
+    const removedProfile = await createProfile(
+      ownerApi,
+      ownerPage,
+      baseURL,
+      removedProject,
+      connection,
+      'A29 entfernte Auswahl',
+      { mode: 't3_reference_thread', reference_thread_id: removedReference.thread_id },
+    );
+    const removedTaskResult = await createReadyTask(ownerApi, removedProject.id, 'Entfernte T3-Auswahl blockieren');
+    const removedTask = (await ownerApi.get(`/tasks/${removedTaskResult.id}`)).data;
+    await qaMocks.setT3Scenario('reference_missing_model');
+    const journalBeforeRemoved = await qaMocks.t3Journal();
+    const removedRunId = await requestRun(ownerApi, removedTask, removedProfile);
+    const removedRun = await readUntil(ownerApi, `/runs/${removedRunId}`, (run) => run.state === 'auth_blocked');
+    expect(removedRun.status_reason).toContain('keine belegten Provider- und Modellreferenzen');
+    expect((await ownerApi.get(`/tasks/${removedTask.id}`)).data.human_attention.reasons).toContain('reference_target_invalid');
+
+    const t3 = await qaMocks.t3Journal();
+    expect(t3.unexpected).toEqual([]);
+    expect(t3.accepted_launches).toHaveLength(1);
+    expect(t3.accepted_launches[0].payload.modelSelection).toEqual({ instanceId: 'qa-inherited-provider', model: 'qa-inherited-model' });
+    expect(t3.journal.filter((entry) => entry.tool === 't3_thread_launch')).toHaveLength(1);
+    expect(t3.journal.some((entry) => entry.tool === 't3_thread_read' && entry.outcome === 'tool_error')).toBe(false);
+    expect(journalBeforeForeign.accepted_launches).toHaveLength(1);
+    expect(journalBeforeRemoved.accepted_launches).toHaveLength(1);
+    recordEvidence(
+      'A29: Die Rolle übernimmt ausschließlich aktuell lesbare T3-Routingfelder. Fremde und entfernte Ausführungsziele blockieren mit sichtbarem Owner-Handlungsbedarf und erzeugen keinen Ersatzlaunch.',
+      `Gültiger Referenzthread ${matchingReference.thread_id} lieferte provider/model und der neue Launch enthielt genau diese modelSelection. Ein Referenzthread aus ${foreignReference.external_project_id} sowie ein Thread ohne Routingfelder endeten jeweils auth_blocked mit reference_target_invalid; die T3-Annahmezahl blieb bei einem Launch.`,
+      { t3 },
+    );
+  } finally {
+    await validReporter.close();
+  }
+});
+
 test('A09 unknown T3 capability and run state remain visible failures', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
   test.setTimeout(150_000);
   const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'T3 Fehler');
   const profile = await createProfile(ownerApi, ownerPage, baseURL, project, connection, 'Fehler');
-  const taskResult = await ownerApi.createTask(project.id, { title: 'Unbekannten T3 Zustand behandeln' });
+  const taskResult = await createReadyTask(ownerApi, project.id, 'Unbekannten T3 Zustand behandeln');
   const task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
   const reporter = await createReportingAgent(ownerApi, project, baseURL);
 
@@ -294,14 +603,17 @@ test('A09 unknown T3 capability and run state remain visible failures', async ({
     await ownerPage.goto('/#/agents');
     await ownerPage.getByRole('button', { name: new RegExp('T3 Fehler') }).click();
     await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
-    const failedCheck = await readUntil(ownerApi, `/connections/${connection.id}/check`, (check) => check.status === 'failed');
+    const failedCheck = await readUntil(ownerApi, `/connections/${connection.id}/check`, (check) => check.mcp_handshake === 'failed');
     expect(failedCheck.capabilities).toBe('not_checked');
     expect((await ownerApi.get(`/connections/${connection.id}`)).data.health).toBe('unreachable');
 
     await qaMocks.setT3Scenario('default');
     const refreshedConnection = (await ownerApi.get(`/connections/${connection.id}`)).data;
     await ownerApi.post(`/connections/${connection.id}/check`, { refresh_capabilities: true }, { version: refreshedConnection.version });
-    await expect.poll(async () => (await ownerApi.get(`/connections/${connection.id}/check`)).data?.status, { timeout: 45_000 }).toBe('succeeded');
+    await expect.poll(async () => {
+      const check = (await ownerApi.get(`/connections/${connection.id}/check`)).data;
+      return [check?.network, check?.authentication, check?.mcp_handshake, check?.capabilities].join(':');
+    }, { timeout: 45_000 }).toBe('ok:ok:ok:ok');
 
     await qaMocks.setT3Scenario('unknown_run_state');
     const runId = await requestRun(ownerApi, task, profile);

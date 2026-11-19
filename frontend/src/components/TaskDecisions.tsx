@@ -53,7 +53,7 @@ export default function TaskDecisions({ task, project, onChanged }: { task: Task
       || ['queued', 'running', 'stale'].includes(query.state.data?.assessment_status ?? '') ? 1000 : false,
   })
   const intake = intakeQuery.data as IntakeStatus | undefined
-  const classificationId = intake?.classification_id ?? task.classification_id
+  const classificationId = intake ? intake.classification_id : task.classification_id
   const classificationQuery = useQuery({
     queryKey: ['task-classification', task.id, classificationId],
     enabled: Boolean(classificationId),

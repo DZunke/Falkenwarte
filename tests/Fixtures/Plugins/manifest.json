@@ -1,0 +1,48 @@
+{
+  "id": "falkenwarte.qa-bridge-dependent",
+  "name": "QA: Abhängiges Bridge-Plugin",
+  "description": "Test-only fixture proving dependent plugin drain behavior.",
+  "version": "1.0.0",
+  "contract_version": "1.0",
+  "api_compatibility": {
+    "backend": "^1.0",
+    "frontend": "^1.0"
+  },
+  "default_state": "installed_disabled",
+  "backend": {
+    "composer_package": "falkenwarte/qa-bridge-dependent",
+    "definition_service": "App\\Tests\\Fixtures\\Plugins\\QaBridgeDependentDefinition"
+  },
+  "dependencies": [
+    {
+      "plugin_id": "falkenwarte.t3-mcp-bridge",
+      "version_constraint": "^1.0"
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "qa.bridge.dependent",
+      "implementation_id": "qa.bridge.dependent.v1",
+      "settings_scope": "system"
+    }
+  ],
+  "subscriptions": [],
+  "settings_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "migrations": {
+    "namespace": "App\\Tests\\Fixtures\\Plugins\\Migrations",
+    "table_prefix": "plg_qa_bridge_dependent_",
+    "data_version": 0
+  },
+  "ui": [],
+  "mcp_tools": [],
+  "data_retention": {
+    "on_disable": "preserve",
+    "on_uninstall": "retain_by_default",
+    "export_supported": true
+  }
+}
