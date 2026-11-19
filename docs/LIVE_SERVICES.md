@@ -23,19 +23,21 @@ Der Imagebuild pinnt das Dockerfile-Frontend per Digest, den PHP-Erweiterungs-Sn
 
 `quality.yml` pinnt `docker/setup-buildx-action` auf Commit `f87e5991a6d7451dcb8d9637bfbc97413f497069`, Buildx auf `v0.39.0` und den `docker-container`-Builder auf `moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb`. Der lokale Buildx-Client muss ebenfalls `v0.39.0` melden; die offizielle Binärversion ist unter [Docker Buildx v0.39.0](https://github.com/docker/buildx/releases/tag/v0.39.0) verfügbar.
 
-Für einen lokalen Vergleich verwende denselben Builder und einen Git-Archivkontext des geprüften Commits. Das Archiv setzt Datei-Metadaten auf die Commitzeit; ein alter, zuvor bearbeiteter Checkout kann dagegen frühere `mtime`-Werte enthalten, die `rewrite-timestamp=true` nur nach oben begrenzt.
+Für einen lokalen Vergleich verwende denselben Builder und einen Git-Archivkontext des geprüften Commits. Git setzt die Zeitstempel auf die Commitzeit und die Archivmaske auf `0022`; ein alter, zuvor bearbeiteter Checkout kann dagegen frühere `mtime`-Werte enthalten, die `rewrite-timestamp=true` nur nach oben begrenzt.
 
 ```sh
 set -euo pipefail
 builder="falkenwarte-release-local-$$"
-trap 'docker buildx rm "$builder" >/dev/null 2>&1 || true' EXIT
+image_archive="$(mktemp)"
+trap 'docker buildx rm "$builder" >/dev/null 2>&1 || true; rm -f "$image_archive"' EXIT
 docker buildx version | grep -F 'v0.39.0'
 docker buildx create --name "$builder" --driver docker-container --driver-opt image=moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb --use
 docker buildx inspect --bootstrap "$builder"
 sha="$(git rev-parse HEAD)"
 source_date_epoch="$(git show -s --format=%ct "$sha")"
 app_version="$(git show "$sha:version.txt")"
-git archive --format=tar "$sha" | docker buildx build --builder "$builder" --file docker/Dockerfile --target app --provenance=false --build-arg VCS_REF="$sha" --build-arg SOURCE_DATE_EPOCH="$source_date_epoch" --build-arg APP_VERSION="$app_version" --output type=docker,name=falkenwarte:local,rewrite-timestamp=true -
+git -c tar.umask=0022 archive --format=tar "$sha" | docker buildx build --builder "$builder" --file docker/Dockerfile --target app --provenance=false --build-arg VCS_REF="$sha" --build-arg SOURCE_DATE_EPOCH="$source_date_epoch" --build-arg APP_VERSION="$app_version" --output "type=docker,name=falkenwarte:local,dest=$image_archive,rewrite-timestamp=true" -
+docker load --input "$image_archive"
 docker run --rm --env SOURCE_DATE_EPOCH="$source_date_epoch" --entrypoint php falkenwarte:local -r '$expected = (int) getenv("SOURCE_DATE_EPOCH"); foreach (["/app/composer.lock", "/usr/share/falkenwarte/image-audit/runtime-evidence.json"] as $path) { if (filemtime($path) !== $expected) { exit(1); } }'
 scripts/export-image-audit.sh falkenwarte:local var/image-audit
 ```
