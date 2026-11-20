@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, BookOpen, Cable, CircleCheck, CircleHelp, Download, RefreshCw, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import type { components } from '@/generated/api'
@@ -19,28 +19,32 @@ const stageLabels: Record<components['schemas']['ConnectionCheck']['network'], s
 export default function IntegrationsView() {
   const client = useQueryClient()
   const connectionsQuery = useQuery({ queryKey: ['connections'], queryFn: () => request(api.GET('/connections', { params: { query: { limit: 100 } } })) })
+  const connections = connectionsQuery.data?.items ?? []
   const [name, setName] = useState('T3 Code')
   const [url, setUrl] = useState('')
   const [selectedId, setSelectedId] = useState<string>()
+  const selected = connectionsQuery.isError ? undefined : connections.find((item) => item.id === selectedId) ?? connections[0]
+  const effectiveId = selected?.id
+  const canLoadProjects = Boolean(effectiveId && selected?.auth_status === 'valid')
   const [acceptedCheck, setAcceptedCheck] = useState<{ connectionId: string; actionId: string }>()
   const connectionCheckQuery = useQuery({
-    queryKey: ['connection-check', selectedId],
-    enabled: Boolean(selectedId),
-    queryFn: async () => {
-      const response = await api.GET('/connections/{connection_id}/check', { params: { path: { connection_id: selectedId! } } })
+    queryKey: ['connection-check', effectiveId],
+    enabled: Boolean(effectiveId),
+    queryFn: effectiveId ? async () => {
+      const response = await api.GET('/connections/{connection_id}/check', { params: { path: { connection_id: effectiveId } } })
       if (response.response.status === 404) return null
       return request(Promise.resolve(response))
-    },
+    } : skipToken,
     refetchInterval: (query) => query.state.data?.status === 'queued' ? 750 : false,
   })
   const projectsQuery = useQuery({
-    queryKey: ['connection-projects', selectedId],
-    enabled: Boolean(selectedId),
-    queryFn: () => request(api.GET('/connections/{connection_id}/projects', { params: { path: { connection_id: selectedId! }, query: { limit: 100 } } })),
+    queryKey: ['connection-projects', effectiveId],
+    enabled: canLoadProjects,
+    queryFn: effectiveId ? () => request(api.GET('/connections/{connection_id}/projects', { params: { path: { connection_id: effectiveId }, query: { limit: 100 } } })) : skipToken,
   })
 
   const refresh = async () => {
-    await Promise.all([client.invalidateQueries({ queryKey: ['connections'] }), client.invalidateQueries({ queryKey: ['agent-profiles'] }), client.invalidateQueries({ queryKey: ['connection-projects'] })])
+    await Promise.all([client.invalidateQueries({ queryKey: ['connections'] }), client.invalidateQueries({ queryKey: ['agent-profiles'] })])
   }
 
   const createConnection = useMutation({
@@ -72,9 +76,6 @@ export default function IntegrationsView() {
   if (connectionsQuery.isPending) return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
   if (connectionsQuery.isError) return <Card><CardContent className="p-6"><h2 className="font-semibold">T3-Verbindungen konnten nicht geladen werden</h2><p className="mt-2 text-sm text-muted-foreground">{formatError(connectionsQuery.error)}</p><Button variant="outline" className="mt-4" onClick={() => void connectionsQuery.refetch()}>Erneut laden</Button></CardContent></Card>
 
-  const connections = connectionsQuery.data.items
-  const selected = connections.find((item) => item.id === selectedId) ?? connections[0]
-
   return (
     <main className="space-y-6">
       <header>
@@ -91,7 +92,7 @@ export default function IntegrationsView() {
           <CardHeader><CardTitle className="flex items-center gap-2"><Cable className="size-4 text-muted-foreground" />Verbindung hinzufügen</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5"><Label htmlFor="connection-name">Name</Label><Input id="connection-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></div>
-            <div className="space-y-1.5"><Label htmlFor="connection-url">Kanonische HTTPS-Adresse</Label><Input id="connection-url" value={url} onChange={(event) => setUrl(event.target.value)} type="url" placeholder="https://t3.home.arpa/mcp" autoComplete="url" /></div>
+            <div className="space-y-1.5"><Label htmlFor="connection-url">Kanonische HTTPS-Adresse</Label><Input id="connection-url" value={url} onChange={(event) => setUrl(event.target.value)} type="url" placeholder="https://t3.home.arpa" autoComplete="url" /></div>
             <p className="text-xs text-muted-foreground">Zugangsdaten werden getrennt über den Autorisierungsablauf gespeichert.</p>
             <Button disabled={!name.trim() || !url.startsWith('https://') || createConnection.isPending} onClick={() => createConnection.mutate()}>Verbindung speichern</Button>
           </CardContent>
@@ -130,10 +131,11 @@ export default function IntegrationsView() {
         <Card>
           <CardHeader><CardTitle>Vorhandene T3-Projekte</CardTitle></CardHeader>
           <CardContent className="space-y-3">
-            <Button variant="outline" size="sm" disabled={projectsQuery.isFetching} onClick={() => void projectsQuery.refetch()}><RefreshCw className={projectsQuery.isFetching ? 'animate-spin' : ''} />Projekte laden</Button>
-            {projectsQuery.isError && <p className="text-sm text-muted-foreground">{formatError(projectsQuery.error)}</p>}
-            {(projectsQuery.data?.items ?? []).map((project) => <div key={project.external_project_id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{project.title}</p><p className="text-xs text-muted-foreground">{project.workspace_label ?? 'T3-Projekt'} · {project.external_project_id}</p></div><Badge variant="outline">Referenz</Badge></div>)}
-            {projectsQuery.data?.items.length === 0 && <p className="py-3 text-sm text-muted-foreground">Für diese Verbindung wurden keine T3-Projekte gemeldet.</p>}
+            <Button variant="outline" size="sm" disabled={!canLoadProjects || projectsQuery.isFetching} onClick={() => void projectsQuery.refetch()}><RefreshCw className={projectsQuery.isFetching ? 'animate-spin' : ''} />Projekte laden</Button>
+            {!canLoadProjects && <p className="text-sm text-muted-foreground">Melde dich bei T3 an, bevor du Projekte lädst.</p>}
+            {canLoadProjects && projectsQuery.isError && <p className="text-sm text-muted-foreground">{formatError(projectsQuery.error)}</p>}
+            {canLoadProjects && (projectsQuery.data?.items ?? []).map((project) => <div key={project.external_project_id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{project.title}</p><p className="text-xs text-muted-foreground">{project.workspace_label ?? 'T3-Projekt'} · {project.external_project_id}</p></div><Badge variant="outline">Referenz</Badge></div>)}
+            {canLoadProjects && projectsQuery.data?.items.length === 0 && <p className="py-3 text-sm text-muted-foreground">Für diese Verbindung wurden keine T3-Projekte gemeldet.</p>}
           </CardContent>
         </Card>
       </section>}

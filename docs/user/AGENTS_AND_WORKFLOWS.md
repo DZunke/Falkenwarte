@@ -6,12 +6,15 @@ Richte den Skill im Arbeitsprojekt oder für den von T3 verwendeten Agenten ein.
 
 ## T3-Verbindung einrichten
 
-1. Öffne **Agents & T3** und gib unter **Verbindung hinzufügen** einen Namen und die kanonische HTTPS-Adresse des T3-MCP-Endpunkts ein.
-2. Wähle **Verbindung speichern**. Wähle danach **Verbindung testen**. Das Ergebnis zeigt Netzwerk, Autorisierung, MCP-Verbindung und verfügbare Fähigkeiten getrennt.
-3. Wenn eine Anmeldung fehlt, wähle **Bei T3 anmelden** und schließe die Anmeldung beim T3-Dienst ab.
-4. Wähle **Projekte laden**, um die vorhandenen T3-Projektkennungen zu lesen.
+1. Öffne **Agents & T3** und gib unter **Verbindung hinzufügen** einen Namen und die HTTPS-Basisadresse des T3-Diensts ein, zum Beispiel `https://t3.example.net`. Hänge kein `/mcp` an. Falkenwarte ergänzt diesen Pfad beim Zugriff selbst.
 
-Eine Verbindung mit **Eingeschränkt**, **Nicht erreichbar** oder **Protokoll prüfen** ist nicht startbereit. Lies die angezeigte Diagnose und prüfe T3-URL, Anmeldung und Protokollkompatibilität. Tickets und Boards kannst du währenddessen weiterverwenden.
+   Bei der Windows-App mit WSL-Backend braucht Falkenwarte eine HTTPS-Adresse, unter der sein Container den T3-Server erreicht. Ein bereits eingerichtetes T3-Relay liefert eine solche Adresse. `localhost` bezeichnet im Container den Container selbst.
+
+2. Wähle **Verbindung speichern**. Wenn bei der Verbindung **Autorisierung fehlt**, **Zugang abgelaufen** oder **Widerrufen** steht, wähle **Bei T3 anmelden**, schließe die Anmeldung beim T3-Dienst ab und kehre zu **Agents & T3** zurück. Bei mehreren Verbindungen wähle die gewünschte Verbindung aus.
+3. Starte **Verbindung testen** erst, wenn die Verbindung als **Autorisiert** angezeigt wird. Die Prüfung läuft im Hintergrund. **Prüfung läuft** wechselt automatisch zum endgültigen Ergebnis. Starte sie nicht erneut, während sie läuft.
+4. Mit **Projekte laden** rufst du die Projekte dieser T3-Verbindung ab.
+
+Eine Verbindung mit **Eingeschränkt**, **Nicht erreichbar** oder **Protokoll prüfen** ist nicht startbereit. Lies die Diagnose zu Netzwerk, Autorisierung, MCP-Verbindung und Fähigkeiten. Bei einem Netzwerkfehler prüfe, ob der Backend-Container die eingetragene HTTPS-Adresse erreicht. Tickets und Boards kannst du währenddessen weiterverwenden.
 
 ## Rollen verwalten
 
