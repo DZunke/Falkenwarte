@@ -267,8 +267,15 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   const receipt = await startResponse.json();
   const instanceId = receipt.resource?.id ?? receipt.instance_id;
   expect(instanceId).toBeTruthy();
-  const instance = await readUntil(ownerApi, `/workflow-instances/${instanceId}`, (item) => item.id === instanceId, 'Der ausdrückliche Klick muss genau eine Workflowinstanz anlegen.');
+  const instance = await readUntil(ownerApi, `/workflow-instances/${instanceId}`, (item) => item.id === instanceId && item.run_ids.length === 1, 'Der ausdrückliche Klick muss genau eine Workflowinstanz mit einem Lauf anlegen.');
   expect(instance).toMatchObject({ workflow_id: defaultWorkflow.id, definition_version: defaultWorkflow.definition_version });
+  const runId = instance.run_ids[0];
+  const runningRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state) && Boolean(run.attempts[0]?.external_thread_id), 'Der ausdrückliche Workflowstart muss den Lauf an T3 übergeben.');
+  expect(runningRun.attempts[0].external_thread_id).toBeTruthy();
+  await expect.poll(async () => {
+    const journal = await qaMocks.t3Journal();
+    return journal.accepted_launches.some((launch) => launch.payload.message.includes(`Run-ID: ${runId}\n`));
+  }, { timeout: 45_000, message: 'Der T3-Mock muss den ausdrücklichen Workflowstart annehmen.' }).toBe(true);
   await closeTaskSheet(sheet);
 
   const manualTaskTitle = `Manuelles Ticket mit Route ${setup.suffix}`;
@@ -303,12 +310,14 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   expect(latestManualTask.response.status(), JSON.stringify(latestManualTask.data)).toBe(200);
   const manualMove = await ownerApi.post(`/tasks/${manualTask.id}/move`, { status_id: active.id, board_id: setup.board.id }, { version: latestManualTask.data.version });
   expect(manualMove.response.status(), JSON.stringify(manualMove.data)).toBe(200);
-  expect((await qaMocks.t3Journal()).accepted_launches).toHaveLength(1);
+  const finalT3Journal = await qaMocks.t3Journal();
+  expect(finalT3Journal.accepted_launches).toHaveLength(1);
+  expect(finalT3Journal.accepted_launches[0].payload.message).toContain(`Run-ID: ${runId}\n`);
 
   recordEvidence(
     'Boardworkflows sind Voreinstellungen für einen ausdrücklichen Ticketstart.',
     `Eine Workflowphase ohne Rolle wurde vor Instanzanlage mit workflow_profile_required abgewiesen. Das Speichern des Standards und der Wechsel nach Bereit starteten keinen Lauf. Der Button startete Workflow ${defaultWorkflow.id} in Version ${defaultWorkflow.definition_version}. Ein Ticket mit dem manuellen Label und einer eingefrorenen Labelroute wurde in der UI gesperrt und beim direkten API-Aufruf mit board_workflow_excluded abgewiesen; die manuelle Boardbewegung blieb möglich.`,
-    { t3: await qaMocks.t3Journal() },
+    { t3: finalT3Journal },
   );
 });
 

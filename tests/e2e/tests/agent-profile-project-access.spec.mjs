@@ -162,7 +162,13 @@ test('Agentrollen können alle aktuellen und künftigen Projekte oder eine konkr
   await expect(secondEditor.getByTestId('all-projects-checkbox')).toBeChecked();
   await secondEditor.getByTestId('all-projects-checkbox').uncheck();
   await secondEditor.getByLabel(projectB.name, { exact: true }).check();
+  const saveProjectAccessResponsePromise = ownerPage.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `${ownerApi.apiPrefix}/agent-profiles/${scopedRole.id}`);
   await secondEditor.getByRole('button', { name: 'Projektfreigaben speichern', exact: true }).click();
+  const saveProjectAccessResponse = await saveProjectAccessResponsePromise;
+  expect(saveProjectAccessResponse.status()).toBe(200);
+  const savedRole = await saveProjectAccessResponse.json();
+  expect(savedRole.version).toBeGreaterThan(scopedRole.version);
   await expect(ownerPage.getByText('Projektfreigaben aktualisiert', { exact: true })).toBeVisible();
 
   refreshed = await ownerApi.get(`/agent-profiles/${scopedRole.id}`);
