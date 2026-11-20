@@ -14,8 +14,13 @@ use Mcp\Server\Handler\ToolHandlerInterface;
 
 final readonly class McpTool implements ToolHandlerInterface
 {
-    public function __construct(private array $tool, private Actor $actor, private Gateway $app, private Contract $contract, private PluginRegistry $plugins)
-    {
+    public function __construct(
+        private array $tool,
+        private Actor $actor,
+        private Gateway $app,
+        private Contract $contract,
+        private PluginRegistry $plugins,
+    ) {
     }
 
     public function execute(array $arguments, ClientGateway $gateway): mixed
@@ -29,7 +34,7 @@ final readonly class McpTool implements ToolHandlerInterface
             $p = $this->contract->params($op, $arguments, $arguments);
             $key = $arguments['client_request_id'] ?? null;
             $etag = isset($arguments['expected_version']) ? '"'.$arguments['expected_version'].'"' : null;
-            unset($arguments['client_request_id'],$arguments['expected_version']);
+            unset($arguments['client_request_id'], $arguments['expected_version']);
             $body = array_diff_key($arguments, $p);
             $result = $this->app->invoke($op['operationId'], $p, $body, $this->actor, $key, $etag);
             $data = $this->contract->output($op, $this->contract->status($op, $result), $result);

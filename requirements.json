@@ -322,9 +322,13 @@
         "composer.json",
         "src/Classification/Application/DecisionGateway.php",
         "src/Classification/Infrastructure/SymfonyAiDecisionAdapter.php",
-        "src/Classification/Infrastructure/OpenAiDecisionsPlatform.php"
+        "src/Classification/Infrastructure/OpenAiDecisionsModelClient.php",
+        "config/services.php",
+        "config/packages/mcp.yaml",
+        "src/Orchestration/Infrastructure/T3McpSessionFactory.php"
       ],
       "documentation": [
+        "docs/SYMFONY_AI.md",
         "docs/AI_DECISIONS.md",
         "docs/adr/0006.md"
       ]

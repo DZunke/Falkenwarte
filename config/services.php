@@ -2,6 +2,8 @@
 
 use App\Automation\Application\WorkflowPolicy;
 use App\Automation\Application\WorkflowPolicyService;
+use App\Classification\Infrastructure\DecisionResultConverter;
+use App\Classification\Infrastructure\OpenAiDecisionsModelClient;
 use App\Extensions\Application\PluginAvailability;
 use App\Extensions\Application\PluginDefinition;
 use App\Extensions\Application\PluginEventSubscriber;
@@ -15,7 +17,12 @@ use Falkenwarte\LinkNotes\PluginDefinition as LinkNotesPluginDefinition;
 use Falkenwarte\LinkNotes\Subscribers\LinkRegisteredSubscriber;
 use Opis\JsonSchema\Errors\ErrorFormatter;
 use Opis\JsonSchema\Validator;
+use Symfony\AI\Platform\Model;
+use Symfony\AI\Platform\ModelCatalog\InMemoryModelCatalog;
+use Symfony\AI\Platform\Platform;
+use Symfony\AI\Platform\Provider;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
+use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\Security\Csrf\TokenGenerator\TokenGeneratorInterface;
 use Symfony\Component\Security\Csrf\TokenGenerator\UriSafeTokenGenerator;
 
@@ -36,6 +43,7 @@ return static function (ContainerConfigurator $container): void {
         ->bind('$databasePath', '%falkenwarte.database_path%')
         ->bind('$backupDirectory', '%falkenwarte.backup_dir%')
         ->bind('$backupMaxBytes', '%falkenwarte.backup_max_bytes%');
+    $container->parameters()->set('falkenwarte.app_version', $version);
 
     $services->instanceof(OperationHandler::class)->tag('app.operation_handler');
     $services->instanceof(PluginDefinition::class)->tag('app.plugin_definition');
@@ -76,4 +84,19 @@ return static function (ContainerConfigurator $container): void {
     $services->set(Validator::class);
     $services->set(ErrorFormatter::class);
     $services->set(UriSafeTokenGenerator::class);
+
+    $services->set('ai.provider.openai.decisions', Provider::class)
+        ->arg('$name', 'openai.decisions')
+        ->arg('$modelClients', [new Reference(OpenAiDecisionsModelClient::class)])
+        ->arg('$resultConverters', [new Reference(DecisionResultConverter::class)])
+        ->arg('$modelCatalog', new Reference('ai.platform.model_catalog.openai.decisions'))
+        ->arg('$eventDispatcher', new Reference('event_dispatcher'));
+
+    $services->set('ai.platform.model_catalog.openai.decisions', InMemoryModelCatalog::class)
+        ->arg('$models', ['gpt-6-luna' => ['class' => Model::class, 'capabilities' => []]]);
+
+    $services->set('ai.platform.openai.decisions', Platform::class)
+        ->arg('$providers', [new Reference('ai.provider.openai.decisions')])
+        ->arg('$eventDispatcher', new Reference('event_dispatcher'))
+        ->tag('ai.platform', ['name' => 'openai.decisions']);
 };

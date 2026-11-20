@@ -5,6 +5,7 @@ test('A02 A13 technical run requests need explicit permission and an existing bo
   const project = await ownerApi.createProject({ name: 'Begrenzte Übergabe' });
   const task = await ownerApi.createTask(project.id);
   const read = await ownerApi.get('/tasks/' + task.id);
+  const sessionIds = new Map();
   for (const granted of [false, true]) {
     const issued = await ownerApi.createTechnicalToken({
       label: granted ? 'Delegierte Folgephase' : 'Normale Rolle',
@@ -13,9 +14,28 @@ test('A02 A13 technical run requests need explicit permission and an existing bo
     });
     const simulator = await createAgentSimulator(baseURL, issued.token);
     try {
+      const ownSessionId = simulator.agent.sessionId;
+      expect(ownSessionId).toBeTruthy();
       const tools = await simulator.agent.listTools();
+      expect(simulator.agent.sessionId).toBe(ownSessionId);
       expect(tools.some((entry) => entry.name === 'runs_request')).toBe(granted);
+      sessionIds.set(granted ? 'delegated' : 'ordinary', ownSessionId);
       if (granted) {
+        const ordinarySession = sessionIds.get('ordinary');
+        expect(ordinarySession).toBeTruthy();
+        expect(ownSessionId).not.toBe(ordinarySession);
+
+        simulator.agent.sessionId = ordinarySession;
+        const crossPrincipalList = await simulator.agent.post({
+          jsonrpc: '2.0',
+          id: simulator.agent.nextId++,
+          method: 'tools/list',
+          params: {},
+        });
+        expect(crossPrincipalList.response.status()).toBe(404);
+        simulator.agent.sessionId = ownSessionId;
+        expect((await simulator.agent.listTools()).some((entry) => entry.name === 'runs_request')).toBe(true);
+
         const denied = await simulator.agent.call('runs_request', {
           task_id: task.id, agent_profile_id: randomUUID(), stage: 'work', task_revision: read.data.version,
           expected_version: read.data.version, client_request_id: randomUUID(),

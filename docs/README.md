@@ -31,7 +31,7 @@ In Falkenwarte bündelt ein Ticket die Arbeit an einer Aufgabe. Es gehört zu ei
 ## Entwickeln und integrieren
 
 - [Architektur und Weg eines Schreibzugriffs](ARCHITECTURE.md) · [Entscheidungen zur Architektur](DECISIONS.md)
-- [HTTP, MCP und öffentliche Schemas](API.md) · [T3-Anbindung](T3_INTEGRATION.md) · [OpenAI Decisions](AI_DECISIONS.md)
+- [HTTP, MCP und öffentliche Schemas](API.md) · [T3-Anbindung](T3_INTEGRATION.md) · [OpenAI Decisions](AI_DECISIONS.md) · [Symfony AI einsetzen](SYMFONY_AI.md)
 - [Plugins entwickeln](PLUGIN_SYSTEM.md) · [Live-Updates mit Mercure](LIVE_SERVICES.md)
 - [Änderungen prüfen](TESTING.md) · [Fixtures und externe Testdienste](QA_FIXTURES.md)
 - [Pull Requests und Releases](GITHUB_DELIVERY.md) · [Das Handbuch bearbeiten](DOCUMENTATION.md)

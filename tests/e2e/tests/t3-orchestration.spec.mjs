@@ -75,6 +75,32 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, name = 'T3 E2E
   return { project, connection: readyConnection, binding: binding.data };
 }
 
+async function authorizeAndCheckT3Connection(ownerApi, ownerPage, baseURL, qaMocks, { name, canonicalUrl, token }) {
+  const created = await ownerApi.post('/connections', {
+    name,
+    bridge_id: 't3.mcp.v0_1_10',
+    canonical_url: canonicalUrl,
+  });
+  expect(created.response.status(), JSON.stringify(created.data)).toBe(201);
+
+  await qaMocks.setT3OAuthToken(token);
+  await ownerPage.goto('/#/agents');
+  await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
+  await authorizeT3InBrowser(ownerPage, baseURL, canonicalUrl);
+  const authorized = await readUntil(ownerApi, `/connections/${created.data.id}`, (item) => item.auth_status === 'valid', 'Die zusätzliche T3-Verbindung muss separat autorisiert sein.');
+
+  await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
+  await ownerPage.getByRole('button', { name: 'Verbindung testen' }).click();
+  await expect.poll(async () => {
+    const check = await ownerApi.get(`/connections/${created.data.id}/check`);
+    return check.response.status() === 200
+      ? [check.data.network, check.data.authentication, check.data.mcp_handshake, check.data.capabilities].join(':')
+      : null;
+  }, { timeout: 45_000, message: 'Die zusätzliche T3-Verbindung muss ihren eigenen MCP-Endpunkt erreichen.' }).toBe('ok:ok:ok:ok');
+
+  return { ...authorized, id: created.data.id };
+}
+
 async function createProfile(ownerApi, ownerPage, baseURL, project, connection, suffix = 'QA', executionTarget = { mode: 't3_project_default' }, completionPolicy = defaultPolicy) {
   const name = `T3 Rolle ${suffix}`;
   const result = await ownerApi.post('/agent-profiles', {
@@ -267,6 +293,15 @@ test('A09/A10 T3 OAuth and MCP launch replay preserve one immutable dispatch', a
 test('A11/A30 early agent report and new OAuth namespace do not create a second launch', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
   test.setTimeout(150_000);
   const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'T3 Übergabe');
+  const alternateConnection = await authorizeAndCheckT3Connection(ownerApi, ownerPage, baseURL, qaMocks, {
+    name: `T3 Zweitziel ${randomUUID().slice(0, 6)}`,
+    canonicalUrl: qaMocks.t3AlternateURL,
+    token: 'qa-t3-token-B',
+  });
+  const connectionJournal = await qaMocks.t3Journal();
+  expect(connectionJournal.journal.some((entry) => entry.mock_origin === new URL(qaMocks.t3URL).origin && entry.path === '/mcp' && entry.method === 'initialize' && entry.auth_namespace === 'oauth-client-A')).toBe(true);
+  expect(connectionJournal.journal.some((entry) => entry.mock_origin === new URL(qaMocks.t3AlternateURL).origin && entry.path === '/mcp' && entry.method === 'initialize' && entry.auth_namespace === 'oauth-client-B')).toBe(true);
+  expect(connectionJournal.journal.some((entry) => entry.mock_origin === new URL(qaMocks.t3AlternateURL).origin && entry.path === '/mcp' && entry.method === 'tools/list' && entry.auth_namespace === 'oauth-client-B')).toBe(true);
   const profile = await createProfile(ownerApi, ownerPage, baseURL, project, connection, 'Übergabe');
   const taskResult = await createReadyTask(ownerApi, project.id, 'Frühe Agentmeldung');
   const task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
@@ -305,7 +340,7 @@ test('A11/A30 early agent report and new OAuth namespace do not create a second 
     expect(t3.unexpected).toEqual([]);
     recordEvidence(
       'A11/A30: Eine echte Agentmeldung trifft vor der Launch-Antwort ein; neue OAuth-Session darf keinen zweiten T3-Start erzeugen.',
-      `Run ${runId} nahm den MCP-Bericht ohne externe Thread-ID an. Nach OAuth-Epoch 2 beobachtete Falkenwarte denselben Thread mit Token-Namespace B; T3 hatte genau einen angenommenen Launch in Namespace A und der Run endete succeeded.`,
+      `Verbindung ${connection.id} erreichte ${new URL(qaMocks.t3URL).origin}/mcp mit Token-Namespace A; Verbindung ${alternateConnection.id} erreichte ${new URL(qaMocks.t3AlternateURL).origin}/mcp mit Token-Namespace B. Run ${runId} nahm den MCP-Bericht ohne externe Thread-ID an. Nach OAuth-Epoch 2 beobachtete Falkenwarte denselben Thread mit Token-Namespace B; T3 hatte genau einen angenommenen Launch in Namespace A und der Run endete succeeded.`,
       { t3 },
     );
   } finally {

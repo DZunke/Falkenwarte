@@ -98,8 +98,20 @@ function responseFor(variantId, requestBody) {
   };
 }
 
-function sendFixture(response, item) {
-  sendJson(response, item.status, item.body ?? null, item.headers ?? {});
+function sendFixture(response, item, extraHeaders = {}) {
+  sendJson(response, item.status, item.body ?? null, { ...(item.headers ?? {}), ...extraHeaders });
+}
+
+function sensitiveKeys(value, found = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) sensitiveKeys(item, found);
+  } else if (value && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value)) {
+      if (/api[_-]?key|secret|token/i.test(key)) found.push(key);
+      sensitiveKeys(child, found);
+    }
+  }
+  return found;
 }
 
 async function decisionRequest(request, response) {
@@ -107,15 +119,22 @@ async function decisionRequest(request, response) {
   noStore(response);
   const requestBody = await readJson(request);
   const invalid = validateRequest(requestBody);
+  const providerRequestId = `qa-decisions-request-${journal.length + 1}`;
+  const inputData = requestBody?.input?.[0]?.content?.[0]?.data;
   const item = {
     sequence: journal.length + 1,
+    provider_request_id: providerRequestId,
     method: request.method,
     path: pathOf(request),
     model: requestBody?.model ?? null,
+    payload_keys: Object.keys(requestBody ?? {}),
+    input_data_keys: Object.keys(inputData ?? {}),
+    sensitive_payload_keys: sensitiveKeys(requestBody),
     question_names: Array.isArray(requestBody?.questions) ? requestBody.questions.map((question) => question?.name) : [],
     question_types: Array.isArray(requestBody?.questions) ? requestBody.questions.map((question) => question?.type) : [],
     taxonomy_version: requestBody?.input?.[0]?.content?.[0]?.data?.taxonomy_version ?? null,
     authorization_present: Boolean(request.headers.authorization),
+    authorization_valid: request.headers.authorization === `Bearer ${token}`,
     scenario,
     validation_error: invalid,
   };
@@ -138,8 +157,8 @@ async function decisionRequest(request, response) {
   if (variant.sequence) {
     const sequenceItem = variant.sequence[Math.min(attempts - 1, variant.sequence.length - 1)];
     item.outcome = `http_${sequenceItem.status}`;
-    if (sequenceItem.status === 200) return sendFixture(response, { ...sequenceItem, body: responseFor('decisions_ready', requestBody).body });
-    return sendFixture(response, sequenceItem);
+    if (sequenceItem.status === 200) return sendFixture(response, { ...sequenceItem, body: responseFor('decisions_ready', requestBody).body }, { 'X-Request-Id': providerRequestId });
+    return sendFixture(response, sequenceItem, { 'X-Request-Id': providerRequestId });
   }
   if (variant.transport === 'timeout_before_response') {
     item.outcome = 'connection_dropped';
@@ -156,7 +175,7 @@ async function decisionRequest(request, response) {
     return sendJson(response, 500, { error: { type: 'mock_configuration_error', message: 'Scenario has no response.' } });
   }
   item.outcome = `http_${responseFixture.status}`;
-  sendFixture(response, responseFixture);
+  sendFixture(response, responseFixture, { 'X-Request-Id': providerRequestId });
 }
 
 startServer(Number(process.env.PORT ?? 4310), async (request, response) => {

@@ -10,6 +10,7 @@ const transcript = JSON.parse(await readFile(path.join(root, 'fixtures/mcp/t3-le
 const faultFixture = JSON.parse(await readFile(path.join(root, 'fixtures/mcp/t3-faults.json'), 'utf8'));
 const faultIds = new Set(faultFixture.faults.map((fault) => fault.id));
 const port = Number(process.env.PORT ?? 4311);
+const alternatePort = Number(process.env.ALTERNATE_PORT ?? port + 2);
 const statePath = process.env.T3_MOCK_STATE ?? '/tmp/falkenwarte-t3-mock-state.json';
 
 function emptyState() {
@@ -409,6 +410,8 @@ async function mcpRequest(request, response) {
   const sessionId = request.headers['mcp-session-id'];
   const version = request.headers['mcp-protocol-version'];
   const entry = {
+    path: pathname,
+    mock_origin: originOf(request),
     method: body?.method ?? null,
     request_id: body?.id ?? null,
     tool: body?.params?.name ?? null,
@@ -531,7 +534,7 @@ async function mcpRequest(request, response) {
   return sendJson(response, 200, { jsonrpc: '2.0', id: body?.id, error: { code: -32601, message: `Unsupported MCP method: ${String(body?.method)}` } });
 }
 
-startServer(port, async (request, response) => {
+const handleRequest = async (request, response) => {
   const pathname = pathOf(request);
   if (pathname === '/__qa/health' && request.method === 'GET') {
     return sendJson(response, 200, { service: 't3-mcp-mock', scenario: state.scenario, launches: Object.keys(state.acceptedLaunches).length });
@@ -586,4 +589,7 @@ startServer(port, async (request, response) => {
   if (pathname === '/mcp') return mcpRequest(request, response);
   recordUnexpected({ http_method: request.method, path: pathname });
   return sendJson(response, 404, { error: { message: 'Unknown mock path.' } });
-});
+};
+
+startServer(alternatePort, handleRequest);
+startServer(port, handleRequest);

@@ -7,34 +7,26 @@ namespace App\Orchestration\Infrastructure;
 use App\AgentCatalog\Application\AgentCatalogMcpClient;
 use App\Orchestration\Application\AgentExecutionBridge;
 use App\Orchestration\Application\T3BridgeException;
-use Mcp\Client;
-use Mcp\Client\Transport\HttpTransport;
 use Mcp\Schema\Content\TextContent;
-use Mcp\Schema\Enum\ProtocolVersion;
+use Symfony\AI\McpBundle\Client\ServerConnectionInterface;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
-use Symfony\Component\DependencyInjection\Attribute\Autowire;
-use Symfony\Component\HttpClient\Psr18Client;
 
 /** A deliberately small client for the T3 MCP profile selected by the concept. */
 #[AsAlias(AgentExecutionBridge::class)]
 #[AsAlias(AgentCatalogMcpClient::class)]
 final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
 {
-    public const PROTOCOL_VERSION = '2025-06-18';
+    public const PROTOCOL_VERSION = T3McpSessionFactory::PROTOCOL_VERSION;
 
     public function __construct(
-        #[Autowire(service: 'psr18.t3.client')]
-        private readonly Psr18Client $httpClient,
-        private readonly string $appVersion,
-        #[Autowire('%kernel.environment%')]
-        private readonly string $appEnv,
+        private readonly T3McpSessionFactory $sessions,
     ) {
     }
 
     /** @param array<string, mixed> $connection @return array<string, mixed> */
     public function capabilities(array $connection, string $token): array
     {
-        return $this->withSession($connection, $token, function (Client $client, array $tools): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['orchestrator_capabilities', 't3_project_list', 't3_thread_launch', 't3_thread_read']);
             $result = $this->tool($client, 'orchestrator_capabilities', []);
@@ -55,7 +47,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     /** @param array<string, mixed> $connection @return array<string, mixed> */
     public function projects(array $connection, string $token, ?string $cursor = null, int $limit = 50): array
     {
-        return $this->withSession($connection, $token, function (Client $client, array $tools) use ($cursor, $limit): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($cursor, $limit): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_project_list']);
             $result = $this->tool($client, 't3_project_list', array_filter(['cursor' => $cursor, 'limit' => $limit], static fn (mixed $value): bool => null !== $value));
@@ -78,7 +70,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     /** @param array<string, mixed> $connection @return array<string, mixed> */
     public function readThread(array $connection, string $token, string $threadId, ?string $runId = null): array
     {
-        return $this->withSession($connection, $token, function (Client $client, array $tools) use ($threadId, $runId): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($threadId, $runId): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_read']);
             $result = $this->tool($client, 't3_thread_read', ['threadId' => $threadId, 'afterPosition' => 0, 'limit' => 100, 'runLimit' => 50, 'maxCharsPerItem' => 20000]);
@@ -118,7 +110,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     /** @param array<string, mixed> $connection @param array<string, mixed> $payload @return array<string, mixed> */
     public function launch(array $connection, string $token, array $payload): array
     {
-        return $this->withSession($connection, $token, function (Client $client, array $tools) use ($payload): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($payload): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_launch']);
             $arguments = [
@@ -138,7 +130,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     /** @param array<string, mixed> $connection @return array<string, mixed> */
     public function send(array $connection, string $token, string $threadId, string $message, string $clientRequestId): array
     {
-        return $this->withSession($connection, $token, function (Client $client, array $tools) use ($threadId, $message, $clientRequestId): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($threadId, $message, $clientRequestId): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_send']);
 
@@ -154,7 +146,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     /** @param array<string, mixed> $connection @return array<string, mixed> */
     public function interrupt(array $connection, string $token, string $threadId, string $runId): array
     {
-        return $this->withSession($connection, $token, function (Client $client, array $tools) use ($threadId, $runId): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($threadId, $runId): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_interrupt']);
 
@@ -162,34 +154,21 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         });
     }
 
-    /** @param array<string, mixed> $connection @param callable(Client, list<array<string, mixed>>): array<string, mixed> $operation @return array<string, mixed> */
+    /** @param array<string, mixed> $connection @param callable(ServerConnectionInterface, list<array<string, mixed>>): array<string, mixed> $operation @return array<string, mixed> */
     private function withSession(array $connection, string $token, callable $operation): array
     {
-        $baseUrl = rtrim((string) ($connection['canonical_url'] ?? ''), '/');
-        if (!str_starts_with($baseUrl, 'https://') && !$this->allowsTestMock($baseUrl)) {
-            throw new T3BridgeException('Die T3-Verbindung benötigt eine kanonische HTTPS-Adresse.');
-        }
-        $client = Client::builder()
-            ->setClientInfo('falkenwarte', $this->appVersion)
-            ->setProtocolVersion(ProtocolVersion::V2025_06_18)
-            ->setFallbackProtocolVersion(null)
-            ->setInitTimeout(15)
-            ->setRequestTimeout(15)
-            ->setMaxRetries(0)
-            ->build();
-        $transport = new HttpTransport($baseUrl.'/mcp', ['Authorization' => 'Bearer '.$token], $this->httpClient, $this->httpClient, $this->httpClient);
+        $client = $this->sessions->create((string) ($connection['canonical_url'] ?? ''), $token);
         try {
-            $client->connect($transport);
             if (self::PROTOCOL_VERSION !== $client->getProtocolVersion()?->value) {
                 throw new T3BridgeException('T3 hat ein nicht freigegebenes MCP-Protokoll ausgehandelt.');
             }
-            $tools = array_map(static fn ($tool): array => $tool->jsonSerialize(), $client->listTools()->tools);
+            $tools = array_map(static fn ($tool): array => $tool->jsonSerialize(), $client->getTools());
 
             return $operation($client, $tools);
         } catch (T3BridgeException $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
-            if (str_contains($exception->getMessage(), '401') || str_contains($exception->getMessage(), '403')) {
+            if ($this->isAuthorizationFailure($exception)) {
                 throw new T3BridgeException('T3 hat die aktuelle Autorisierung abgewiesen.', true, $exception);
             }
             throw new T3BridgeException('Der MCP-Verkehr mit T3 ist fehlgeschlagen.', false, $exception);
@@ -202,6 +181,18 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         }
     }
 
+    private function isAuthorizationFailure(\Throwable $exception): bool
+    {
+        do {
+            if (1 === preg_match('/\b(?:401|403)\b/', $exception->getMessage())) {
+                return true;
+            }
+            $exception = $exception->getPrevious();
+        } while (null !== $exception);
+
+        return false;
+    }
+
     /** @param list<string> $actual @param list<string> $required */
     private function requireTools(array $actual, array $required): void
     {
@@ -212,7 +203,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     }
 
     /** @param array<string, mixed> $arguments @return array<string, mixed> */
-    private function tool(Client $client, string $name, array $arguments): array
+    private function tool(ServerConnectionInterface $client, string $name, array $arguments): array
     {
         $result = $client->callTool($name, $arguments);
         if ($result->isError) {
@@ -232,13 +223,6 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         }
 
         return [];
-    }
-
-    private function allowsTestMock(string $url): bool
-    {
-        $host = parse_url($url, PHP_URL_HOST);
-
-        return 'test' === $this->appEnv && 'http' === parse_url($url, PHP_URL_SCHEME) && 't3-mock' === $host;
     }
 
     /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool}> */

@@ -1,16 +1,18 @@
 # OpenAI Decisions: Einordnung und Intake
 
-Falkenwarte nutzt OpenAI Decisions für die fachliche Einordnung eingehender Aufgaben. Die Einbindung läuft über den Symfony-AI-Platform-Vertrag und eine lokale Platform-Implementierung, die ausschließlich den nativen Decisions-Endpunkt anspricht.
+Falkenwarte nutzt die Symfony-AI-Platform für OpenAI Decisions, damit eingehende Aufgaben nach den gespeicherten Taxonomie-, Policy- und Routingregeln eingeordnet werden.
+
+Der vollständige Symfony-AI-Aufrufpfad, der Containeraufbau und die MCP-Abgrenzung stehen unter [Wie Falkenwarte Symfony AI nutzt](SYMFONY_AI.md).
 
 ## Zuständigkeit und Ablauf
 
 1. `IntakeHandler` speichert Aufgabe und Intake, versieht die Einordnung mit Aufgaben-, Taxonomie-, Policy- und Routingversionen und stellt einen dauerhaften Workerauftrag ein.
 2. Der Worker lädt den für das Projekt konfigurierten Secret-Verweis und erzeugt Fragen aus aktiven Themenlabels, ausdrücklich gerouteten Workflowlabels und Pflichtangaben.
-3. `DecisionGateway` hält die Application-Schicht vom Anbietertransport fern. `SymfonyAiDecisionAdapter` übergibt den Aufruf an `PlatformInterface`.
-4. `OpenAiDecisionsPlatform` formt den nativen HTTP-Request und `DecisionResultConverter` wandelt die Antwort in das Symfony-AI-Ergebnis um.
+3. `DecisionGateway` hält die Application-Schicht vom Anbietertransport fern. `SymfonyAiDecisionAdapter` übergibt den Aufruf an die native Symfony-AI-`Platform`.
+4. `OpenAiDecisionsModelClient` formt den nativen HTTP-Request und `DecisionResultConverter` wandelt die Antwort in das Symfony-AI-Ergebnis um.
 5. `IntakeHandler` validiert und bewertet die Antworten und schreibt Klassifikationsnachweis und Intakezustand atomar. Nur ein noch aktueller Versionsstand darf angewandt werden.
 
-Code: [IntakeHandler](../src/Classification/Application/IntakeHandler.php), [DecisionGateway](../src/Classification/Application/DecisionGateway.php), [SymfonyAiDecisionAdapter](../src/Classification/Infrastructure/SymfonyAiDecisionAdapter.php), [OpenAiDecisionsPlatform](../src/Classification/Infrastructure/OpenAiDecisionsPlatform.php).
+Code: [IntakeHandler](../src/Classification/Application/IntakeHandler.php), [DecisionGateway](../src/Classification/Application/DecisionGateway.php), [SymfonyAiDecisionAdapter](../src/Classification/Infrastructure/SymfonyAiDecisionAdapter.php), [OpenAiDecisionsModelClient](../src/Classification/Infrastructure/OpenAiDecisionsModelClient.php), [DecisionResultConverter](../src/Classification/Infrastructure/DecisionResultConverter.php).
 
 ## Konfiguration
 
@@ -28,7 +30,13 @@ Der OpenAI-Schlüssel wird über `POST /api/v1/secret-references` verschlüsselt
 
 Die gemeinsame [Symfony-Umgebungsdatei](../.env) enthält nicht geheime Defaults. Eine lokale `.env.local` kann sie für die Entwicklungsumgebung überschreiben. Produktive Werte kommen aus der geschützten Runtime-Konfiguration. `DECISIONS_TEST_ENDPOINT` muss im Test auf einen HTTP-Mock mit Host `localhost`, `127.0.0.1` oder `decisions-mock` zeigen und darf keine Credentials, Query oder Fragment enthalten.
 
-Die Platform ist als `PlatformInterface`-Alias und einmalig mit dem Symfony-AI-Tag `ai.platform` unter dem Namen `openai.decisions` registriert. Das Symfony-AI-Platform-Konzept ist unter [Symfony AI Platform](https://symfony.com/doc/current/ai/components/platform.html) beschrieben. Die HTTP-Client-Grenzen stehen in der [Symfony-HTTP-Client-Dokumentation](https://symfony.com/doc/7.4/http_client.html).
+Der Container registriert den nativen `Provider` als `ai.provider.openai.decisions` und die native `Platform` als `ai.platform.openai.decisions`. Der `ai.platform`-Tag trägt den Namen `openai.decisions`, den `SymfonyAiDecisionAdapter` explizit injiziert.
+
+Der gesperrte offizielle OpenAI-Bridge-Code implementiert den nativen Decisions-Endpunkt nicht. Der eigene [ModelClient](../src/Classification/Infrastructure/OpenAiDecisionsModelClient.php) ergänzt daher den `ModelClientInterface`-Vertrag. Responses dient nicht als Ersatz.
+
+Details zu Symfony-AI-Paketen, Containerverdrahtung, Secret-Auflösung und MCP stehen in [Wie Falkenwarte Symfony AI nutzt](SYMFONY_AI.md).
+
+Die offiziellen Verträge sind in der [Symfony AI Platform](https://symfony.com/doc/current/ai/components/platform.html) und beim [Symfony HTTP Client 7.4](https://symfony.com/doc/7.4/http_client.html) beschrieben.
 
 ## Anfrage und konkrete Fragen
 
@@ -65,4 +73,4 @@ Die Test-URL ist kein Produktionsschalter: außerhalb von `APP_ENV=test` verwend
 
 - [OpenAI Decisions Guide](https://developers.openai.com/api/docs/guides/decisions) und [Create a decision API](https://developers.openai.com/api/reference/resources/decisions/methods/create).
 - [OpenAPI-Vertrag](../contracts/openapi.yaml): Decisions-Konfiguration, Projekt-Policy und Klassifikationsnachweis.
-- [DecisionResultConverter](../src/Classification/Infrastructure/DecisionResultConverter.php) und [Model-Katalog](../src/Classification/Infrastructure/OpenAiDecisionsModelCatalog.php): lokale Antwortkonvertierung und unterstütztes Modell.
+- [DecisionResultConverter](../src/Classification/Infrastructure/DecisionResultConverter.php): lokale Antwortkonvertierung. Der [Symfony-Serviceaufbau](../config/services.php) registriert `gpt-6-luna` im nativen `InMemoryModelCatalog`.

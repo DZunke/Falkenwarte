@@ -282,6 +282,19 @@ test('A22 A24 A25 A28 technical MCP intake asks and resolves missing information
     expect(decisionsJournal.requests.length).toBeGreaterThanOrEqual(2);
     expect(decisionsJournal.requests.every((entry) => entry.validation_error === null)).toBe(true);
     expect(decisionsJournal.requests.every((entry) => entry.model === 'gpt-6-luna')).toBe(true);
+    expect(decisionsJournal.requests.every((entry) => entry.method === 'POST' && entry.path === '/v1/decisions')).toBe(true);
+    expect(decisionsJournal.requests.every((entry) => entry.authorization_present && entry.authorization_valid)).toBe(true);
+    expect(decisionsJournal.requests.every((entry) => ['model', 'input', 'questions'].every((key) => entry.payload_keys.includes(key)))).toBe(true);
+    expect(decisionsJournal.requests.every((entry) => ['task_id', 'title', 'description', 'taxonomy_version'].every((key) => entry.input_data_keys.includes(key)))).toBe(true);
+    expect(decisionsJournal.requests.every((entry) => entry.sensitive_payload_keys.length === 0)).toBe(true);
+
+    const classificationId = finalReceipt.structuredContent.classification_id;
+    expect(classificationId).toBeTruthy();
+    const classificationResult = await ownerApi.get(`/tasks/${initialReceipt.task_id}/classifications/${classificationId}`);
+    expect(classificationResult.response.status(), JSON.stringify(classificationResult.data)).toBe(200);
+    expect(classificationResult.data.provider_request_id).toBeTruthy();
+    expect(classificationResult.data.input_tokens).toBeGreaterThan(0);
+    expect(decisionsJournal.requests.some((entry) => entry.provider_request_id === classificationResult.data.provider_request_id)).toBe(true);
 
     const manualSpoof = await agent.callRaw('tasks_create', {
       client_request_id: `qa-origin-${randomUUID()}`,

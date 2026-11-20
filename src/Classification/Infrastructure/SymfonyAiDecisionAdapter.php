@@ -8,21 +8,20 @@ use App\Classification\Application\DecisionGateway;
 use App\Classification\Application\DecisionProviderException;
 use Symfony\AI\Platform\PlatformInterface;
 use Symfony\Component\DependencyInjection\Attribute\AsAlias;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 /**
- * Keeps application handlers on the DecisionGateway port while routing calls through Symfony AI.
- * The current released OpenAI bridge only supports Responses, so the installed platform service
- * is Falkenwarte's narrow Decisions implementation of PlatformInterface.
+ * Keeps application handlers on the DecisionGateway port and invokes the named Decisions platform.
  */
 #[AsAlias(DecisionGateway::class)]
 final readonly class SymfonyAiDecisionAdapter implements DecisionGateway
 {
-    public function __construct(private PlatformInterface $platform)
+    public function __construct(#[Autowire(service: 'ai.platform.openai.decisions')] private PlatformInterface $platform)
     {
     }
 
     /** @param array<string, mixed> $request @return array<string, mixed> */
-    public function decide(array $request, string $apiKey, int $timeoutMs): array
+    public function decide(array $request, string $secretReferenceId, int $timeoutMs): array
     {
         $input = $request['input'] ?? null;
         $questions = $request['questions'] ?? null;
@@ -32,7 +31,7 @@ final readonly class SymfonyAiDecisionAdapter implements DecisionGateway
 
         $result = $this->platform->invoke('gpt-6-luna', $input, [
             'questions' => $questions,
-            'api_key' => $apiKey,
+            'secret_reference_id' => $secretReferenceId,
             'timeout_ms' => $timeoutMs,
         ]);
 
