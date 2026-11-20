@@ -295,7 +295,10 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
     reason: 'A18 prüft, dass neue Starts gesperrt und aktive T3-Aufträge weiter beobachtet werden.',
   }, { version: bridge.version });
   expect(draining.response.status(), JSON.stringify(draining.data)).toBe(202);
+  expect(draining.data.action_url).toBe(`${ownerApi.apiPrefix}/actions/${draining.data.action_id}`);
+  await ownerApi.waitForSucceededAction(draining.data.action_id, 'Der erste Bridge-Drain-Auftrag muss abgeschlossen sein.');
   bridge = await readUntil(ownerApi, `/plugins/${T3_BRIDGE}`, (plugin) => plugin.state === 'draining' && plugin.active_run_count === 1, 'Bridge muss mit einem gebundenen aktiven Lauf im Drain bleiben.');
+  expect(bridge.version).toBe(draining.data.resource.version);
   await ownerPage.goto('/#/plugins');
   await ownerPage.getByRole('button').filter({ hasText: T3_BRIDGE }).click();
   await expect(ownerPage.getByText('Lässt aktive Arbeit auslaufen', { exact: true })).toBeVisible();
@@ -303,7 +306,18 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
   await expect(ownerPage.getByText('Wartende Arbeit', { exact: true }).locator('..')).toContainText('0');
   await expect(ownerPage.getByText('Ungeklärte externe Aktivitäten', { exact: true }).locator('..')).toContainText('0');
   await expect(ownerPage.getByText(/abhängigen Erweiterungen.*QA: Abhängiges Bridge-Plugin/)).toBeVisible();
+  const recheckResponsePromise = ownerPage.waitForResponse((response) => {
+    const url = new URL(response.url());
+
+    return response.request().method() === 'POST'
+      && url.pathname === `${ownerApi.apiPrefix}/plugins/${T3_BRIDGE}/drain`;
+  });
   await ownerPage.getByRole('button', { name: 'Drain erneut prüfen', exact: true }).click();
+  const recheckResponse = await recheckResponsePromise;
+  const recheckDrain = await recheckResponse.json();
+  expect(recheckResponse.status(), JSON.stringify(recheckDrain)).toBe(202);
+  expect(recheckDrain.action_url).toBe(`${ownerApi.apiPrefix}/actions/${recheckDrain.action_id}`);
+  await ownerApi.waitForSucceededAction(recheckDrain.action_id, 'Die erneute Drain-Prüfung muss abgeschlossen sein, bevor eine andere Drain-Policy angefordert wird.');
   bridge = await readUntil(ownerApi, `/plugins/${T3_BRIDGE}`, (plugin) => plugin.state === 'draining' && plugin.active_run_count === 1, 'Der Browser-Drain darf einen extern aktiven Run nicht als beendet werten.');
 
   const blockedTask = (await ownerApi.get(`/tasks/${taskB.id}`)).data;
@@ -323,6 +337,8 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
     reason: 'A18 fordert den bestätigten T3-Abbruch für bereits gestartete Provider-Runs an.',
   }, { version: bridge.version });
   expect(cancelRequest.response.status(), JSON.stringify(cancelRequest.data)).toBe(202);
+  expect(cancelRequest.data.action_url).toBe(`${ownerApi.apiPrefix}/actions/${cancelRequest.data.action_id}`);
+  await ownerApi.waitForSucceededAction(cancelRequest.data.action_id, 'Der bestätigte T3-Abbruch muss als Action abgeschlossen sein.');
   const endedRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'cancelled', 'Der T3-Abbruch darf erst nach externer Beobachtung als beendet gelten.');
   expect(endedRun.snapshot.bridge_plugin_id).toBe(T3_BRIDGE);
   const cancelJournal = await qaMocks.t3Journal();
@@ -345,6 +361,8 @@ test('A18 T3-Bridge-Drain sperrt neue Starts, hält aktive Runs beobachtbar und 
     reason: 'A18 QA-Abhängigkeit kontrolliert stilllegen.',
   }, { version: dependentState.version });
   expect(dependentDrain.response.status(), JSON.stringify(dependentDrain.data)).toBe(202);
+  expect(dependentDrain.data.action_url).toBe(`${ownerApi.apiPrefix}/actions/${dependentDrain.data.action_id}`);
+  await ownerApi.waitForSucceededAction(dependentDrain.data.action_id, 'Der abhängige Plugin-Drain muss abgeschlossen sein, bevor die Abhängigkeit deaktiviert wird.');
   const dependentDisabled = await readUntil(ownerApi, `/plugins/${QA_DEPENDENT}`, (plugin) => plugin.state === 'disabled', 'Das abhängige Plugin muss nach seinem Drain deaktiviert sein.');
   const dependentDeactivation = await ownerApi.post(`/plugins/${QA_DEPENDENT}/deactivate`, {
     reason: 'A18 QA-Abhängigkeit nach dem Drain deaktivieren.',

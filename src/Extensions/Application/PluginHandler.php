@@ -88,6 +88,7 @@ final class PluginHandler implements OperationHandler
         }
 
         if ('plugin.drain' === $kind && 'draining' === $plugin['state']) {
+            $previous = $plugin;
             $activeWork = $this->activeWorkCounts($pluginId);
             $plugin['active_run_count'] = $activeWork['runs'];
             $plugin['pending_job_count'] = $activeWork['jobs'];
@@ -98,7 +99,9 @@ final class PluginHandler implements OperationHandler
                 $plugin['last_safe_state'] = 'disabled';
             }
 
-            $this->store->save('plugins', $plugin, 'PluginActivationChanged');
+            if ($previous !== $plugin) {
+                $this->store->save('plugins', $plugin, 'PluginActivationChanged');
+            }
         }
     }
 
