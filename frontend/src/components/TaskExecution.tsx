@@ -60,9 +60,14 @@ function runIsActive(run: Run): boolean {
 }
 
 function runSource(target: Run['snapshot']['execution_target']): string {
-  return target.mode === 't3_reference_thread'
-    ? `T3-Referenzthread ${target.reference_thread_id}`
-    : 'T3-Projektstandard'
+  switch (target.mode) {
+    case 't3_provider_instance':
+      return `T3-Providerinstanz ${target.provider_instance_id} · ${target.model}`
+    case 't3_reference_thread':
+      return `T3-Referenzthread ${target.reference_thread_id}`
+    case 't3_project_default':
+      return 'T3-Projektstandard'
+  }
 }
 
 function attemptReference(label: string, value: string | null) {
@@ -94,6 +99,14 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
     queryKey: ['execution-profiles', project.id],
     queryFn: () => request(api.GET('/agent-profiles', { params: { query: { project_id: project.id, limit: 100 } } })),
   })
+  const projectBindingQuery = useQuery({
+    queryKey: ['project-binding', project.id],
+    queryFn: async () => {
+      const response = await api.GET('/projects/{project_id}/binding', { params: { path: { project_id: project.id } } })
+      if (response.response.status === 404) return null
+      return request(Promise.resolve(response))
+    },
+  })
   const workflowsQuery = useQuery({
     queryKey: ['execution-workflows', project.id],
     queryFn: () => request(api.GET('/workflows', { params: { query: { project_id: project.id, enabled: true, limit: 100 } } })),
@@ -108,7 +121,13 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
     refetchInterval: (query) => query.state.data?.items.some((instance) => activeWorkflowStates.has(instance.state)) ? 3000 : false,
   })
 
-  const profiles = profilesQuery.data?.items.filter((profile) => profile.allowed_project_ids.includes(project.id)) ?? []
+  const profileCandidates = profilesQuery.data?.items ?? []
+  const projectProfiles = profileCandidates.filter((profile) => profile.all_projects === true || profile.allowed_project_ids.includes(project.id))
+  const projectBinding = projectBindingQuery.data?.active ? projectBindingQuery.data : null
+  const profiles = projectBinding
+    ? projectProfiles.filter((profile) => profile.connection_id === projectBinding.connection_id)
+    : []
+  const hasConnectionMismatch = Boolean(projectBinding && projectProfiles.some((profile) => profile.connection_id !== projectBinding.connection_id))
   const workflows = useMemo<Workflow[]>(
     () => workflowsQuery.data?.items.filter((workflow) => workflow.enabled && (workflow.project_id === null || workflow.project_id === project.id)) ?? [],
     [project.id, workflowsQuery.data],
@@ -147,6 +166,7 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
   }, [route, selectedWorkflowKey, workflowOptions])
 
   const selectedWorkflow = workflowOptions.find((workflow) => `${workflow.id}:${workflow.definition_version}` === selectedWorkflowKey)
+  const workflowHasUnavailableProfile = Boolean(selectedWorkflow?.stages.some((stage) => stage.agent_profile_id && !profiles.some((profile) => profile.id === stage.agent_profile_id)))
   const selectedStage = selectedWorkflow?.stages.find((stage) => stage.id === selectedStageId)
   const profilesForStage = selectedStage?.agent_profile_id
     ? profiles.filter((profile) => profile.id === selectedStage.agent_profile_id)
@@ -226,6 +246,7 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
   const workflowCanStart = !startBlocked
     && !routingUnavailable
     && !routedWorkflowMissing
+    && !workflowHasUnavailableProfile
     && (!route || routedWorkflowQuery.isSuccess)
     && Boolean(selectedWorkflow?.enabled && selectedWorkflow.stages.length > 0)
     && !routedWorkflowMismatch
@@ -384,7 +405,7 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
   return (
     <div className="space-y-5 pb-6">
       {actionError && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{actionError}</div>}
-      {(runsQuery.isError || profilesQuery.isError || workflowsQuery.isError || routingQuery.isError || workflowInstancesQuery.isError) && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formatError(runsQuery.error ?? profilesQuery.error ?? workflowsQuery.error ?? routingQuery.error ?? workflowInstancesQuery.error)}</div>}
+      {(runsQuery.isError || profilesQuery.isError || projectBindingQuery.isError || workflowsQuery.isError || routingQuery.isError || workflowInstancesQuery.isError) && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formatError(runsQuery.error ?? profilesQuery.error ?? projectBindingQuery.error ?? workflowsQuery.error ?? routingQuery.error ?? workflowInstancesQuery.error)}</div>}
 
       <section className="space-y-3 rounded-lg border p-4">
         <div><h3 className="text-sm font-semibold">Startbedingungen</h3><p className="mt-1 text-xs text-muted-foreground">Falkenwarte prüft Ticketstand, Rolle, T3-Verbindung und freien Ausführungsplatz erneut beim Start.</p></div>
@@ -395,11 +416,15 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
 
       <section className="space-y-3 rounded-lg border p-4">
         <div className="flex items-center gap-2"><Play className="size-4 text-primary" /><h3 className="text-sm font-semibold">Einzellauf anfordern</h3></div>
-        {profilesQuery.isPending ? <p className="text-sm text-muted-foreground">Rollenprofile werden geladen…</p> : profiles.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein Rollenprofil freigegeben.</p> : <div className="grid gap-3 sm:grid-cols-2">
+        {profilesQuery.isPending || projectBindingQuery.isPending ? <p role="status" className="text-sm text-muted-foreground">Projektbindung und Rollenprofile werden geladen…</p>
+          : projectBindingQuery.isError ? <p role="alert" className="text-sm text-destructive">Die aktive T3-Projektbindung konnte nicht geprüft werden.</p>
+            : !projectBinding ? <p className="text-sm text-muted-foreground">Binde dieses Projekt unter <a className="underline underline-offset-4" href="#/agents">Agents &amp; T3</a> an eine T3-Verbindung, bevor du einen Auftrag startest.</p>
+              : profiles.length === 0 && hasConnectionMismatch ? <p className="text-sm text-muted-foreground">Rollenprofile für andere T3-Verbindungen sind ausgeblendet. Starten ist nur mit derselben aktiven T3-Verbindung wie die Projektbindung möglich.</p>
+                : profiles.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein Rollenprofil freigegeben.</p> : <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-2"><Label htmlFor="execution-profile">Rollenprofil</Label><Select value={selectedProfileId} onValueChange={setSelectedProfileId} disabled={Boolean(selectedStage?.agent_profile_id)}><SelectTrigger id="execution-profile"><SelectValue placeholder="Rolle auswählen" /></SelectTrigger><SelectContent>{profilesForStage.map((profile) => <SelectItem key={profile.id} value={profile.id} disabled={!profile.enabled || !profile.configuration_valid}>{profile.name} · {profileStatus(profile)}</SelectItem>)}</SelectContent></Select>{selectedProfile?.configuration_error && <p className="text-xs text-amber-900">{selectedProfile.configuration_error}</p>}{selectedStage?.agent_profile_id && <p className="text-xs text-muted-foreground">Diese Workflowphase ist an das angezeigte Rollenprofil gebunden.</p>}</div>
           <div className="grid gap-2"><Label htmlFor="execution-stage">Phase</Label>{selectedWorkflow?.stages.length ? <Select value={selectedStageId} onValueChange={setSelectedStageId}><SelectTrigger id="execution-stage"><SelectValue placeholder="Phase auswählen" /></SelectTrigger><SelectContent>{selectedWorkflow.stages.map((stage) => <SelectItem key={stage.id} value={stage.id}>{stage.name} · {stage.id}</SelectItem>)}</SelectContent></Select> : <Input id="execution-stage" value={selectedStageId} onChange={(event) => setSelectedStageId(event.target.value)} maxLength={100} />}{selectedStage?.agent_profile_id && !profilesForStage.some((profile) => profile.id === selectedStage.agent_profile_id && profile.configuration_valid && profile.enabled) && <p className="text-xs text-amber-900">Das festgelegte Rollenprofil dieser Phase ist nicht startbereit.</p>}</div>
         </div>}
-        <div className="flex justify-end"><Button onClick={() => startRun.mutate()} disabled={!canRequestRun || startRun.isPending || profilesQuery.isPending}><Play />{startRun.isPending ? 'Wird angefordert…' : 'Einzellauf anfordern'}</Button></div>
+        <div className="flex justify-end"><Button onClick={() => startRun.mutate()} disabled={!canRequestRun || startRun.isPending || profilesQuery.isPending || projectBindingQuery.isPending}><Play />{startRun.isPending ? 'Wird angefordert…' : 'Einzellauf anfordern'}</Button></div>
       </section>
 
       <section className="space-y-3 rounded-lg border p-4">
@@ -409,6 +434,7 @@ export default function TaskExecution({ task, project, onChanged, onOpenDecision
           <div className="grid gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={selectedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={routedWorkflowRequired}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>{selectedWorkflow && <p className="text-xs text-muted-foreground">{selectedWorkflow.stages.length} Phasen · Version {selectedWorkflow.definition_version}</p>}</div>
           <Button onClick={() => startWorkflow.mutate()} disabled={!workflowCanStart || startWorkflow.isPending}><WorkflowIcon />{startWorkflow.isPending ? 'Wird gestartet…' : 'Workflow starten'}</Button>
         </div>}
+        {workflowHasUnavailableProfile && <p role="alert" className="text-xs text-amber-900">Ein Rollenprofil dieser Workflowphase ist für dieses Projekt oder dessen aktive T3-Verbindung nicht freigegeben. Der Workflowstart bleibt gesperrt.</p>}
         {selectedWorkflowStage?.agent_profile_id === null && <p className="text-xs text-amber-900">Die ausgewählte Phase hat kein automatisches Rollenprofil und kann auf menschliche Bearbeitung warten.</p>}
         {routedWorkflowRequired && routingQuery.isPending && <p className="text-xs text-muted-foreground">Die Aufgabenroute wird geladen. Ein anderer Workflow kann bis dahin nicht gestartet werden.</p>}
         {routedWorkflowRequired && routingQuery.isError && <p role="alert" className="text-xs text-destructive">Die versionierte Aufgabenroute konnte nicht geladen werden: {formatError(routingQuery.error)}</p>}

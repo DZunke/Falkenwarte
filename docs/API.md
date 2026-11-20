@@ -67,10 +67,11 @@ Im MCP sind solche Intake-Ausgänge fachliche Ergebnisse im `structuredContent` 
 
 ## MCP-Tools verwenden
 
-Verbinde den Client mit `<FALKENWARTE_ORIGIN>/mcp` und sende dasselbe technische Bearer-Token wie bei einer technischen HTTP-Integration. `tools/list` zeigt nur die Tools, die für die Projekt- und Fähigkeitsbindung des Tokens sowie aktive Plugins verfügbar sind.
+Verbinde den Client mit `<FALKENWARTE_ORIGIN>/mcp` und sende dasselbe technische Bearer-Token wie bei einer technischen HTTP-Integration. `tools/list` zeigt Tools entsprechend den Fähigkeiten des Tokens und aktiven Plugins. Die Projektberechtigung wird beim jeweiligen Toolaufruf geprüft.
 
 | MCP-Tool | HTTP-Zuordnung | Verwendung |
 |---|---|---|
+| `tasks_list` | `GET /api/v1/tasks` | Ticketliste durchsuchen. `tasks.read` ist erforderlich. Bei `project_id` wird die Projektberechtigung für dieses Projekt geprüft. |
 | `task_handoff_get` | `GET /api/v1/tasks/{task_id}/handoff` | Aktuellen Ticketkontext lesen. Mit `source_run_id` kommen die offenen Fragen des genannten Ausgangslaufs hinzu. |
 | `runs_get` | `GET /api/v1/runs/{run_id}` | Versuch, Startrevision, gespeicherte Übergabe und aktuelle Run-Version lesen |
 | `runs_report_result` | `POST /api/v1/runs/{run_id}/result-reports` | Ergebnis, Prüfnachweise und offene Fragen für den zugewiesenen Versuch melden |
@@ -84,6 +85,8 @@ MCP-Argumente werden anhand des jeweiligen `inputSchema` validiert und an die im
 Die MCP-Eingabe für `tasks_create` benötigt `project_id`, `title` und `client_request_id`. `task_type`, `description`, `priority`, `prefer_wait_ms`, `suggested_label_ids` und `link_collections` entsprechen den Feldern des HTTP-Vertrags. `prefer_wait_ms` bleibt auch bei `tasks_supply_information` und `tasks_reclassify` aus Kompatibilitätsgründen gültig, löst aktuell aber in keinem dieser Aufrufe ein Warten aus. Lies den neuen Intake-Ausgang danach über `tasks_intake_get`.
 
 ## Den Ticketablauf lesen
+
+Ein meldender Agent kann bei `runs_report_result` je Eintrag in `artifacts` die optionalen `criterion_ids` aus der eingefrorenen Ticketübergabe angeben. Damit erscheint ein angenommener Nachweis bei genau den Erfolgskriterien, die er belegt. Das vorhandene Recht `runs.report` genügt. Artefakte ohne dieses Feld bleiben als Nachweise des Laufs lesbar und können später im Ticket zugeordnet werden. Die fachliche Bestätigung erfolgt im Eigentümerzugang.
 
 Die Eigentümersitzung kann über `GET /api/v1/tasks/{task_id}/flow` die Workflowdurchläufe und Einzelläufe eines Tickets abrufen. Die Antwort enthält die beim Start gültigen Phasen, zugehörige Versuche, Ergebnisberichte und Phasenentscheidungen. Das Übergabeprotokoll stammt aus dem gespeicherten Stand des empfangenden Laufs. Weitere Durchläufe lassen sich mit `next_cursor` und dem Abfrageparameter `cursor` laden. [Ablauf im Ticket](user/AGENTS_AND_WORKFLOWS.md#den-ablauf-eines-tickets-lesen)
 

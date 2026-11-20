@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\WorkManagement\Application;
 
+use App\AgentCatalog\Application\AgentCatalogReader;
 use App\Extensions\Application\PluginAvailability;
 use App\Shared\Application\Actor;
 use App\Shared\Application\OperationHandler;
@@ -31,6 +32,9 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         private readonly TaskCompletionPolicy $completionPolicy,
         private readonly TaskLinkPolicy $linkPolicy,
         private readonly PluginAvailability $plugins,
+        private readonly AgentCatalogReader $agentCatalog,
+        private readonly TaskEvidenceProjectionReader $taskEvidenceProjection,
+        private readonly TaskEvidenceEligibility $taskEvidenceEligibility,
     ) {
     }
 
@@ -156,7 +160,14 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
             return ($a <=> $b) * $direction;
         });
 
-        return $this->store->page(array_map(fn (array $task): array => $this->presentTask($task), $tasks), $p);
+        $page = $this->store->page($tasks, $p);
+        $projections = $this->taskEvidenceProjection->projectTasks($page['items']);
+        $page['items'] = array_map(
+            fn (array $task): array => $this->presentTask($projections[$task['id']]['task'] ?? $task, true),
+            $page['items'],
+        );
+
+        return $page;
     }
 
     /** @return array<string, mixed> */
@@ -470,7 +481,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         $profileId = $body['agent_profile_id'] ?? null;
         if (null !== $profileId) {
             $profile = $this->store->find('agent_profiles', (string) $profileId);
-            if (null === $profile || !in_array($task['project_id'], $profile['allowed_project_ids'] ?? [], true) || empty($profile['enabled'])) {
+            if (null === $profile || !$this->agentCatalog->profileAllowsProject($profile, (string) $task['project_id']) || empty($profile['enabled'])) {
                 throw new Problem(409, 'invalid_assignment', 'Das Rollenprofil ist für dieses Projekt nicht freigegeben.');
             }
         }
@@ -606,6 +617,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         $selectedColumn = $p['column_id'] ?? null;
         $initialRemaining = empty($p['cursor']) ? 500 : PHP_INT_MAX;
         $columns = [];
+        $pageTasks = [];
         $allTasks = $this->store->all('tasks', $board['project_id']);
         foreach ($board['columns'] as $column) {
             if (null !== $selectedColumn && $selectedColumn !== $column['id']) {
@@ -628,14 +640,25 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
                 $nextOffset = count($items);
                 $initialRemaining -= count($items);
             }
+            $pageTasks = [...$pageTasks, ...$items];
             $columns[] = [
                 'column_id' => $column['id'],
-                'items' => array_map(fn (array $task): array => $this->presentTask($task), $items),
+                'task_items' => $items,
                 'next_cursor' => $nextOffset < $total ? base64_encode((string) $nextOffset) : null,
                 'total' => $total,
                 'wip_exceeded' => null !== $column['wip_limit'] && $total > $column['wip_limit'],
             ];
         }
+
+        $projections = $this->taskEvidenceProjection->projectTasks($pageTasks);
+        foreach ($columns as &$column) {
+            $column['items'] = array_map(
+                fn (array $task): array => $this->presentTask($projections[$task['id']]['task'] ?? $task, true),
+                $column['task_items'],
+            );
+            unset($column['task_items']);
+        }
+        unset($column);
 
         return ['board' => $this->presentBoard($board), 'columns' => $columns, 'computed_at' => $this->store->now()];
     }
@@ -913,7 +936,10 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
             $items = array_values(array_filter($items, static fn (array $item): bool => $item['task_id'] === $p['task_id']));
         }
 
-        return $this->store->page($items, $p);
+        $page = $this->store->page($items, $p);
+        $page['items'] = $this->addEvidenceCurrentTaskState($page['items']);
+
+        return $page;
     }
 
     /** @return array<string, mixed> */
@@ -925,7 +951,79 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         }
         $actor->requireProject($evidence['project_id']);
 
-        return $evidence;
+        return $this->addEvidenceCurrentTaskState([$evidence])[0];
+    }
+
+    /** @param list<array<string, mixed>> $evidenceItems @return list<array<string, mixed>> */
+    private function addEvidenceCurrentTaskState(array $evidenceItems): array
+    {
+        $tasksById = [];
+        foreach ($evidenceItems as $evidence) {
+            $taskId = $evidence['task_id'] ?? null;
+            if (!is_string($taskId) || array_key_exists($taskId, $tasksById)) {
+                continue;
+            }
+            $task = $this->store->find('tasks', $taskId);
+            if (null !== $task) {
+                $tasksById[$taskId] = $task;
+            }
+        }
+
+        $projections = $this->taskEvidenceProjection->projectTasks(array_values($tasksById));
+        $linksByTask = $this->currentLinkSnapshotsByTask($tasksById);
+        foreach ($evidenceItems as &$evidence) {
+            $taskId = $evidence['task_id'] ?? null;
+            $task = is_string($taskId) ? ($tasksById[$taskId] ?? null) : null;
+            $projection = null === $task ? [] : ($projections[$task['id']] ?? ['evidence' => [], 'report_evidence_ids' => []]);
+            $evidence['current_for_task'] = null !== $task
+                && $this->taskEvidenceEligibility->isCurrent($evidence, $task, $projection)
+                && $this->evidenceLinksMatchSnapshots($evidence, $linksByTask[$task['id']] ?? []);
+        }
+        unset($evidence);
+
+        return $evidenceItems;
+    }
+
+    /** @param array<string, array<string, mixed>> $tasksById @return array<string, array<string, array<string, mixed>>> */
+    private function currentLinkSnapshotsByTask(array $tasksById): array
+    {
+        $taskIdsByProject = [];
+        foreach ($tasksById as $task) {
+            if (is_string($task['id'] ?? null) && is_string($task['project_id'] ?? null)) {
+                $taskIdsByProject[$task['project_id']][$task['id']] = true;
+            }
+        }
+
+        $linksByTask = [];
+        foreach ($taskIdsByProject as $projectId => $taskIds) {
+            foreach ($this->store->all('link_collections', $projectId) as $collection) {
+                $taskId = $collection['task_id'] ?? null;
+                if (!is_string($taskId) || !isset($taskIds[$taskId])) {
+                    continue;
+                }
+                foreach ($collection['links'] ?? [] as $link) {
+                    if (is_string($link['id'] ?? null)) {
+                        $linksByTask[$taskId][$link['id']] = $link;
+                    }
+                }
+            }
+        }
+
+        return $linksByTask;
+    }
+
+    /** @param array<string, mixed> $evidence @param array<string, array<string, mixed>> $currentLinks */
+    private function evidenceLinksMatchSnapshots(array $evidence, array $currentLinks): bool
+    {
+        $currentSnapshot = [];
+        foreach ($evidence['link_ids'] ?? [] as $linkId) {
+            if (!is_string($linkId) || !isset($currentLinks[$linkId])) {
+                return false;
+            }
+            $currentSnapshot[] = $currentLinks[$linkId];
+        }
+
+        return $currentSnapshot === ($evidence['link_snapshot'] ?? null);
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -947,6 +1045,12 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         }
         $criterionIds = array_values(array_unique($body['criterion_ids'] ?? []));
         $this->assertCriteriaExist($task, $criterionIds);
+        foreach ($criterionIds as $criterionId) {
+            $index = $this->criterionIndex($task, $criterionId);
+            if ('human_confirmed' === $task['criteria'][$index]['state']) {
+                throw new Problem(409, 'criterion_already_confirmed', 'Für ein fachlich bestätigtes Kriterium können keine weiteren Nachweise zugeordnet werden.');
+            }
+        }
         $run = null;
         if (($body['run_id'] ?? null) !== null) {
             $run = $this->store->find('runs', (string) $body['run_id']);
@@ -1001,10 +1105,11 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         }
         $actor->requireProject($evidence['project_id']);
         $task = $this->task($evidence['task_id'], $actor);
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$task['id']] ?? ['evidence' => []];
         if ('reported' !== $evidence['review_status']) {
             throw new Problem(409, 'evidence_already_reviewed', 'Der Nachweis wurde bereits bewertet.');
         }
-        if ($evidence['task_revision'] !== $task['version'] || !$this->evidenceLinksCurrent($evidence)) {
+        if (!$this->taskEvidenceEligibility->isCurrent($evidence, $task, $projection) || !$this->evidenceLinksCurrent($evidence)) {
             throw new Problem(409, 'evidence_stale', 'Der Nachweis bezieht sich nicht mehr auf die aktuelle Ticketrevision und Linkfassung.');
         }
         $evidence['review_status'] = $body['decision'];
@@ -1024,20 +1129,32 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
     {
         $task = $this->task($taskId, $actor);
         $criterionIndex = $this->criterionIndex($task, $criterionId);
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$taskId] ?? ['task' => $task, 'evidence' => [], 'report_evidence_ids' => []];
+        $reportEvidenceIds = array_fill_keys($projection['report_evidence_ids'], true);
         foreach ($body['evidence_ids'] as $evidenceId) {
             $evidence = $this->store->find('evidence', $evidenceId);
             if (null === $evidence || $evidence['task_id'] !== $taskId || $evidence['project_id'] !== $task['project_id']) {
                 throw new Problem(409, 'evidence_task_mismatch', 'Ein Nachweis gehört nicht zu diesem Ticket.');
             }
-            if ($evidence['task_revision'] !== $task['version'] || !$this->evidenceLinksCurrent($evidence)) {
+            if ('rejected' === ($evidence['review_status'] ?? null)) {
+                throw new Problem(409, 'evidence_unavailable', 'Ein zurückgewiesener Nachweis kann nicht zugeordnet werden.');
+            }
+            if (!$this->taskEvidenceEligibility->isCurrent($evidence, $task, $projection) || !$this->evidenceLinksCurrent($evidence)) {
                 throw new Problem(409, 'evidence_stale', 'Der Nachweis passt nicht zur aktuellen Ticketrevision.');
             }
         }
         $criterion = $task['criteria'][$criterionIndex];
-        $criterion['evidence_ids'] = array_values(array_unique(array_merge($criterion['evidence_ids'], $body['evidence_ids'])));
-        if ('human_confirmed' !== $criterion['state']) {
-            $criterion['state'] = 'reported';
+        $projectedCriterion = $projection['task']['criteria'][$criterionIndex] ?? $criterion;
+        $alreadyAssignedIds = array_fill_keys($projectedCriterion['evidence_ids'] ?? [], true);
+        $newEvidenceIds = array_values(array_filter($body['evidence_ids'], static fn (string $evidenceId): bool => !isset($alreadyAssignedIds[$evidenceId])));
+        if ([] === $newEvidenceIds) {
+            return $this->presentTask($projection['task'], true);
         }
+        if ('human_confirmed' === $criterion['state']) {
+            throw new Problem(409, 'criterion_already_confirmed', 'Für ein fachlich bestätigtes Kriterium können keine weiteren Nachweise zugeordnet werden.');
+        }
+        $criterion['evidence_ids'] = array_values(array_unique(array_merge($criterion['evidence_ids'], $body['evidence_ids'])));
+        $criterion['state'] = 'reported';
         $criterion['reviewed_at'] = null;
         $criterion['reviewed_by'] = null;
         $criterion['review_reason'] = null;
@@ -1045,8 +1162,10 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         $task = $this->store->save('tasks', $task, 'task.evidence_attached');
         foreach ($body['evidence_ids'] as $evidenceId) {
             $evidence = $this->store->get('evidence', $evidenceId);
-            $evidence['task_revision'] = $task['version'];
-            $this->store->save('evidence', $evidence, 'evidence.revision_bound');
+            if (!isset($reportEvidenceIds[$evidenceId])) {
+                $evidence['task_revision'] = $task['version'];
+                $this->store->save('evidence', $evidence, 'evidence.revision_bound');
+            }
         }
 
         return $this->presentTask($task);
@@ -1058,13 +1177,14 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         $actor->requireOwner();
         $task = $this->task($taskId, $actor);
         $index = $this->criterionIndex($task, $criterionId);
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$taskId] ?? ['evidence' => []];
         foreach ($body['evidence_ids'] as $evidenceId) {
             $evidence = $this->store->find('evidence', $evidenceId);
             if (
                 null === $evidence
                 || $evidence['task_id'] !== $taskId
                 || $evidence['project_id'] !== $task['project_id']
-                || $evidence['task_revision'] !== $task['version']
+                || !$this->taskEvidenceEligibility->isCurrent($evidence, $task, $projection)
                 || 'rejected' === $evidence['review_status']
                 || !$this->evidenceLinksCurrent($evidence)
             ) {
@@ -1082,13 +1202,26 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         $task['criteria'][$index]['reviewed_at'] = $this->store->now();
         $task['criteria'][$index]['reviewed_by'] = $this->actorRef($actor);
         $task['criteria'][$index]['review_reason'] = trim($body['reason']);
-        $task = $this->store->save('tasks', $task, 'task.criterion_reviewed');
-        foreach ($task['criteria'][$index]['evidence_ids'] as $evidenceId) {
-            $evidence = $this->store->find('evidence', $evidenceId);
-            if (null !== $evidence && $evidence['task_id'] === $taskId) {
-                $evidence['task_revision'] = $task['version'];
-                $this->store->save('evidence', $evidence, 'evidence.revision_bound');
+        $previousTask = $task;
+        $previousTaskVersion = (int) $task['version'];
+        $reportEvidenceIds = array_fill_keys($projection['report_evidence_ids'] ?? [], true);
+        $evidenceToRebind = [];
+        foreach ($this->store->all('evidence', $task['project_id']) as $evidence) {
+            if ($evidence['task_id'] === $taskId
+                && !isset($reportEvidenceIds[$evidence['id']])
+                && 'rejected' !== ($evidence['review_status'] ?? null)
+                && $this->taskEvidenceEligibility->isCurrent($evidence, $previousTask, $projection)
+                && $this->evidenceLinksCurrent($evidence)) {
+                $evidenceToRebind[] = $evidence;
             }
+        }
+        $task = $this->store->save('tasks', $task, 'task.criterion_reviewed');
+        foreach ($evidenceToRebind as $evidence) {
+            if ((int) ($evidence['task_revision'] ?? 0) !== $previousTaskVersion) {
+                continue;
+            }
+            $evidence['task_revision'] = $task['version'];
+            $this->store->save('evidence', $evidence, 'evidence.revision_bound');
         }
 
         return $this->presentTask($task);
@@ -1235,8 +1368,14 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
     }
 
     /** @param array<string, mixed> $task @return array<string, mixed> */
-    private function presentTask(array $task): array
+    private function presentTask(array $task, bool $criteriaProjected = false): array
     {
+        if (!$criteriaProjected && is_string($task['id'] ?? null)) {
+            $projection = $this->taskEvidenceProjection->projectTasks([$task])[$task['id']] ?? null;
+            if (null !== $projection) {
+                $task = $projection['task'];
+            }
+        }
         $task['allowed_actions'] = [];
         $task['latest_run'] = null;
         $task['custom_fields'] = (object) ($task['custom_fields'] ?? []);
@@ -1448,10 +1587,14 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
     {
         $project = $this->project($task['project_id']);
         $evidence = $this->store->all('evidence', $task['project_id']);
-        $currentEvidenceIds = [];
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$task['id']] ?? ['evidence' => []];
+        $currentEvidenceIdsById = [];
         foreach ($evidence as $item) {
-            if ($item['task_id'] === $task['id'] && $item['task_revision'] === $task['version'] && $this->evidenceLinksCurrent($item)) {
-                $currentEvidenceIds[] = $item['id'];
+            if ($item['task_id'] === $task['id']
+                && $this->taskEvidenceEligibility->isCurrent($item, $task, $projection)
+                && 'rejected' !== ($item['review_status'] ?? null)
+                && $this->evidenceLinksCurrent($item)) {
+                $currentEvidenceIdsById[$item['id']] = true;
             }
         }
         $runs = $this->store->all('runs', $task['project_id']);
@@ -1462,7 +1605,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
             $evidence,
             $approvals,
             $runs,
-            $currentEvidenceIds,
+            array_keys($currentEvidenceIdsById),
         );
     }
 
@@ -1563,7 +1706,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         }
         foreach ($filter['agent_profile_ids'] ?? [] as $profileId) {
             $profile = $this->store->find('agent_profiles', (string) $profileId);
-            if (null === $profile || !in_array($projectId, $profile['allowed_project_ids'] ?? [], true)) {
+            if (null === $profile || !$this->agentCatalog->profileAllowsProject($profile, $projectId)) {
                 throw new Problem(422, 'validation_failed', 'Ein Rollenfilter verweist nicht auf ein für dieses Projekt zugelassenes Profil.');
             }
         }

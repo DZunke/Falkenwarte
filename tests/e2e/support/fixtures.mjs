@@ -346,9 +346,9 @@ export const test = base.extend({
           expect(response.status(), await response.text()).toBe(200);
           return response.json();
         },
-        createExternalT3Activity: async ({ threadId, runId, externalProjectId = 'qa-t3-project-1' } = {}) => {
+        createExternalT3Activity: async ({ threadId, runId, externalProjectId = 'qa-t3-project-1', title } = {}) => {
           const response = await context.post(`${t3URL}/__qa/external-activity`, {
-            data: { action: 'create', ...(threadId ? { thread_id: threadId } : {}), ...(runId ? { run_id: runId } : {}), external_project_id: externalProjectId },
+            data: { action: 'create', ...(threadId ? { thread_id: threadId } : {}), ...(runId ? { run_id: runId } : {}), external_project_id: externalProjectId, ...(title ? { title } : {}) },
           });
           expect(response.status(), await response.text()).toBe(201);
           return response.json();
@@ -417,15 +417,21 @@ function sanitizeMockJournal(name, journal) {
       unexpected: journal.unexpected.map((entry) => ({ method: entry.method, path: entry.path, tool: entry.tool, outcome: entry.outcome })),
       requests: journal.journal.map((entry) => ({
         sequence: entry.sequence,
+        scenario: entry.scenario ?? null,
         path: entry.path ?? null,
         mock_origin: entry.mock_origin ?? null,
         method: entry.method,
         tool: entry.tool ?? null,
+        tool_names: entry.tool_names ?? null,
         external_thread_id: entry.external_thread_id ?? null,
         external_run_id: entry.external_run_id ?? null,
         auth_namespace: entry.auth_namespace ?? null,
         protocol_version: entry.protocol_version ?? null,
         arguments_hash: entry.arguments_hash ?? null,
+        thread_list_project_id: entry.thread_list_project_id ?? null,
+        thread_list_cursor: entry.thread_list_cursor ?? null,
+        thread_list_limit: entry.thread_list_limit ?? null,
+        thread_list_result_threads: entry.thread_list_result_threads ?? null,
         outcome: entry.outcome,
         launch_payload_hash: entry.launch_payload_hash ?? null,
       })),

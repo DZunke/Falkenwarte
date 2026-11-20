@@ -21,6 +21,9 @@
 | Eigentümer | In der Ersteinrichtung angelegter menschlicher Betreiber. Eigentümerentscheidungen ändern fachliche Werte und ersetzen nicht die externe T3-Ausführung. |
 | Technischer Principal | Über Bearer-Zugang authentifizierter Akteur mit Projekt- und Capability-Beschränkungen. Er verwendet die technischen Rechte seines Tokens und handelt nicht als Eigentümer. |
 | Agentprofil | Falkenwarte-Konfiguration mit erlaubten Projekten, Verbindung, Rolle und Ausführungsziel. Es ist keine eigene Modell- oder Agentlaufzeit. |
+| Ausführungsziel | Auswahl, mit der eine Agentrolle T3 den Projektstandard, ein T3-Referenzthreadziel oder eine benannte T3-Providerinstanz samt Modell übergibt. Bei einem direkten Providerziel speichert Falkenwarte nur die von T3 gemeldete Instanz-ID und Modell-ID; Providerkonfiguration und Zugang bleiben in T3. |
+| T3-Providerinstanz | Von T3 gemeldete, verbindungsbezogene Providerkonfiguration, die für einen Start zusammen mit einer konkreten T3-Modell-ID ausgewählt werden kann. Falkenwarte verwendet den gemeldeten Slug als Referenz und verwaltet die Instanzparameter nicht selbst. |
+| Referenzthread | Vorhandener Thread im gebundenen T3-Projekt, aus dem ein Agentprofil belegte Provider- und Modellroutingwerte für einen neuen T3-Thread übernimmt. Der Gesprächsverlauf wird nicht übernommen. |
 | T3-Projektbindung | Zuordnung eines Falkenwarte-Projekts zu einer bestehenden T3-Verbindung und einem vorhandenen T3-Projekt. Sie ist zugleich der aktuelle Belegungsscope für parallele Runs. |
 | Run | Persistierter Auftrag und Ablauf einer externen T3-Ausführung mit Snapshot, Versuch, Zustandsbeobachtungen, Ergebnisbericht und gegebenenfalls Nachweisen. |
 | Versuch | Eine konkrete T3-Startidentität innerhalb des Runs. Ein technischer Zustellretry erhöht nicht automatisch die fachliche Reparaturrunde. |

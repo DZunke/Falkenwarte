@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\AgentCatalog\Infrastructure;
 
 use App\AgentCatalog\Application\AgentCatalogReader;
+use App\AgentCatalog\Domain\AgentProfileRules;
 use App\Extensions\Application\PluginRegistry;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
@@ -13,8 +14,11 @@ use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 #[AsAlias(AgentCatalogReader::class)]
 final class StoreAgentCatalogReader implements AgentCatalogReader
 {
-    public function __construct(private readonly Store $store, private readonly PluginRegistry $plugins)
-    {
+    public function __construct(
+        private readonly Store $store,
+        private readonly PluginRegistry $plugins,
+        private readonly AgentProfileRules $profileRules,
+    ) {
     }
 
     public function connection(string $id): array
@@ -28,6 +32,11 @@ final class StoreAgentCatalogReader implements AgentCatalogReader
         $profile['bridge_plugin_id'] ??= $this->providerIdForConnection((string) $profile['connection_id']);
 
         return $profile;
+    }
+
+    public function profileAllowsProject(array $profile, string $projectId): bool
+    {
+        return $this->profileRules->allowsProject($profile, $projectId);
     }
 
     public function binding(string $id): array

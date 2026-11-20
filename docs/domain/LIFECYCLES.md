@@ -42,7 +42,9 @@ Der [Ticket-Receipt-Vertrag v1](../../contracts/schemas/ticket-receipt.schema.js
 
 ## Runs und Workflows
 
-Ein Run benötigt eine aktuelle Aufgabenrevision, eine startbereite Agentenkonfiguration, Projekt- und Verbindungsbindung, aktivierten Ausführungsprovider sowie eine erlaubte Workflowphase. Neue Runs werden mit Snapshot im Zustand `queued` gespeichert und über `run.dispatch` an den Hintergrundworker gestellt.
+Ein Run benötigt eine aktuelle Aufgabenrevision, eine startbereite Agentenkonfiguration, Projekt- und Verbindungsbindung, aktivierten Ausführungsprovider sowie eine erlaubte Workflowphase. Das Agentprofil legt fest, ob T3 seinen Projektstandard, ein validiertes Referenzthreadziel oder eine ausdrücklich gewählte Providerinstanz samt Modell erhält. Neue Runs werden mit diesem Ziel im Snapshot im Zustand `queued` gespeichert und über `run.dispatch` an den Hintergrundworker gestellt.
+
+Beim direkten Providerziel stammen Instanz-ID und Modell-ID aus der aktuellen T3-Auswahl und werden gemeinsam im Dispatch-Snapshot eingefroren. Beim Projektstandard wird `modelSelection` ausgelassen, damit T3 seinen Standard bei Annahme auflöst. Ein Referenzthread liefert nur belegte Routingwerte, die Falkenwarte für den Start eines neuen T3-Threads verwendet; der Verlauf des Referenzthreads wird nicht als Kontext übernommen.
 
 | Runzustand | Bedeutung |
 |---|---|
@@ -58,7 +60,7 @@ Ein Run benötigt eine aktuelle Aufgabenrevision, eine startbereite Agentenkonfi
 | `succeeded`, `failed`, `cancelled` | Der Run hat einen geklärten lokalen Abschlusszustand erreicht. |
 | `abandoned` | Der Eigentümer hat die lokale Weiterbearbeitung aufgegeben. Der Run-Datensatz enthält keinen T3-Abschlussstatus. `abandoned` steht nicht in `ACTIVE_RUN_STATES`. Deshalb kann `RunHandler::requestRun()` für dieselbe T3-Projektbindung einen neuen Run anlegen. |
 
-Ein Ergebnisbericht ist eine Agentmeldung und kann Nachweise mit Status `reported` anlegen. `RunHandler` verarbeitet ihn als aktuell, wenn Versuch, Aufgabenrevision und Runzustand zum gemeldeten Stand passen. Andernfalls speichert es den Bericht als nicht akzeptiert.
+Ein Ergebnisbericht ist eine Agentmeldung und kann Nachweise mit Status `reported` anlegen. Für jedes Artefakt kann der Agent die Kriterien aus der eingefrorenen Aufgabe benennen, die der Nachweis belegt. Eine gültige Zuordnung erscheint am Kriterium als Agentenmeldung. Die menschliche Bestätigung bleibt eine eigene Entscheidung. `RunHandler` verarbeitet ihn als aktuell, wenn Versuch, Aufgabenrevision und Runzustand zum gemeldeten Stand passen. Andernfalls speichert es den Bericht als nicht akzeptiert.
 
 `RunCompletionEvaluator` prüft T3-Beobachtung und gespeicherte Phasenpolicy, bevor der Run abgeschlossen wird. Ein Approval bindet Aufgabenrevision, Runversuch und Ergebnisdigest. Bei geändertem Bezug setzt `RunHandler` den Status auf `invalidated`.
 

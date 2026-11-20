@@ -15,6 +15,9 @@ use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\CanonicalData;
 use App\Shared\Domain\Problem;
+use App\WorkManagement\Application\TaskEvidenceEligibility;
+use App\WorkManagement\Application\TaskEvidenceProjectionReader;
+use Symfony\Component\Uid\Uuid;
 
 final class RunHandler implements OperationHandler
 {
@@ -29,6 +32,8 @@ final class RunHandler implements OperationHandler
         private readonly WorkflowPolicy $workflowPolicy,
         private readonly RunCompletionEvaluator $completionEvaluator,
         private readonly RunDelegationPolicy $delegationPolicy,
+        private readonly TaskEvidenceProjectionReader $taskEvidenceProjection,
+        private readonly TaskEvidenceEligibility $taskEvidenceEligibility,
     ) {
         $this->bridge = $bridge;
     }
@@ -312,7 +317,7 @@ final class RunHandler implements OperationHandler
             if (!is_string($providerId) || '' === $providerId || !$this->agentCatalog->providerEnabled($providerId)) {
                 throw new Problem(409, 'capability_unavailable', 'Der registrierte Ausführungsprovider nimmt keine neuen T3-Aufträge an.');
             }
-            if (!in_array($projectId, $profile['allowed_project_ids'], true)) {
+            if (!$this->agentCatalog->profileAllowsProject($profile, $projectId)) {
                 throw new Problem(403, 'forbidden', 'Dieses Agentprofil ist für das Projekt nicht freigegeben.');
             }
             $binding = $this->agentCatalog->bindingForProject($projectId);
@@ -495,9 +500,7 @@ final class RunHandler implements OperationHandler
         if (!in_array($run['state'], ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'result_reported', 'verifying'], true)) {
             throw new Problem(409, 'run_transition_invalid', 'Dieser Lauf kann aus seinem aktuellen Zustand nicht abgebrochen werden.');
         }
-        $run['state'] = 'cancel_requested';
-        $run['status_reason'] = trim((string) $body['reason']);
-        $run = $this->store->save('runs', $run, 'run.cancel_requested');
+        $run = $this->requestCancellation($run, trim((string) $body['reason']), 'run.cancel_requested');
         $this->store->enqueue('run.cancel', ['run_id' => $id]);
 
         return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
@@ -578,22 +581,53 @@ final class RunHandler implements OperationHandler
 
             return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
         }
+        $snapshotCriteriaIds = [];
+        foreach (($run['snapshot']['criteria'] ?? []) as $criterion) {
+            if (isset($criterion['id']) && is_string($criterion['id'])) {
+                $snapshotCriteriaIds[strtolower($criterion['id'])] = $criterion['id'];
+            }
+        }
+        $artifacts = $body['artifacts'] ?? [];
+        if (!is_array($artifacts) || !array_is_list($artifacts) || count($artifacts) > 100) {
+            throw new Problem(422, 'validation_failed', 'Der Bericht darf höchstens 100 Nachweise als Liste enthalten.');
+        }
+        $artifactCriterionIds = [];
+        foreach ($artifacts as $artifact) {
+            $criterionIds = $artifact['criterion_ids'] ?? [];
+            if (!is_array($criterionIds) || !array_is_list($criterionIds) || count($criterionIds) > 100) {
+                throw new Problem(422, 'validation_failed', 'criterion_ids muss eine Liste mit höchstens 100 UUIDs sein.');
+            }
+            $seenCriterionIds = [];
+            $normalizedCriterionIds = [];
+            foreach ($criterionIds as $criterionId) {
+                if (!is_string($criterionId) || !Uuid::isValid($criterionId)) {
+                    throw new Problem(422, 'validation_failed', 'criterion_ids muss eindeutige UUIDs enthalten.');
+                }
+                $normalizedCriterionId = strtolower($criterionId);
+                if (isset($seenCriterionIds[$normalizedCriterionId])) {
+                    throw new Problem(422, 'validation_failed', 'criterion_ids muss eindeutige UUIDs enthalten.');
+                }
+                if (!isset($snapshotCriteriaIds[$normalizedCriterionId])) {
+                    throw new Problem(409, 'criterion_not_found', 'Ein Nachweis verweist auf ein unbekanntes Kriterium im eingefrorenen Run-Snapshot.');
+                }
+                $seenCriterionIds[$normalizedCriterionId] = true;
+                $normalizedCriterionIds[] = $snapshotCriteriaIds[$normalizedCriterionId];
+            }
+            $artifactCriterionIds[] = $normalizedCriterionIds;
+        }
         $isCurrent = (int) $body['task_revision'] === (int) $run['snapshot']['task_revision']
             && (int) $body['task_revision'] === (int) $task['version']
             && $attempt['attempt_no'] === (int) $run['attempt_no']
             && !in_array($run['state'], ['succeeded', 'failed', 'cancelled', 'abandoned'], true);
-        $linkSnapshots = [];
-        $linkIds = [];
-        foreach ($body['artifacts'] as $artifact) {
+        $linksById = [];
+        foreach ($artifacts as $artifact) {
             foreach (($artifact['link_ids'] ?? []) as $linkId) {
-                $link = $this->taskLink((string) $task['id'], (string) $linkId);
-                $linkIds[] = $linkId;
-                $linkSnapshots[] = $link;
+                $linksById[$linkId] ??= $this->taskLink((string) $task['id'], (string) $linkId);
             }
         }
         $evidenceIds = [];
-        foreach ($body['artifacts'] as $artifact) {
-            $artifactLinks = array_values(array_intersect($artifact['link_ids'] ?? [], $linkIds));
+        foreach ($artifacts as $artifactIndex => $artifact) {
+            $artifactLinks = $artifact['link_ids'] ?? [];
             $evidence = $this->store->save('evidence', [
                 'project_id' => $run['project_id'], 'task_id' => $run['task_id'], 'run_id' => $id,
                 'attempt_no' => $attempt['attempt_no'], 'task_revision' => (int) $body['task_revision'],
@@ -601,7 +635,8 @@ final class RunHandler implements OperationHandler
                 'text' => $artifact['text'] ?? null, 'link_ids' => $artifactLinks, 'review_status' => 'reported',
                 'reported_by' => $actor->ref(),
                 'reviewed_at' => null, 'reviewed_by' => null, 'review_reason' => null,
-                'criterion_ids' => [], 'link_snapshot' => array_values(array_filter($linkSnapshots, static fn (array $link): bool => in_array($link['id'], $artifactLinks, true))),
+                'criterion_ids' => $artifactCriterionIds[$artifactIndex],
+                'link_snapshot' => array_map(static fn (string $linkId): array => $linksById[$linkId], $artifactLinks),
             ], 'evidence.reported');
             $evidenceIds[] = $evidence['id'];
         }
@@ -958,9 +993,7 @@ final class RunHandler implements OperationHandler
             foreach ($instance['run_ids'] as $runId) {
                 $run = $this->store->find('runs', (string) $runId);
                 if (null !== $run && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
-                    $run['state'] = 'cancel_requested';
-                    $run['status_reason'] = 'Der übergeordnete Workflow wurde abgebrochen.';
-                    $this->store->save('runs', $run, 'run.cancel_requested');
+                    $this->requestCancellation($run, 'Der übergeordnete Workflow wurde abgebrochen.', 'run.cancel_requested');
                     $this->store->enqueue('run.cancel', ['run_id' => $runId]);
                 }
             }
@@ -1160,7 +1193,12 @@ final class RunHandler implements OperationHandler
                     return;
                 }
                 $modelSelection = $reference['modelSelection'] ?? null;
-                if (!is_array($modelSelection) || !is_string($modelSelection['instanceId'] ?? null) || !is_string($modelSelection['model'] ?? null)) {
+                if (!is_array($modelSelection)
+                    || !is_string($modelSelection['instanceId'] ?? null)
+                    || '' === trim($modelSelection['instanceId'])
+                    || !is_string($modelSelection['model'] ?? null)
+                    || '' === trim($modelSelection['model'])
+                    || $modelSelection['model'] !== trim($modelSelection['model'])) {
                     $run['state'] = 'auth_blocked';
                     $run['status_reason'] = 'T3 liefert für den Referenzthread keine belegten Provider- und Modellreferenzen.';
                     $this->store->save('runs', $run, 'run.reference_target_invalid');
@@ -1169,6 +1207,120 @@ final class RunHandler implements OperationHandler
                     return;
                 }
                 $payload['modelSelection'] = ['instanceId' => $modelSelection['instanceId'], 'model' => $modelSelection['model']];
+            } elseif (($target['mode'] ?? null) === 't3_provider_instance') {
+                $instanceId = $target['provider_instance_id'] ?? null;
+                $modelId = $target['model'] ?? null;
+                $expectedRunVersion = (int) $run['version'];
+                $expectedAttemptNo = (int) $attempt['attempt_no'];
+                $expectedDispatchId = (string) $attempt['dispatch_id'];
+                if (!is_string($instanceId) || '' === $instanceId || !is_string($modelId) || '' === $modelId) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                    );
+
+                    return;
+                }
+                $hasReasoningChoice = array_key_exists('reasoning', $target);
+                $reasoningChoice = $target['reasoning'] ?? null;
+                $reasoningOptionId = is_array($reasoningChoice) ? ($reasoningChoice['option_id'] ?? null) : null;
+                $reasoningValue = is_array($reasoningChoice) ? ($reasoningChoice['value'] ?? null) : null;
+                if ($hasReasoningChoice && (
+                    !is_string($reasoningOptionId)
+                    || '' === trim($reasoningOptionId)
+                    || $reasoningOptionId !== trim($reasoningOptionId)
+                    || mb_strlen($reasoningOptionId) > 128
+                    || !is_string($reasoningValue)
+                    || '' === trim($reasoningValue)
+                    || $reasoningValue !== trim($reasoningValue)
+                    || mb_strlen($reasoningValue) > 128
+                )) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                        'Die Reasoning-Auswahl der Agentrolle ist ungültig. Passe die Agentrolle an und starte einen neuen Auftrag.',
+                    );
+
+                    return;
+                }
+
+                try {
+                    $token = $this->connectionToken($connection);
+                    $capabilities = $this->bridge->capabilities($connection, $token);
+                    $providers = $capabilities['providers'] ?? [];
+                    $selection = $this->providerSelectionStatus($instanceId, $modelId, $providers);
+                    if (!$selection['model_available'] && $selection['may_search']) {
+                        $capabilities = $this->bridge->capabilities($connection, $token, mb_substr($modelId, 0, 200));
+                        $providers = $capabilities['providers'] ?? [];
+                        $selection = $this->providerSelectionStatus($instanceId, $modelId, $providers);
+                    }
+                } catch (T3BridgeException $exception) {
+                    $currentRun = $this->currentProviderDispatchRun(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                    );
+                    if (null === $currentRun) {
+                        return;
+                    }
+                    $this->setRunBridgeFailure($currentRun, $exception);
+                    if (!$exception->authenticationFailure) {
+                        throw $exception;
+                    }
+
+                    return;
+                }
+
+                $currentRun = $this->currentProviderDispatchRun(
+                    $runId,
+                    $expectedRunVersion,
+                    $expectedAttemptNo,
+                    $expectedDispatchId,
+                );
+                if (null === $currentRun) {
+                    return;
+                }
+                if (!$selection['model_available']) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                    );
+
+                    return;
+                }
+
+                if ($hasReasoningChoice && !$this->providerModelSupportsReasoning(
+                    $selection['reasoning'] ?? null,
+                    (string) $reasoningOptionId,
+                    (string) $reasoningValue,
+                )) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                        'Die gewählte Reasoning-Stufe ist für das bestätigte T3-Modell nicht mehr verfügbar. Passe die Agentrolle an und starte einen neuen Auftrag.',
+                    );
+
+                    return;
+                }
+
+                $run = $currentRun;
+                $attempt = $this->attempt($run, $expectedAttemptNo);
+                $payload['modelSelection'] = ['instanceId' => $instanceId, 'model' => $modelId];
+                if ($hasReasoningChoice) {
+                    $payload['modelSelection']['options'] = [[
+                        'id' => $reasoningOptionId,
+                        'value' => $reasoningValue,
+                    ]];
+                }
             }
             $dispatchRequest = DispatchRequest::fromPayload($payload);
             $payload = $dispatchRequest->payload;
@@ -1234,15 +1386,120 @@ final class RunHandler implements OperationHandler
         $this->store->enqueue('run.observe', ['run_id' => $runId]);
     }
 
+    /** @param list<array<string, mixed>> $providers @return array{model_available: bool, may_search: bool, reasoning?: array<string, mixed>} */
+    private function providerSelectionStatus(string $instanceId, string $modelId, array $providers): array
+    {
+        foreach ($providers as $provider) {
+            if (($provider['provider_instance_id'] ?? null) !== $instanceId) {
+                continue;
+            }
+
+            $available = true === ($provider['available'] ?? false);
+            $modelAvailable = false;
+            $reasoning = null;
+            foreach (($provider['models'] ?? []) as $model) {
+                if (is_array($model) && ($model['id'] ?? null) === $modelId) {
+                    $modelAvailable = true;
+                    $reasoning = is_array($model['reasoning'] ?? null) ? $model['reasoning'] : null;
+                    break;
+                }
+            }
+            $omittedModels = $provider['omitted_models'] ?? null;
+
+            $status = [
+                'model_available' => $available && $modelAvailable,
+                // T3 omits the field when its complete catalog contains no more models.
+                'may_search' => $available && is_int($omittedModels) && $omittedModels > 0,
+            ];
+            if (null !== $reasoning) {
+                $status['reasoning'] = $reasoning;
+            }
+
+            return $status;
+        }
+
+        return ['model_available' => false, 'may_search' => false];
+    }
+
+    private function providerModelSupportsReasoning(mixed $reasoning, string $optionId, string $value): bool
+    {
+        return is_array($reasoning)
+            && ($reasoning['option_id'] ?? null) === $optionId
+            && is_array($reasoning['values'] ?? null)
+            && in_array($value, $reasoning['values'], true);
+    }
+
+    /** @return array<string, mixed>|null */
+    private function currentProviderDispatchRun(
+        string $runId,
+        int $expectedRunVersion,
+        int $expectedAttemptNo,
+        string $expectedDispatchId,
+    ): ?array {
+        $run = $this->store->find('runs', $runId);
+        if (null === $run
+            || (int) $run['version'] !== $expectedRunVersion
+            || (int) $run['attempt_no'] !== $expectedAttemptNo
+            || !in_array($run['state'], ['queued', 'dispatching', 'reconciling', 'result_reported'], true)
+            || is_array($run['_dispatch_request'] ?? null)) {
+            return null;
+        }
+
+        $attempt = $this->attempt($run, $expectedAttemptNo);
+        if (($attempt['dispatch_id'] ?? null) !== $expectedDispatchId || null !== ($attempt['external_thread_id'] ?? null)) {
+            return null;
+        }
+
+        return $run;
+    }
+
+    private function failUnstartedProviderSelection(
+        string $runId,
+        int $expectedRunVersion,
+        int $expectedAttemptNo,
+        string $expectedDispatchId,
+        ?string $statusReason = null,
+    ): void {
+        $this->store->atomic(function () use ($runId, $expectedRunVersion, $expectedAttemptNo, $expectedDispatchId, $statusReason): void {
+            $run = $this->currentProviderDispatchRun($runId, $expectedRunVersion, $expectedAttemptNo, $expectedDispatchId);
+            if (null === $run) {
+                return;
+            }
+
+            $run['state'] = 'failed';
+            $run['status_reason'] = $statusReason ?? 'Die gewählte T3-Providerinstanz oder das Modell ist in der gebundenen Verbindung nicht mehr verfügbar. Passe die Agentrolle an und starte einen neuen Auftrag.';
+            $attempt = $this->attempt($run, $expectedAttemptNo);
+            $attempt['ended_at'] ??= $this->store->now();
+            $attempts = $run['attempts'];
+            $attempts[$attempt['attempt_no'] - 1] = $attempt;
+            $run['attempts'] = $attempts;
+            $run = $this->store->save('runs', $run, 'run.dispatch_rejected_provider_selection');
+            $this->openAttention($run['task_id'], $run['project_id'], 'run_failed', 'owner');
+            $this->removeObservationSchedule((string) $run['id']);
+            if (null !== $run['workflow_instance_id']) {
+                $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
+            }
+        });
+    }
+
     private function observe(string $runId): void
     {
         $run = $this->record('runs', $runId);
         if (!in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
             return;
         }
+        $cancelIntent = $run['_cancel_intent'] ?? null;
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
         if (
+            is_array($cancelIntent)
+            && 'requested' === ($cancelIntent['state'] ?? null)
+            && null !== $attempt['external_thread_id']
+        ) {
+            return;
+        }
+        if (
             in_array($run['state'], ['verifying', 'result_reported'], true)
+            && !is_array($cancelIntent)
             && null !== ($attempt['ended_at'] ?? null)
             && in_array(strtolower((string) $attempt['remote_status']), ['completed', 'succeeded', 'success'], true)
         ) {
@@ -1257,6 +1514,18 @@ final class RunHandler implements OperationHandler
             return;
         }
         if (null === $attempt['external_thread_id']) {
+            if (is_array($cancelIntent) && 'requested' === ($cancelIntent['state'] ?? null)) {
+                $run['_cancel_requested_unknown_external'] = true;
+                $run['_cancel_intent']['state'] = 'unknown_external';
+                $run['state'] = 'reconciling';
+                $run['status_reason'] = 'Der externe Startausgang ist ungeklärt. Abbruchwirkung wird vor einer Freigabe des Ausführungsplatzes abgeglichen.';
+                $this->store->save('runs', $run, 'run.cancel_reconciliation_required');
+                $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
+                $this->store->enqueue('run.reconcile', ['run_id' => $runId]);
+                $this->removeObservationSchedule($runId);
+
+                return;
+            }
             if (!empty($run['_cancel_requested_unknown_external'])) {
                 // Replaying a keyed launch could start work the owner already asked to stop.
                 $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
@@ -1306,13 +1575,28 @@ final class RunHandler implements OperationHandler
 
             return;
         }
-        $this->store->atomic(function () use ($runId, $remote): void {
+        $readCancelIntentId = is_array($cancelIntent) ? ($cancelIntent['id'] ?? null) : null;
+        $readCancelIntentState = is_array($cancelIntent) ? ($cancelIntent['state'] ?? null) : null;
+        $readCancelStatus = is_array($cancelIntent) ? ($cancelIntent['interrupt_status'] ?? null) : null;
+        $this->store->atomic(function () use ($runId, $remote, $readCancelIntentId, $readCancelIntentState, $readCancelStatus): void {
             $run = $this->record('runs', $runId);
             if (!in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
                 return;
             }
+            $currentCancelIntent = $run['_cancel_intent'] ?? null;
+            if (
+                (is_array($currentCancelIntent) ? ($currentCancelIntent['id'] ?? null) : null) !== $readCancelIntentId
+                || (is_array($currentCancelIntent) ? ($currentCancelIntent['state'] ?? null) : null) !== $readCancelIntentState
+                || (is_array($currentCancelIntent) ? ($currentCancelIntent['interrupt_status'] ?? null) : null) !== $readCancelStatus
+            ) {
+                // The external read began before a new cancellation request or before its interrupt was sent.
+                return;
+            }
+            $awaitingCancelConfirmation = is_array($currentCancelIntent) && 'awaiting_confirmation' === ($currentCancelIntent['state'] ?? null);
             $attempt = $this->attempt($run, (int) $run['attempt_no']);
-            $attempt['remote_status'] = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
+            $observedStatus = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
+            $interruptConfirmedCancellation = $awaitingCancelConfirmation && in_array($readCancelStatus, ['cancelled', 'canceled', 'interrupted'], true);
+            $attempt['remote_status'] = $interruptConfirmedCancellation ? $readCancelStatus : $observedStatus;
             $attempt['external_observed_run_id'] = isset($remote['runId'])
                 ? (string) $remote['runId']
                 : (isset($remote['run']['id'])
@@ -1325,7 +1609,14 @@ final class RunHandler implements OperationHandler
             $run['last_observed_at'] = $attempt['last_observed_at'];
             $run = $this->store->save('runs', $run, 'run.external_observed');
             $status = strtolower((string) $attempt['remote_status']);
-            if (in_array($status, ['running', 'in_progress', 'streaming'], true)) {
+            $remoteStillActive = in_array($status, [
+                'running', 'in_progress', 'streaming', 'queued', 'pending', 'accepted',
+                'cancel_requested', 'interrupt_requested', 'waiting_input', 'needs_input', 'input_required',
+            ], true);
+            if ($awaitingCancelConfirmation && $remoteStillActive) {
+                $run['state'] = 'cancel_requested';
+                $run['status_reason'] = 'T3 hat den angeforderten Abbruch noch nicht bestätigt.';
+            } elseif (in_array($status, ['running', 'in_progress', 'streaming'], true)) {
                 $run['state'] = 'running';
                 $run['status_reason'] = null;
             } elseif (in_array($status, ['queued', 'pending', 'accepted'], true)) {
@@ -1347,6 +1638,7 @@ final class RunHandler implements OperationHandler
                 }
                 $run['status_reason'] = 'T3 wartet auf eine Eingabe. Berechtigungsanfragen müssen in T3 beantwortet werden.';
             } elseif (in_array($status, ['completed', 'succeeded', 'success'], true)) {
+                unset($run['_cancel_intent']);
                 $run['state'] = 'verifying';
                 $attempt['ended_at'] = $this->store->now();
                 $attempts = $run['attempts'];
@@ -1354,6 +1646,7 @@ final class RunHandler implements OperationHandler
                 $run['attempts'] = $attempts;
                 $run['status_reason'] = 'T3 hat den Lauf beendet. Die passende Agentmeldung und die Phasenregeln werden noch abgeglichen.';
             } elseif (in_array($status, ['failed', 'error'], true)) {
+                unset($run['_cancel_intent']);
                 $run['state'] = 'failed';
                 $run['status_reason'] = 'T3 hat einen Fehler gemeldet.';
                 $attempt['ended_at'] = $this->store->now();
@@ -1361,6 +1654,7 @@ final class RunHandler implements OperationHandler
                 $attempts[$attempt['attempt_no'] - 1] = $attempt;
                 $run['attempts'] = $attempts;
             } elseif (in_array($status, ['cancelled', 'canceled', 'interrupted'], true)) {
+                unset($run['_cancel_intent']);
                 $run['state'] = 'cancelled';
                 $run['status_reason'] = 'T3 hat den Abbruch bestätigt.';
                 $attempt['ended_at'] = $this->store->now();
@@ -1396,9 +1690,21 @@ final class RunHandler implements OperationHandler
     private function performCancel(string $runId): void
     {
         $run = $this->record('runs', $runId);
+        if (!in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
+            return;
+        }
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
+        $cancelIntent = $run['_cancel_intent'] ?? null;
+        if (!is_array($cancelIntent) || (int) ($cancelIntent['attempt_no'] ?? 0) !== (int) $run['attempt_no']) {
+            $run = $this->requestCancellation($run, (string) ($run['status_reason'] ?? 'T3-Abbruch angefordert.'), 'run.cancel_intent_recorded');
+            $cancelIntent = $run['_cancel_intent'];
+        }
+        if ('awaiting_confirmation' === ($cancelIntent['state'] ?? null)) {
+            return;
+        }
         if (null === $attempt['external_thread_id'] || null === $attempt['external_dispatch_run_id']) {
             $run['_cancel_requested_unknown_external'] = true;
+            $run['_cancel_intent']['state'] = 'unknown_external';
             $run['state'] = 'reconciling';
             $run['status_reason'] = 'Der externe Startausgang ist ungeklärt. Abbruchwirkung wird vor einer Freigabe des Ausführungsplatzes abgeglichen.';
             $this->store->save('runs', $run, 'run.cancel_reconciliation_required');
@@ -1423,7 +1729,7 @@ final class RunHandler implements OperationHandler
         }
         $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
         try {
-            $this->bridge->interrupt($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], (string) $attempt['external_dispatch_run_id']);
+            $interrupt = $this->bridge->interrupt($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], (string) $attempt['external_dispatch_run_id']);
         } catch (T3BridgeException $exception) {
             $this->setRunBridgeFailure($run, $exception);
             if (!$exception->authenticationFailure) {
@@ -1432,7 +1738,59 @@ final class RunHandler implements OperationHandler
 
             return;
         }
-        $this->store->enqueue('run.observe', ['run_id' => $runId]);
+        $interruptStatus = strtolower((string) ($interrupt['status'] ?? ''));
+        $interruptMatchesAttempt = ($interrupt['threadId'] ?? null) === $attempt['external_thread_id']
+            && ($interrupt['runId'] ?? null) === $attempt['external_dispatch_run_id'];
+        $startedIntentState = $cancelIntent['state'] ?? null;
+        $this->store->atomic(function () use ($runId, $attempt, $cancelIntent, $startedIntentState, $interruptStatus, $interruptMatchesAttempt): void {
+            $current = $this->record('runs', $runId);
+            if (!in_array($current['state'], self::ACTIVE_RUN_STATES, true)) {
+                return;
+            }
+            $currentIntent = $current['_cancel_intent'] ?? null;
+            if (!is_array($currentIntent) || ($currentIntent['id'] ?? null) !== ($cancelIntent['id'] ?? null)) {
+                return;
+            }
+            $currentAttempt = $this->attempt($current, (int) $current['attempt_no']);
+            if ($currentAttempt['external_thread_id'] !== $attempt['external_thread_id']
+                || $currentAttempt['external_dispatch_run_id'] !== $attempt['external_dispatch_run_id']) {
+                return;
+            }
+            $replyConfirmsCancellation = $interruptMatchesAttempt && in_array($interruptStatus, ['cancelled', 'canceled', 'interrupted'], true);
+            if ('awaiting_confirmation' === ($currentIntent['state'] ?? null)) {
+                $alreadyConfirmed = in_array($currentIntent['interrupt_status'] ?? null, ['cancelled', 'canceled', 'interrupted'], true);
+                if (!$alreadyConfirmed && $replyConfirmsCancellation) {
+                    $current['_cancel_intent']['interrupt_status'] = $interruptStatus;
+                }
+            } elseif (($currentIntent['state'] ?? null) === $startedIntentState) {
+                $current['_cancel_intent']['state'] = 'awaiting_confirmation';
+                $current['_cancel_intent']['interrupt_status'] = $interruptMatchesAttempt && '' !== $interruptStatus ? $interruptStatus : null;
+                $current['_cancel_intent']['interrupt_sent_at'] = $this->store->now();
+                $current['state'] = 'cancel_requested';
+            } else {
+                return;
+            }
+            $this->store->save('runs', $current, 'run.cancel_awaiting_confirmation');
+            $this->store->enqueue('run.observe', ['run_id' => $runId]);
+        });
+    }
+
+    /** @param array<string, mixed> $run @return array<string, mixed> */
+    private function requestCancellation(array $run, string $reason, string $event): array
+    {
+        $attemptNo = (int) $run['attempt_no'];
+        $intent = $run['_cancel_intent'] ?? null;
+        if (!is_array($intent) || (int) ($intent['attempt_no'] ?? 0) !== $attemptNo) {
+            $run['_cancel_intent'] = [
+                'id' => $this->store->id(),
+                'attempt_no' => $attemptNo,
+                'state' => 'requested',
+            ];
+        }
+        $run['state'] = 'cancel_requested';
+        $run['status_reason'] = $reason;
+
+        return $this->store->save('runs', $run, $event);
     }
 
     /** Request confirmed T3 cancellation for active runs owned by a draining provider. */
@@ -1454,9 +1812,7 @@ final class RunHandler implements OperationHandler
                 }
 
                 $run['_provider_drain_cancel_requested'] = true;
-                $run['state'] = 'cancel_requested';
-                $run['status_reason'] = $reason;
-                $this->store->save('runs', $run, 'run.provider_drain_cancel_requested');
+                $this->requestCancellation($run, $reason, 'run.provider_drain_cancel_requested');
                 $this->store->enqueue('run.cancel', ['run_id' => $run['id']]);
                 ++$requested;
             }
@@ -1627,13 +1983,17 @@ final class RunHandler implements OperationHandler
     {
         $task = $this->record('tasks', $taskId);
         $actor->requireProject((string) $task['project_id']);
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$taskId] ?? ['task' => $task, 'evidence' => [], 'reports' => []];
+        $task = $projection['task'];
         $run = isset($p['source_run_id']) ? $this->store->find('runs', (string) $p['source_run_id']) : null;
         if (isset($p['source_run_id']) && (null === $run || $run['task_id'] !== $taskId || $run['project_id'] !== $task['project_id'])) {
             throw new Problem(404, 'resource_not_found', 'Der angeforderte Ausgangslauf gehört nicht zu dieser Aufgabe.');
         }
         $evidence = array_values(array_filter(
             $this->store->all('evidence', (string) $task['project_id']),
-            static fn (array $item): bool => $item['task_id'] === $taskId && 'rejected' !== $item['review_status'],
+            fn (array $item): bool => $item['task_id'] === $taskId
+                && 'rejected' !== ($item['review_status'] ?? null)
+                && $this->taskEvidenceEligibility->isCurrent($item, $task, $projection),
         ));
         $collections = array_values(array_filter($this->store->all('link_collections', (string) $task['project_id']), static fn (array $collection): bool => $collection['task_id'] === $taskId));
 
@@ -2066,18 +2426,19 @@ final class RunHandler implements OperationHandler
         }
         $attempt = $this->attempt($source, (int) $source['attempt_no']);
         $report = $this->currentReport($source, false);
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$task['id']] ?? ['evidence' => []];
+        $currentEvidenceIds = [];
+        foreach ($projection['evidence'] as $evidence) {
+            if (($evidence['run_id'] ?? null) === $source['id']
+                && in_array($evidence['id'] ?? null, $report['evidence_ids'] ?? [], true)) {
+                $currentEvidenceIds[] = $evidence['id'];
+            }
+        }
         $references = [];
         foreach ($task['link_collection_ids'] ?? [] as $collectionId) {
             $collection = $this->store->find('link_collections', $collectionId);
             if (null !== $collection && $collection['task_id'] === $task['id'] && $collection['project_id'] === $task['project_id']) {
                 $references[] = array_intersect_key($collection, array_flip(['id', 'task_id', 'name', 'kind', 'links'])) + ['task_version' => $task['version']];
-            }
-        }
-        $evidenceIds = [];
-        foreach ($report['evidence_ids'] ?? [] as $evidenceId) {
-            $evidence = $this->store->find('evidence', $evidenceId);
-            if (null !== $evidence && $evidence['run_id'] === $source['id'] && 'rejected' !== $evidence['review_status']) {
-                $evidenceIds[] = $evidenceId;
             }
         }
 
@@ -2094,7 +2455,7 @@ final class RunHandler implements OperationHandler
                 'outcome' => $report['outcome'] ?? $source['state'],
                 'context_summary' => mb_substr(trim($task['title']."\n\n".$task['description']), 0, 20000),
                 'open_questions' => $report['_open_questions'] ?? [],
-                'reported_evidence_ids' => $evidenceIds,
+                'reported_evidence_ids' => array_values(array_unique($currentEvidenceIds)),
                 'link_collections' => $references,
             ],
         ];
@@ -2438,17 +2799,32 @@ final class RunHandler implements OperationHandler
         if ([] === $conditions) {
             return true;
         }
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$task['id']] ?? [
+            'evidence' => [],
+            'reports' => [],
+        ];
+        $compatibleRunIds = [];
+        foreach ($projection['reports'] as $entry) {
+            if (is_string($entry['run']['id'] ?? null)) {
+                $compatibleRunIds[$entry['run']['id']] = true;
+            }
+        }
         $runs = array_filter(
             $this->store->all('runs', (string) $task['project_id']),
             static fn (array $run): bool => $run['task_id'] === $task['id']
-                && (int) $run['snapshot']['task_revision'] === (int) $task['version']
+                && ((int) $run['snapshot']['task_revision'] === (int) $task['version'] || isset($compatibleRunIds[$run['id']]))
                 && (null === $instance || $run['workflow_instance_id'] === $instance['id']),
         );
         $runsById = array_column($runs, null, 'id');
-        $taskEvidence = array_filter(
-            $this->store->all('evidence', (string) $task['project_id']),
-            static fn (array $item): bool => $item['task_id'] === $task['id'] && (int) $item['task_revision'] === (int) $task['version'],
-        );
+        $taskEvidenceById = [];
+        foreach ($this->store->all('evidence', (string) $task['project_id']) as $item) {
+            if ($item['task_id'] === $task['id']
+                && 'rejected' !== ($item['review_status'] ?? null)
+                && $this->taskEvidenceEligibility->isCurrent($item, $task, $projection)) {
+                $taskEvidenceById[$item['id']] = $item;
+            }
+        }
+        $taskEvidence = array_values($taskEvidenceById);
         $approvals = array_filter($this->store->all('approvals', (string) $task['project_id']), static function (array $approval) use ($runsById): bool {
             $run = $runsById[$approval['run_id']] ?? null;
 
@@ -2557,7 +2933,7 @@ final class RunHandler implements OperationHandler
     {
         $snapshot = $run['snapshot'];
         $template = strtr($template, ['{{task.title}}' => (string) $snapshot['title'], '{{task.description}}' => (string) $snapshot['description']]);
-        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'], $snapshot['criteria'] ?? []);
+        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'].' (ID: '.$criterion['id'].')', $snapshot['criteria'] ?? []);
         $workflowVersion = (int) ($snapshot['workflow_version'] ?? 0);
         $workflowVersionLine = $workflowVersion > 0 ? "Workflowversion: {$workflowVersion}\n" : '';
         $handoffArguments = 'task_id='.(string) $run['task_id'];
@@ -2577,6 +2953,7 @@ final class RunHandler implements OperationHandler
             .(string) $snapshot['description'];
         if ([] !== $criteria) {
             $body .= "\n\nAkzeptanzkriterien:\n".implode("\n", $criteria);
+            $body .= "\nGib im Ergebnisbericht für jeden Nachweis unter artifacts[].criterion_ids die IDs genau der Kriterien an, die er belegt. Nenne die durchgeführten Prüfungen mit ihren tatsächlichen Ergebnissen.";
         }
         if ('' !== trim($template)) {
             $body .= "\n\nRollenhinweise:\n".$template;

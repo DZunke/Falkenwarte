@@ -84,7 +84,7 @@ test('the integrations page restores implicit selection after T3 authorization a
   expect((await projectResponse.json()).items).toContainEqual({
     external_project_id: 'qa-t3-project-1',
     title: 'QA T3 Project',
-    workspace_label: 'QA Workspace',
+    workspace_label: '/qa/workspace',
   });
   await expect(ownerPage.getByText('QA T3 Project', { exact: true })).toBeVisible();
   await expect(ownerPage.getByText(/qa-t3-project-1/)).toBeVisible();

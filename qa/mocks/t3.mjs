@@ -169,22 +169,57 @@ function toolDefinitions() {
 }
 
 function allTools() {
-  const base = toolDefinitions();
+  const base = toolDefinitions().map((tool) => tool.name === 't3_thread_launch'
+    ? {
+        ...tool,
+        inputSchema: {
+          ...tool.inputSchema,
+          properties: {
+            ...tool.inputSchema.properties,
+            modelSelection: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                instanceId: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$' },
+                model: { type: 'string', minLength: 1 },
+                options: {
+                  anyOf: [
+                    { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, value: { anyOf: [{ type: 'string' }, { type: 'boolean' }] } }, required: ['id', 'value'], additionalProperties: false } },
+                    { type: 'object', additionalProperties: { anyOf: [{ type: 'string' }, { type: 'boolean' }] } },
+                  ],
+                },
+              },
+              required: ['instanceId', 'model'],
+            },
+          },
+        },
+      }
+    : tool);
   const schemas = {
     orchestrator_capabilities: {
       type: 'object', additionalProperties: false,
-      properties: {}, required: [],
+      properties: { search: { type: 'string', minLength: 1, maxLength: 200 } }, required: [],
     },
     t3_project_list: {
       type: 'object', additionalProperties: false,
-      properties: { cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 } },
+      properties: { cursor: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 } },
       required: [],
+    },
+    t3_thread_list: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        projectId: { type: 'string' },
+        cursor: { type: 'integer', minimum: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 100 },
+      },
+      required: ['projectId'],
     },
     t3_thread_read: {
       type: 'object', additionalProperties: false,
       properties: {
-        threadId: { type: 'string' }, afterPosition: { type: 'integer' }, limit: { type: 'integer' },
-        runLimit: { type: 'integer' }, maxCharsPerItem: { type: 'integer' }, itemId: { type: 'string' }, textOffset: { type: 'integer' },
+        threadId: { type: 'string' }, afterPosition: { type: 'integer', minimum: -1 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
+        runLimit: { type: 'integer', minimum: 1, maximum: 50 }, maxCharsPerItem: { type: 'integer', minimum: 1, maximum: 20000 },
+        itemId: { type: 'string' }, textOffset: { type: 'integer', minimum: 0 }, view: { type: 'string', enum: ['messages', 'activity'] },
       },
       required: ['threadId'],
     },
@@ -206,12 +241,119 @@ function allTools() {
   }))];
 }
 
+function providerInventory(scenario, search) {
+  if (scenario === 'provider_signals') {
+    return [
+      {
+        providerInstanceId: 'qa_native_signal',
+        driverKind: 'codex',
+        displayName: 'QA Native Signal',
+        canRunChildTask: true,
+        models: [{ id: 'qa-native-signal-model', label: 'QA Native Signal Model' }],
+        constraints: [],
+      },
+      {
+        providerInstanceId: 'qa_legacy_signal',
+        driverKind: 'codex',
+        displayName: 'QA Legacy Signal',
+        available: true,
+        models: [{ id: 'qa-legacy-signal-model', label: 'QA Legacy Signal Model' }],
+        constraints: [],
+      },
+      { providerInstanceId: 'qa_no_signal', driverKind: 'codex', displayName: 'QA No Signal', models: [], constraints: [] },
+      { providerInstanceId: 'qa_native_string', driverKind: 'codex', displayName: 'QA Native String', canRunChildTask: 'true', models: [], constraints: [] },
+      { providerInstanceId: 'qa_legacy_string', driverKind: 'codex', displayName: 'QA Legacy String', available: 'true', models: [], constraints: [] },
+      { providerInstanceId: 'qa_native_overruled', driverKind: 'codex', displayName: 'QA Native Overruled', canRunChildTask: true, available: false, models: [], constraints: [] },
+      { providerInstanceId: 'qa_legacy_overruled', driverKind: 'codex', displayName: 'QA Legacy Overruled', canRunChildTask: false, available: true, models: [], constraints: [] },
+    ];
+  }
+
+  const providers = [
+    {
+      providerInstanceId: 'codex',
+      driverKind: 'codex',
+      displayName: 'Codex',
+      allModels: [
+        { id: 'qa-codex-model', label: 'QA Codex Model' },
+        { id: 'qa-codex-fast', label: 'QA Codex Fast' },
+      ],
+      canRunChildTask: true,
+      canRunCrossProviderChildTask: true,
+      constraints: [],
+    },
+    {
+      providerInstanceId: 'codex_general',
+      driverKind: 'codex',
+      displayName: 'Codex Allgemein',
+      allModels: [
+        { id: 'qa-general-model', label: 'QA General Model', options: [{ id: 'reasoningEffort', values: ['low', 'medium'], default: 'low' }] },
+        { id: 'qa-general-fast', label: 'QA General Fast' },
+      ],
+      canRunChildTask: true,
+      canRunCrossProviderChildTask: true,
+      constraints: [],
+    },
+    {
+      providerInstanceId: 'codex_review',
+      driverKind: 'codex',
+      displayName: 'Codex Review',
+      allModels: [
+        { id: 'qa-review-featured', label: 'QA Review Featured' },
+        { id: 'qa-review-model', label: 'QA Review Model', options: [{ id: 'reasoningEffort', values: ['low', 'medium', 'high'], default: 'medium' }] },
+      ],
+      canRunChildTask: true,
+      canRunCrossProviderChildTask: true,
+      constraints: [],
+    },
+    {
+      providerInstanceId: 'codex_disabled',
+      driverKind: 'codex',
+      displayName: 'QA Deaktivierter Codex',
+      allModels: [{ id: 'qa-disabled-model', label: 'QA Disabled Model' }],
+      canRunChildTask: false,
+      canRunCrossProviderChildTask: false,
+      constraints: ['Provider instance is disabled.'],
+    },
+    {
+      providerInstanceId: 'qa_uninstalled_agent',
+      driverKind: 'claude-code',
+      displayName: 'QA Nicht installiert',
+      allModels: [{ id: 'qa-uninstalled-model', label: 'QA Uninstalled Model' }],
+      canRunChildTask: false,
+      canRunCrossProviderChildTask: false,
+      constraints: ['Provider executable is not installed.'],
+    },
+  ];
+  return providers
+    .filter((provider) => scenario !== 'provider_missing' || provider.providerInstanceId !== 'codex_review')
+    .map(({ allModels, ...provider }) => {
+      const visibleModels = typeof search === 'string'
+        ? allModels.filter((model) => `${model.id} ${model.label}`.toLowerCase().includes(search.toLowerCase()))
+        : scenario === 'models_omitted' && provider.providerInstanceId === 'codex_review'
+          ? allModels.slice(0, 1)
+          : allModels;
+      const omittedModels = typeof search === 'string'
+        ? 0
+        : scenario === 'models_omitted' && provider.providerInstanceId === 'codex_review'
+          ? allModels.length - visibleModels.length
+          : undefined;
+      const models = scenario === 'reasoning_option_missing' && provider.providerInstanceId === 'codex_review'
+        ? visibleModels.map((model) => model.id === 'qa-review-model' ? { id: model.id, label: model.label } : model)
+        : visibleModels;
+      return { ...provider, models, ...(undefined === omittedModels ? {} : { omittedModels }) };
+    });
+}
+
 function launch(namespace, args, scenario) {
   if (typeof args.title !== 'string' || args.title.trim() === '' || typeof args.message !== 'string') {
     return { result: toolError('validation_failed', 'Launch requires a title and initial message.') };
   }
   if (typeof args.clientRequestId !== 'string' || args.clientRequestId.trim() === '') {
     return { result: toolError('validation_failed', 'Launch requires a stable clientRequestId.') };
+  }
+  const modelSelection = args.modelSelection ?? { instanceId: 'codex_general', model: 'qa-general-model' };
+  if (typeof modelSelection.instanceId !== 'string' || typeof modelSelection.model !== 'string' || modelSelection.model.trim() === '') {
+    return { result: toolError('validation_failed', 'A model selection requires an instanceId and model.') };
   }
   const key = `${namespace}:${args.clientRequestId}`;
   const payloadHash = hash(args);
@@ -226,6 +368,20 @@ function launch(namespace, args, scenario) {
     return { result: toolResult(existing.response) };
   }
 
+  const provider = providerInventory(scenario, modelSelection.model).find((candidate) => candidate.providerInstanceId === modelSelection.instanceId);
+  if (!provider || provider.canRunChildTask !== true) return { result: toolError('provider_unavailable', `Provider instance ${modelSelection.instanceId} is unavailable.`) };
+  const selectedModel = provider.models.find((candidate) => candidate.id === modelSelection.model);
+  if (!selectedModel) {
+    return { result: toolError('model_unavailable', `Model ${modelSelection.model} is unavailable on ${modelSelection.instanceId}.`) };
+  }
+  if (undefined !== modelSelection.options) {
+    if (!Array.isArray(modelSelection.options) || modelSelection.options.length !== 1 || modelSelection.options.some((selection) => !selection
+      || typeof selection.id !== 'string' || typeof selection.value !== 'string'
+      || !selectedModel.options?.some((option) => option.id === selection.id && Array.isArray(option.values) && option.values.includes(selection.value)))) {
+      return { result: toolError('model_option_unavailable', `A model option is unavailable for ${modelSelection.model}.`) };
+    }
+  }
+
   const number = Object.keys(state.acceptedLaunches).length + 1;
   const threadId = `qa-t3-thread-${number}`;
   const runId = `qa-t3-run-${number}`;
@@ -233,7 +389,7 @@ function launch(namespace, args, scenario) {
   const value = {
     threadId,
     projectId: args.projectId ?? 'qa-t3-project-1',
-    modelSelection: { instanceId: 'qa-inherited-provider', model: 'qa-inherited-model' },
+    modelSelection,
     runId,
     status: scenario === 'run_pending' ? 'running' : 'queued',
   };
@@ -243,9 +399,18 @@ function launch(namespace, args, scenario) {
     payloadHash,
     payload: args,
     response: value,
+    createdAt: new Date().toISOString(),
     replays: 0,
   };
-  state.runs[runId] = { threadId, status: runStatus, result: runStatus === 'completed' ? 'reported_success' : null, namespace };
+  state.runs[runId] = {
+    threadId,
+    status: runStatus,
+    result: runStatus === 'completed' ? 'reported_success' : null,
+    namespace,
+    providerInstanceId: modelSelection.instanceId,
+    model: modelSelection.model,
+    requestedAt: new Date().toISOString(),
+  };
   persist();
   return { result: toolResult(value), accepted: true };
 }
@@ -254,13 +419,68 @@ function callTool(namespace, name, args, scenario) {
   if (scenario === 'tool_error') return { result: toolError('capability_unavailable', 'The configured T3 capability is unavailable.') };
   if (scenario === 'unknown_capability') return { result: toolError('capability_unavailable', 'T3 no longer advertises the requested capability.') };
   if (name === 'orchestrator_capabilities') {
+    const providers = providerInventory(scenario, args.search);
     return { result: toolResult({
-      serverVersion: '0.1.10',
-      providers: [{ providerInstanceId: 'qa-inherited-provider', displayName: 'QA Provider', available: true }],
+      parentThreadId: null,
+      inheritedProviderInstanceId: 'codex_general',
+      inheritedModel: 'qa-general-model',
+      runtimeMode: 'full-access',
+      interactionMode: 'default',
+      providers,
+      features: {
+        appOwnedSubagents: true,
+        asyncPolling: true,
+        cancellation: true,
+        batchThreadCreation: true,
+        threadManagement: true,
+        incrementalThreadRead: true,
+        scheduledTasks: true,
+        maxBatchThreads: 20,
+      },
     }) };
   }
   if (name === 't3_project_list') {
-    return { result: toolResult({ projects: [{ id: 'qa-t3-project-1', title: 'QA T3 Project', workspaceLabel: 'QA Workspace' }], nextCursor: null }) };
+    const cursor = args.cursor ?? 0;
+    const limit = args.limit ?? 20;
+    if (!Number.isSafeInteger(cursor) || cursor < 0
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      return { result: toolError('validation_failed', 'Project listing requires a non-negative numeric cursor and a limit between 1 and 100.') };
+    }
+
+    const projects = [
+      { id: 'qa-t3-project-1', title: 'QA T3 Project', workspaceRoot: '/qa/workspace' },
+      { id: 'qa-t3-project-2', title: 'QA Archive', workspaceRoot: '/qa/second-workspace' },
+    ];
+    const page = projects.slice(cursor, cursor + limit);
+    const nextCursor = cursor + limit < projects.length ? cursor + limit : null;
+
+    return { result: toolResult({ projects: page, nextCursor }) };
+  }
+  if (name === 't3_thread_list') {
+    if (typeof args.projectId !== 'string' || args.projectId.trim() === ''
+      || !Number.isSafeInteger(args.cursor ?? 0) || (args.cursor ?? 0) < 0
+      || !Number.isSafeInteger(args.limit ?? 50) || (args.limit ?? 50) < 1 || (args.limit ?? 50) > 100) {
+      return { result: toolError('validation_failed', 'Thread listing requires a projectId and a non-negative numeric cursor.') };
+    }
+
+    const threads = Object.values(state.externalActivities)
+      .filter((activity) => scenario === 'foreign_thread_list' || activity.externalProjectId === args.projectId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((activity) => ({
+        threadId: activity.threadId,
+        projectId: activity.externalProjectId,
+        title: activity.title,
+        status: 'running',
+        latestRunId: activity.runId,
+        providerInstanceId: 'codex_general',
+        model: 'qa-general-model',
+      }));
+    const cursor = args.cursor ?? 0;
+    const limit = Math.min(args.limit ?? 50, 100);
+    const page = threads.slice(cursor, cursor + limit);
+    const nextCursor = cursor + page.length < threads.length ? cursor + page.length : null;
+
+    return { result: toolResult({ projectId: args.projectId, currentThreadId: null, threads: page, nextCursor, total: threads.length }) };
   }
   if (name === 't3_thread_launch') return launch(namespace, args, scenario);
   if (name === 't3_thread_wait') {
@@ -280,19 +500,58 @@ function callTool(namespace, name, args, scenario) {
     const launchEntry = Object.values(state.acceptedLaunches).find((entry) => entry.response.threadId === args.threadId);
     const externalActivity = Object.values(state.externalActivities).find((entry) => entry.threadId === args.threadId);
     if (!launchEntry && !externalActivity) return { result: toolError('resource_not_found', 'T3 thread was not found.') };
-    const runs = Object.entries(state.runs)
+    const recentRuns = Object.entries(state.runs)
       .filter(([, run]) => run.threadId === args.threadId)
-      .map(([runId, run]) => ({ runId, status: scenario === 'unknown_run_state' ? 'future_unknown_state' : run.status, ...(run.pendingInput ? { pendingInput: run.pendingInput } : {}) }));
+      .map(([runId, run], index) => ({
+        runId,
+        ordinal: index + 1,
+        status: scenario === 'unknown_run_state' ? 'future_unknown_state' : run.status,
+        providerInstanceId: run.providerInstanceId ?? launchEntry?.response.modelSelection.instanceId ?? 'codex_general',
+        model: run.model ?? launchEntry?.response.modelSelection.model ?? 'qa-general-model',
+        requestedAt: run.requestedAt ?? new Date().toISOString(),
+        startedAt: run.status === 'queued' ? null : run.startedAt ?? new Date().toISOString(),
+        completedAt: ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status) ? run.completedAt ?? new Date().toISOString() : null,
+      }));
+    const modelSelection = launchEntry?.response.modelSelection ?? { instanceId: 'codex_general', model: 'qa-general-model' };
+    const latestRun = recentRuns.at(-1);
     const thread = {
       threadId: args.threadId,
       projectId: launchEntry?.response.projectId ?? externalActivity.externalProjectId,
-      runs,
+      title: launchEntry?.payload.title ?? externalActivity.title,
+      createdBy: 'user',
+      creationSource: launchEntry ? 'mcp' : 'web',
+      status: latestRun?.status ?? 'idle',
+      latestRunId: latestRun?.runId ?? null,
+      activeRunId: latestRun && ['queued', 'running'].includes(latestRun.status) ? latestRun.runId : null,
+      providerInstanceId: modelSelection.instanceId,
+      model: scenario === 'reference_missing_model' ? '' : modelSelection.model,
+      runtimeMode: 'full-access',
+      interactionMode: 'default',
+      linkedPullRequest: null,
+      titleRegeneration: null,
+      branch: null,
+      worktreePath: null,
+      parentThreadId: null,
+      relationshipToParent: null,
+      runCount: recentRuns.length,
+      itemCount: 0,
+      pendingRequestCount: 0,
+      archived: false,
+      settled: Boolean(latestRun && !['queued', 'running'].includes(latestRun.status)),
+      settledAt: null,
+      snoozed: false,
+      snoozedUntil: null,
+      createdAt: launchEntry?.createdAt ?? externalActivity.createdAt,
+      updatedAt: new Date().toISOString(),
     };
-    if (scenario !== 'reference_missing_model') {
-      thread.providerInstanceId = 'qa-inherited-provider';
-      thread.model = 'qa-inherited-model';
-    }
-    return { result: toolResult(thread) };
+
+    return { result: toolResult({
+      thread,
+      recentRuns,
+      items: [],
+      nextPosition: null,
+      hasMore: false,
+    }) };
   }
   if (name === 't3_thread_send') {
     const key = `${namespace}:${args.clientRequestId}`;
@@ -338,7 +597,8 @@ function externalActivity(body) {
       }
       return { status: 200, body: { status: existing.status, thread_id: threadId, run_id: runId, external_project_id: externalProjectId } };
     }
-    state.externalActivities[runId] = { threadId, runId, externalProjectId, status: 'running' };
+    const title = typeof body.title === 'string' && body.title.trim() !== '' ? body.title.trim() : `QA T3 thread ${sequence}`;
+    state.externalActivities[runId] = { threadId, runId, externalProjectId, title, createdAt: new Date().toISOString(), status: 'running' };
     state.runs[runId] = { threadId, status: 'running', result: null, namespace: 'external' };
     appendJournal({ method: 'external_activity_create', external_thread_id: threadId, external_run_id: runId, outcome: 'created_running' });
     persist();
@@ -370,12 +630,14 @@ function externalActivity(body) {
 
 async function mcpRequest(request, response) {
   noStore(response);
+  const scenario = state.scenario;
   const pathname = pathOf(request);
   if (pathname === '/mcp' && request.method === 'DELETE') {
     const namespace = namespaceFor(request.headers.authorization);
     const sessionId = request.headers['mcp-session-id'];
     const version = request.headers['mcp-protocol-version'];
     const entry = {
+      scenario,
       method: 'session_terminate',
       request_id: null,
       tool: null,
@@ -410,6 +672,7 @@ async function mcpRequest(request, response) {
   const sessionId = request.headers['mcp-session-id'];
   const version = request.headers['mcp-protocol-version'];
   const entry = {
+    scenario,
     path: pathname,
     mock_origin: originOf(request),
     method: body?.method ?? null,
@@ -429,13 +692,13 @@ async function mcpRequest(request, response) {
     appendJournal({ ...entry, outcome: 'unauthorized' });
     return sendJson(response, 401, { error: { message: 'Fixture OAuth bearer required.' } });
   }
-  if (state.scenario === 'http_401' && body?.method !== 'initialize') {
+  if (scenario === 'http_401' && body?.method !== 'initialize') {
     appendJournal({ ...entry, outcome: 'unauthorized' });
     return sendJson(response, 401, { error: { message: 'Fixture authorization expired.' } });
   }
   if (body?.method === 'initialize') {
     const requested = body.params?.protocolVersion;
-    if (state.scenario === 'unsupported_protocol' || requested !== transcript.protocol_version) {
+    if (scenario === 'unsupported_protocol' || requested !== transcript.protocol_version) {
       appendJournal({ ...entry, outcome: 'unsupported_protocol' });
       return sendJson(response, 400, { jsonrpc: '2.0', id: body.id, error: { code: -32602, message: 'Unsupported MCP protocol version.' } });
     }
@@ -455,7 +718,7 @@ async function mcpRequest(request, response) {
     appendJournal({ ...entry, outcome: 'invalid_session' });
     return sendJson(response, 404, { jsonrpc: '2.0', id: body?.id, error: { code: -32001, message: 'Unknown or expired MCP session.' } });
   }
-  if (state.scenario === 'session_expired' && body?.method !== 'notifications/initialized') {
+  if (scenario === 'session_expired' && body?.method !== 'notifications/initialized') {
     delete state.sessions[sessionId];
       state.scenario = 'default';
     appendJournal({ ...entry, outcome: 'session_expired' });
@@ -475,19 +738,70 @@ async function mcpRequest(request, response) {
     return sendJson(response, 400, { jsonrpc: '2.0', id: body?.id, error: { code: -32002, message: 'Initialize notification required.' } });
   }
   if (body?.method === 'tools/list') {
-    appendJournal({ ...entry, outcome: 'success' });
-    return sendJson(response, 200, jsonRpc(body.id, { tools: allTools() }));
+    const tools = allTools();
+    const compatibleTools = scenario === 'without_thread_list'
+      ? tools.filter((tool) => tool.name !== 't3_thread_list')
+      : tools;
+    appendJournal({ ...entry, outcome: 'success', tool_names: compatibleTools.map((tool) => tool.name) });
+    return sendJson(response, 200, jsonRpc(body.id, { tools: compatibleTools }));
   }
   if (body?.method === 'tools/call') {
     const name = body.params?.name;
     const args = body.params?.arguments ?? {};
-    if (state.scenario === 'protocol_error') {
+    if (scenario === 'protocol_error') {
       appendJournal({ ...entry, outcome: 'jsonrpc_error' });
       return sendJson(response, 200, { jsonrpc: '2.0', id: body.id, error: { code: -32603, message: 'Fixture protocol error.' } });
     }
-    const fault = state.scenario;
+    const fault = scenario;
     const outcome = callTool(namespace, name, args, fault);
-    appendJournal({ ...entry, outcome: outcome.unexpected ? 'unexpected_tool' : outcome.result.isError ? 'tool_error' : 'success', launch_payload_hash: name === 't3_thread_launch' ? hash(args) : undefined });
+    const threadListResult = name === 't3_thread_list' ? outcome.result.structuredContent : null;
+    appendJournal({
+      ...entry,
+      outcome: outcome.unexpected ? 'unexpected_tool' : outcome.result.isError ? 'tool_error' : 'success',
+      launch_payload_hash: name === 't3_thread_launch' ? hash(args) : undefined,
+      ...(name === 't3_thread_list' ? {
+        thread_list_project_id: args.projectId ?? null,
+        thread_list_cursor: args.cursor ?? null,
+        thread_list_limit: args.limit ?? null,
+        thread_list_result_threads: threadListResult?.threads?.map((thread) => ({ threadId: thread.threadId, projectId: thread.projectId })) ?? [],
+      } : {}),
+      ...(name === 'orchestrator_capabilities' ? {
+        capability_search: args.search ?? null,
+        provider_inventory: outcome.result.structuredContent?.providers?.map((provider) => ({
+          providerInstanceId: provider.providerInstanceId,
+          driverKind: provider.driverKind,
+          canRunChildTask: provider.canRunChildTask,
+          canRunCrossProviderChildTask: provider.canRunCrossProviderChildTask,
+          ...(Object.hasOwn(provider, 'available') ? { available: provider.available } : {}),
+          ...(Object.hasOwn(provider, 'enabled') ? { enabled: provider.enabled } : {}),
+          ...(Object.hasOwn(provider, 'installed') ? { installed: provider.installed } : {}),
+          constraints: provider.constraints ?? [],
+          models: provider.models?.map((model) => ({
+            id: model.id,
+            label: model.label,
+            ...(Array.isArray(model.options) ? { options: model.options } : {}),
+          })) ?? [],
+          omittedModels: provider.omittedModels ?? 0,
+        })) ?? [],
+      } : {}),
+      ...(name === 't3_thread_read' ? {
+        thread_read_target_thread_id: args.threadId ?? null,
+        thread_read_result: {
+          thread: {
+            threadId: outcome.result.structuredContent?.thread?.threadId ?? null,
+            projectId: outcome.result.structuredContent?.thread?.projectId ?? null,
+            providerInstanceId: outcome.result.structuredContent?.thread?.providerInstanceId ?? null,
+            model: outcome.result.structuredContent?.thread?.model ?? null,
+          },
+          recentRuns: outcome.result.structuredContent?.recentRuns?.map((run) => ({
+            runId: run.runId,
+            providerInstanceId: run.providerInstanceId,
+            model: run.model,
+            status: run.status,
+          })) ?? [],
+        },
+      } : {}),
+    });
     persist();
     if (fault === 'lost_reply_after_accept' && name === 't3_thread_launch' && outcome.accepted) {
       state.scenario = 'default';
@@ -542,7 +856,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/reset' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario ?? 'default';
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'] });
     state = { ...emptyState(), scenario: next };
     waitingLaunches = [];
     agentCallback = null;
@@ -552,7 +866,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/scenario' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario;
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'] });
     state.scenario = next;
     persist();
     return sendJson(response, 200, { scenario: state.scenario });

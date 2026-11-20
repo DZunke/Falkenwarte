@@ -188,6 +188,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/t3-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /** T3-Referenzthreads des gebundenen Projekts auflisten */
+        get: operations["project_t3_threads_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/statuses": {
         parameters: {
             query?: never;
@@ -966,6 +985,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Ausführbare T3-Providerinstanzen und ihre Modelle lesen
+         * @description Fragt die autorisierte T3-Verbindung live ab und liefert nur Instanzen, die T3 als ausführbar meldet. Eine Modellsuche verwendet denselben Filter.
+         */
+        get: operations["connection_providers_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/projects": {
         parameters: {
             query?: never;
@@ -1534,7 +1575,7 @@ export interface paths {
         get: operations["tokens_list"];
         put?: never;
         /**
-         * Projektgebundenes technisches Token einmalig ausgeben
+         * Technisches Token mit Projektfreigabe einmalig ausgeben
          * @description Erstausgabe enthält Token. Replays identifizieren denselben Datensatz, liefern token:null; bei verlorener Erstausgabe widerrufen und mit neuem Key neu ausstellen.
          */
         post: operations["tokens_create"];
@@ -2297,6 +2338,8 @@ export interface components {
         Id: string;
         /** @description Opaque Cursor; nicht selbst zusammensetzen. */
         Cursor: string;
+        /** @description Dezimale, nichtnegative T3-Threadlistenposition. */
+        T3ThreadCursor: string;
         Slug: string;
         Sha256: string;
         AllowedAction: {
@@ -2405,6 +2448,7 @@ export interface components {
             current_password: string;
             new_password: string;
         };
+        /** @description Projektumfang des aktuellen Akteurs. Owner und global freigegebene technische Principals erhalten all_projects true und eine leere Projekt-ID-Liste; anonyme Sessions erhalten null. */
         Session: {
             authenticated: boolean;
             actor: components["schemas"]["actor"] | null;
@@ -2413,6 +2457,11 @@ export interface components {
             /** Format: date-time */
             expires_at: string | null;
             capabilities: string[];
+            project_scope: components["schemas"]["ProjectScope"] | null;
+        };
+        ProjectScope: {
+            all_projects: boolean;
+            project_ids: components["schemas"]["Id"][];
         };
         UiConfig: {
             icons: {
@@ -2955,6 +3004,17 @@ export interface components {
         } | unknown | {
             link_ids: unknown;
         };
+        /** @description Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. criterion_ids ordnet den Nachweis optional Kriterien des eingefrorenen Run-Snapshots zu. */
+        RunResultArtifactCandidate: {
+            kind: components["schemas"]["ArtifactKind"];
+            label: string;
+            link_ids?: components["schemas"]["Id"][];
+            text?: string;
+            /** @description IDs von Kriterien aus dem eingefrorenen Snapshot dieses Runs, die dieser Nachweis belegt. */
+            criterion_ids?: components["schemas"]["Id"][];
+        } | unknown | {
+            link_ids: unknown;
+        };
         /** @description Agent-Behauptung. Selbst reported_success setzt den Run nicht auf succeeded. Authentifizierter Principal und gespeicherte Attempt-Zuordnung werden geprüft. */
         RunResultReportRequest: {
             report_id: components["schemas"]["Id"];
@@ -2963,7 +3023,7 @@ export interface components {
             /** @enum {string} */
             outcome: "reported_success" | "needs_changes" | "blocked" | "failed";
             summary: string;
-            artifacts: components["schemas"]["ArtifactCandidate"][];
+            artifacts: components["schemas"]["RunResultArtifactCandidate"][];
             open_questions?: string[];
         };
         RunResultReport: {
@@ -3007,6 +3067,8 @@ export interface components {
             criterion_ids: components["schemas"]["Id"][];
             /** @description Bei Registrierung serverseitig kopierte Linkdaten. Menschliche Bestätigung bezieht sich genau auf diese URLs, Titel und Beziehungswerte; keine aktuelle Liveauflösung. */
             link_snapshot: components["schemas"]["TaskLink"][];
+            /** @description Gültigkeit für die aktuelle Ticketrevision und den aktuellen Link-Snapshot; bei Listen- und Einzelabruf gesetzt. */
+            current_for_task?: boolean;
         };
         /** @description Taskbezogene Meldung mit Text oder Linkreferenzen; optional Run/Attempt. Technische Principals erzeugen ausschließlich reported. task_revision ist Pflicht; Pfad-/Body-/Projektzuordnung serverseitig prüfen. */
         EvidenceRegister: {
@@ -3118,11 +3180,44 @@ export interface components {
         RestoreRequest: {
             reason: string;
         };
-        /** @description Lesende Information aus T3; keine Provider- oder Modellkonfiguration in Falkenwarte. */
+        /** @description Lesende Information aus T3; Modelle sind in älteren Capability-Snapshots möglicherweise nicht enthalten. */
         ProviderCapability: {
-            provider_instance_id: string;
+            provider_instance_id: components["schemas"]["T3ProviderInstanceId"];
             display_name: string | null;
             available: boolean;
+            models?: components["schemas"]["ProviderModel"][];
+            omitted_models?: number;
+        };
+        /** @description Optional, begrenzte Auswahloption für die Reasoning-Einstellung dieses Modells. */
+        ProviderModel: {
+            id: string;
+            label?: string | null;
+            reasoning?: components["schemas"]["ProviderModelReasoning"];
+        };
+        /** @description Aus T3 übernommene einzelne String-Option. Werte sind begrenzt, und ältere Inventare dürfen das Feld auslassen. */
+        ProviderModelReasoning: {
+            option_id: string;
+            values: string[];
+            default?: string | null;
+        };
+        /** @description Einzelne Reasoning-Auswahl einer expliziten T3-Providerinstanz. */
+        T3ReasoningSelection: {
+            option_id: string;
+            value: string;
+        };
+        /** @description T3-Instanz-Slug. Groß- und Kleinschreibung sind unterscheidbar. */
+        T3ProviderInstanceId: string;
+        /** @description Instanzen, die T3 bei dieser Abfrage als ausführbar meldet, mit ihren jeweiligen Modellen. */
+        ProviderInventory: {
+            providers: components["schemas"]["ProviderInstance"][];
+        };
+        /** @description Aktuell von T3 gelieferte Providerinstanz. Die ID identifiziert eine Instanz innerhalb einer Verbindung; Modelle sind T3-Modell-IDs. `omitted_models` gibt bei gekürzten Katalogen die ausgelassenen Modelltreffer an. */
+        ProviderInstance: {
+            provider_instance_id: components["schemas"]["T3ProviderInstanceId"];
+            display_name: string | null;
+            available: boolean;
+            models: components["schemas"]["ProviderModel"][];
+            omitted_models?: number;
         };
         CapabilitySnapshot: {
             connection_id: components["schemas"]["Id"];
@@ -3235,7 +3330,10 @@ export interface components {
             role: string;
             connection_id: components["schemas"]["Id"];
             bridge_plugin_id: string;
+            /** @description Bei `all_projects: true` wird dieses Feld leer zurückgegeben; sonst ist es die explizite Freigabeliste, wobei eine leere Liste keinen Projektzugriff erlaubt. */
             allowed_project_ids: components["schemas"]["Id"][];
+            /** @description Erlaubt alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten. */
+            all_projects: boolean;
             /**
              * @description MVP: zusätzlich maximal ein aktiver Run pro T3-ProjectBinding; kein lokaler Worktree-Verwalter.
              * @default 1
@@ -3265,7 +3363,10 @@ export interface components {
             icon_key: string;
             role: string;
             connection_id: components["schemas"]["Id"];
+            /** @description Bei `all_projects: true` werden übermittelte IDs ignoriert und serverseitig auf eine leere Liste normalisiert; sonst ist dies die explizite Freigabeliste, wobei leer keinen Projektzugriff erlaubt. */
             allowed_project_ids: components["schemas"]["Id"][];
+            /** @description Erlaubt alle aktuellen und zukünftigen Projekte. Beim Anlegen gilt standardmäßig false. Beim Ersetzen bleibt ohne dieses Feld die gespeicherte Freigabe erhalten; bei Legacy-Profilen ohne Feld gilt false. */
+            all_projects?: boolean;
             /**
              * @description MVP: zusätzlich maximal ein aktiver Run pro T3-ProjectBinding; kein lokaler Worktree-Verwalter.
              * @default 1
@@ -3833,7 +3934,10 @@ export interface components {
             version: number;
             label: string;
             principal_id: components["schemas"]["Id"];
+            /** @description Bei all_projects true leer; sonst explizite Projektfreigaben. Bei fehlendem all_projects in gespeicherten älteren Tokens gilt die Liste. */
             project_ids: components["schemas"]["Id"][];
+            /** @description Gilt für alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten. */
+            all_projects: boolean;
             capabilities: string[];
             /** Format: date-time */
             created_at: string;
@@ -3847,7 +3951,10 @@ export interface components {
         /** @description Keine menschlichen Approval-/Secret-/Plugin-Adminrechte im Standardprofil; Owner-only-Operationen bleiben auch mit einem Capabilitynamen gesperrt. */
         TokenCreate: {
             label: string;
+            /** @description Explizite Projektfreigaben. Bei all_projects true ignoriert der Server die Liste und speichert sie leer; ohne all_projects true gewährt auch eine leere Liste keinen Projektzugriff. */
             project_ids: components["schemas"]["Id"][];
+            /** @description Optionales Owner-only Opt-in für alle aktuellen und zukünftigen Projekte. Fehlt das Feld, bleibt das Token projektbeschränkt. */
+            all_projects?: boolean;
             capabilities: string[];
             /** Format: date-time */
             expires_at: string;
@@ -4179,6 +4286,20 @@ export interface components {
             next_cursor: components["schemas"]["Cursor"] | null;
             has_more: boolean;
         };
+        T3Thread: {
+            id: string;
+            title: string;
+            /** @description Von T3 gelieferte Providerinstanz für den Thread, falls der Server Routing-Metadaten bereitstellt. */
+            provider_instance_id?: components["schemas"]["T3ProviderInstanceId"] | null;
+            /** @description Von T3 geliefertes Modell für den Thread, falls der Server Routing-Metadaten bereitstellt. */
+            model?: string | null;
+        };
+        /** @description T3-Offsetseite des gebundenen Projekts; archived Threads sind in T3 v0.1.11 nicht Teil von t3_thread_list. */
+        T3ThreadPage: {
+            items: components["schemas"]["T3Thread"][];
+            next_cursor: components["schemas"]["T3ThreadCursor"] | null;
+            has_more: boolean;
+        };
         /** @description Cursorseite mit stabiler erlaubter Sortierung; kein unbeschränkter Export. */
         CustomFieldDefinitionPage: {
             items: components["schemas"]["CustomFieldDefinition"][];
@@ -4234,7 +4355,7 @@ export interface components {
             require_human_phase_decision: boolean;
             require_human_confirmed_evidence: boolean;
         };
-        /** @description Referenz auf Konfiguration in T3. Keine Modell-/Providerdefinition. Referenzthread liefert nur lesbare Routingfelder; kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet beim Replay den gespeicherten T3-Wert. */
+        /** @description T3-Projektstandard, Referenz auf vorhandene Konfiguration in T3 oder explizite T3-Providerinstanz samt Modell. Referenzthread liefert nur lesbare Routingfelder; kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet beim Replay den gespeicherten T3-Wert. Bei einer expliziten Providerinstanz friert Falkenwarte Instanz-ID und Modell ein und sendet sie als modelSelection an T3. Eine Reasoning-Auswahl ist optional und gilt nur für explizite Providerinstanzen; sie wird auf eine einzelne String-Option in modelSelection.options abgebildet. Alte Profile ohne Reasoning-Auswahl bleiben gültig. */
         T3ExecutionTarget: {
             /** @constant */
             mode: "t3_project_default";
@@ -4242,6 +4363,14 @@ export interface components {
             /** @constant */
             mode: "t3_reference_thread";
             reference_thread_id: string;
+        } | {
+            /** @constant */
+            mode: "t3_provider_instance";
+            /** @description Exakte Instanz-ID aus dem Live-Inventar der zugehörigen T3-Verbindung. */
+            provider_instance_id: components["schemas"]["T3ProviderInstanceId"];
+            /** @description Exakte Modell-ID aus dem Inventar dieser Providerinstanz. */
+            model: string;
+            reasoning?: components["schemas"]["T3ReasoningSelection"];
         };
         /** @description Nur Eigentümer. Bestätigt die bewertete Meldung und ihre unveränderte Revision. */
         EvidenceReview: {
@@ -4895,6 +5024,15 @@ export interface components {
                 "application/json": components["schemas"]["CapabilitySnapshot"];
             };
         };
+        /** @description Ausführbare Providerinstanzen und ihre Modelle aus der autorisierten T3-Verbindung. */
+        ProviderInventory: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ProviderInventory"];
+            };
+        };
         /** @description Connection-Darstellung. */
         Connection: {
             headers: {
@@ -5275,6 +5413,15 @@ export interface components {
                 "application/json": components["schemas"]["RemoteProjectPage"];
             };
         };
+        /** @description Referenzthread-Seite aus dem gebundenen T3-Projekt. */
+        T3ThreadPage: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["T3ThreadPage"];
+            };
+        };
         /** @description CustomFieldDefinitionPage-Darstellung. */
         CustomFieldDefinitionPage: {
             headers: {
@@ -5445,6 +5592,8 @@ export interface components {
     parameters: {
         /** @description Opaque nächste Seite. */
         Cursor: components["schemas"]["Cursor"];
+        /** @description Nichtnegative Dezimaldarstellung des T3-Offsets, die unverändert aus next_cursor übernommen wird. */
+        T3ThreadCursor: components["schemas"]["T3ThreadCursor"];
         /** @description Höchstens 100 Einträge. */
         Limit: number;
         /** @description Auf ein erlaubtes Projekt begrenzen. */
@@ -5778,6 +5927,27 @@ export interface operations {
             409: components["responses"]["Conflict"];
             412: components["responses"]["PreconditionFailed"];
             428: components["responses"]["PreconditionRequired"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    project_t3_threads_list: {
+        parameters: {
+            query?: {
+                /** @description Nichtnegative Dezimaldarstellung des T3-Offsets, die unverändert aus next_cursor übernommen wird. */
+                cursor?: components["parameters"]["T3ThreadCursor"];
+                /** @description Höchstens 100 Einträge. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["T3ThreadPage"];
+            409: components["responses"]["Conflict"];
             default: components["responses"]["Problem"];
         };
     };
@@ -6842,6 +7012,24 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["CapabilitySnapshot"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    connection_providers_list: {
+        parameters: {
+            query?: {
+                /** @description Sucht gezielt in gekürzten T3-Modellkatalogen. Der Suchbegriff wird an T3 weitergereicht. */
+                search?: string;
+            };
+            header?: never;
+            path: {
+                connection_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ProviderInventory"];
             default: components["responses"]["Problem"];
         };
     };

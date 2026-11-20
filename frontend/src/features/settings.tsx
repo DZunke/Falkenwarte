@@ -6,7 +6,7 @@ import { api, formatError, mutationParams, request } from '@/lib/api'
 import { useProjects } from '@/lib/queries'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -43,6 +43,7 @@ export default function SettingsView() {
   const [newPassword, setNewPassword] = useState('')
   const [tokenLabel, setTokenLabel] = useState('')
   const [tokenProjectIds, setTokenProjectIds] = useState<string[]>([])
+  const [tokenAllProjects, setTokenAllProjects] = useState(false)
   const [tokenCapabilities, setTokenCapabilities] = useState<string[]>(['tasks.read'])
   const [tokenDays, setTokenDays] = useState('90')
   const [issuedToken, setIssuedToken] = useState<string | null>(null)
@@ -94,11 +95,29 @@ export default function SettingsView() {
 
   const createToken = useMutation({
     mutationFn: () => {
-      if (tokenProjectIds.length === 0 || tokenCapabilities.length === 0) throw new Error('Wähle mindestens ein Projekt und eine Berechtigung.')
+      if ((!tokenAllProjects && tokenProjectIds.length === 0) || tokenCapabilities.length === 0) {
+        throw new Error('Wähle mindestens ein Projekt oder „Alle Projekte“ sowie mindestens eine Berechtigung.')
+      }
       const expiresAt = new Date(Date.now() + Number(tokenDays) * 86_400_000).toISOString()
-      return request(api.POST('/tokens', { params: mutationParams(), body: { label: tokenLabel.trim(), project_ids: tokenProjectIds, capabilities: tokenCapabilities, expires_at: expiresAt } }))
+      return request(api.POST('/tokens', {
+        params: mutationParams(),
+        body: {
+          label: tokenLabel.trim(),
+          all_projects: tokenAllProjects,
+          project_ids: tokenAllProjects ? [] : tokenProjectIds,
+          capabilities: tokenCapabilities,
+          expires_at: expiresAt,
+        },
+      }))
     },
-    onSuccess: async (result) => { setIssuedToken(result.token); setTokenLabel(''); await refresh(); toast.success('Technisches Token erstellt') },
+    onSuccess: async (result) => {
+      setIssuedToken(result.token)
+      setTokenLabel('')
+      setTokenProjectIds([])
+      setTokenAllProjects(false)
+      await refresh()
+      toast.success('Technisches Token erstellt')
+    },
     onError: (error) => toast.error(formatError(error)),
   })
 
@@ -189,13 +208,48 @@ export default function SettingsView() {
           <Button variant="outline" disabled={!currentPassword || newPassword.length < 12 || passwordMutation.isPending} onClick={() => passwordMutation.mutate()}>Passwort aktualisieren</Button>
         </CardContent></Card>
 
-        <Card><CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="size-4 text-muted-foreground" />Technische Principals</CardTitle></CardHeader><CardContent className="space-y-4">
+        <Card><CardHeader>
+          <CardTitle className="flex items-center gap-2"><KeyRound className="size-4 text-muted-foreground" />Technische Principals</CardTitle>
+          <CardDescription>Hier stellst du einen Zugang für einen Agenten aus. Mit seinem Token kann er Tickets in den freigegebenen Projekten lesen und Ergebnisse melden, wenn du ihm diese Rechte gibst.</CardDescription>
+        </CardHeader><CardContent className="space-y-4">
           <div className="space-y-1.5"><Label htmlFor="token-label">Tokenname</Label><Input id="token-label" value={tokenLabel} onChange={(event) => setTokenLabel(event.target.value)} placeholder="Agent für Projekt A" maxLength={120} /></div>
-          <fieldset className="space-y-2"><legend className="text-sm font-medium">Projektzugriff</legend><div className="grid gap-2 sm:grid-cols-2">{projects.map((project) => <label key={project.id} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={tokenProjectIds.includes(project.id)} onChange={(event) => setTokenProjectIds((current) => event.target.checked ? [...current, project.id] : current.filter((id) => id !== project.id))} />{project.name}</label>)}</div></fieldset>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Projektzugriff</legend>
+            <label className="flex items-center gap-2 rounded-md border p-2 text-sm">
+              <input
+                type="checkbox"
+                aria-label="Alle Projekte"
+                data-testid="token-all-projects-checkbox"
+                checked={tokenAllProjects}
+                onChange={(event) => setTokenAllProjects(event.target.checked)}
+              />
+              Alle Projekte
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Gilt für alle vorhandenen und künftig angelegten Projekte. Deine Einzelauswahl bleibt beim Umschalten gespeichert.
+            </p>
+            {projects.length > 0 ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {projects.map((project) => (
+                  <label key={project.id} className="flex items-center gap-2 rounded-md border p-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={tokenProjectIds.includes(project.id)}
+                      disabled={tokenAllProjects}
+                      onChange={(event) => setTokenProjectIds((current) => event.target.checked ? [...current, project.id] : current.filter((id) => id !== project.id))}
+                    />
+                    {project.name}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Es gibt noch keine Projekte. Wähle „Alle Projekte“ oder lege ein Projekt an.</p>
+            )}
+          </fieldset>
           <fieldset className="space-y-2"><legend className="text-sm font-medium">Berechtigungen</legend><div className="grid gap-2 sm:grid-cols-2">{capabilityOptions.map(([key, label]) => <label key={key} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={tokenCapabilities.includes(key)} onChange={(event) => setTokenCapabilities((current) => event.target.checked ? [...current, key] : current.filter((item) => item !== key))} />{label}</label>)}</div></fieldset>
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"><div className="space-y-1.5"><Label htmlFor="token-days">Gültigkeit (Tage)</Label><Input id="token-days" type="number" min={1} max={3650} value={tokenDays} onChange={(event) => setTokenDays(event.target.value)} /></div><Button disabled={!tokenLabel.trim() || tokenProjectIds.length === 0 || tokenCapabilities.length === 0 || createToken.isPending} onClick={() => createToken.mutate()}>Token ausstellen</Button></div>
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"><div className="space-y-1.5"><Label htmlFor="token-days">Gültigkeit (Tage)</Label><Input id="token-days" type="number" min={1} max={3650} value={tokenDays} onChange={(event) => setTokenDays(event.target.value)} /></div><Button disabled={!tokenLabel.trim() || (!tokenAllProjects && tokenProjectIds.length === 0) || tokenCapabilities.length === 0 || createToken.isPending} onClick={() => createToken.mutate()}>Token ausstellen</Button></div>
           {issuedToken && <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3"><p className="text-sm font-medium">Dieses Token wird nur jetzt angezeigt. Kopiere es in den Agenten, der es verwenden soll.</p><div className="mt-2 flex gap-2"><code className="min-w-0 flex-1 break-all rounded bg-background p-2 text-xs">{issuedToken}</code><Button size="icon" variant="outline" aria-label="Token kopieren" onClick={() => { void navigator.clipboard.writeText(issuedToken); toast.success('Token kopiert') }}><Copy /></Button></div><Button variant="link" size="sm" className="mt-1 px-0" onClick={() => setIssuedToken(null)}>Anzeige schließen</Button></div>}
-          <div className="space-y-2 border-t pt-3">{tokens.map((token) => <div key={token.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{token.label}</p><p className="text-xs text-muted-foreground">{token.project_ids.length} Projekte · {token.capabilities.join(', ')} · bis {new Date(token.expires_at).toLocaleDateString()}</p></div>{token.revoked ? <Badge variant="outline">Widerrufen</Badge> : <Button variant="ghost" size="sm" disabled={revokeToken.isPending} onClick={() => { if (window.confirm(`Token „${token.label}“ widerrufen?`)) revokeToken.mutate(token) }}><Trash2 />Widerrufen</Button>}</div>)}{tokens.length === 0 && <p className="text-sm text-muted-foreground">Noch keine technischen Tokens.</p>}</div>
+          <div className="space-y-2 border-t pt-3">{tokens.map((token) => <div key={token.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{token.label}</p><p className="text-xs text-muted-foreground">{token.all_projects ? 'Alle Projekte' : `${token.project_ids.length} Projekte`} · {token.capabilities.join(', ')} · bis {new Date(token.expires_at).toLocaleDateString()}</p></div>{token.revoked ? <Badge variant="outline">Widerrufen</Badge> : <Button variant="ghost" size="sm" disabled={revokeToken.isPending} onClick={() => { if (window.confirm(`Token „${token.label}“ widerrufen?`)) revokeToken.mutate(token) }}><Trash2 />Widerrufen</Button>}</div>)}{tokens.length === 0 && <p className="text-sm text-muted-foreground">Noch keine technischen Tokens.</p>}</div>
         </CardContent></Card>
       </section>
 

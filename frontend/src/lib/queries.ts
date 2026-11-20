@@ -1,21 +1,34 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, request } from './api'
-import type { Project } from './api'
 import type { components } from '@/generated/api'
+
+export async function fetchAllPages<T>(loadPage: (cursor?: string) => Promise<{ items: T[]; next_cursor?: string | null }>) {
+  const items: T[] = []
+  const cursors = new Set<string>()
+  let cursor: string | undefined
+  do {
+    const page = await loadPage(cursor)
+    items.push(...page.items)
+    cursor = page.next_cursor ?? undefined
+    if (cursor) {
+      if (cursors.has(cursor)) throw new Error('Die nächste Ergebnisseite konnte nicht eindeutig geladen werden.')
+      cursors.add(cursor)
+    }
+  } while (cursor)
+  return { items }
+}
 
 export function useProjects() {
   return useQuery({
     queryKey: ['projects'],
-    queryFn: async () => {
-      const items: Project[] = []
-      let cursor: string | undefined
-      do {
-        const page = await request(api.GET('/projects', { params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } } }))
-        items.push(...page.items)
-        cursor = page.next_cursor ?? undefined
-      } while (cursor)
-      return { items }
-    },
+    queryFn: () => fetchAllPages((cursor) => request(api.GET('/projects', { params: { query: { limit: 100, cursor } } }))),
+  })
+}
+
+export function useConnections() {
+  return useQuery({
+    queryKey: ['connections', 'all'],
+    queryFn: () => fetchAllPages((cursor) => request(api.GET('/connections', { params: { query: { limit: 100, cursor } } }))),
   })
 }
 

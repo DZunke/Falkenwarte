@@ -24,12 +24,13 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     }
 
     /** @param array<string, mixed> $connection @return array<string, mixed> */
-    public function capabilities(array $connection, string $token): array
+    public function capabilities(array $connection, string $token, ?string $search = null): array
     {
-        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($search): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['orchestrator_capabilities', 't3_project_list', 't3_thread_launch', 't3_thread_read']);
-            $result = $this->tool($client, 'orchestrator_capabilities', []);
+            $arguments = null === $search ? [] : ['search' => $search];
+            $result = $this->tool($client, 'orchestrator_capabilities', $arguments);
 
             return [
                 'tools' => $names,
@@ -47,22 +48,111 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     /** @param array<string, mixed> $connection @return array<string, mixed> */
     public function projects(array $connection, string $token, ?string $cursor = null, int $limit = 50): array
     {
-        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($cursor, $limit): array {
+        $nativeCursor = 0;
+        if (null !== $cursor) {
+            $nativeCursor = filter_var($cursor, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 9007199254740991]]);
+            if (false === $nativeCursor) {
+                $legacyOffset = base64_decode($cursor, true);
+                $nativeCursor = false === $legacyOffset
+                    ? false
+                    : filter_var($legacyOffset, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 9007199254740991]]);
+            }
+            if (false === $nativeCursor) {
+                throw new T3BridgeException('Der T3-Projektcursor ist ungültig.');
+            }
+        }
+
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($nativeCursor, $limit): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_project_list']);
-            $result = $this->tool($client, 't3_project_list', array_filter(['cursor' => $cursor, 'limit' => $limit], static fn (mixed $value): bool => null !== $value));
+            $result = $this->tool($client, 't3_project_list', ['cursor' => $nativeCursor, 'limit' => $limit]);
             $projects = $result['projects'] ?? $result['items'] ?? [];
             if (!is_array($projects)) {
                 throw new T3BridgeException('T3 lieferte keine gültige Projektliste.');
+            }
+            $nextCursor = $result['nextCursor'] ?? $result['next_cursor'] ?? null;
+            if (null !== $nextCursor) {
+                if (!is_int($nextCursor) && !is_string($nextCursor)) {
+                    throw new T3BridgeException('T3 lieferte einen ungültigen Projektcursor.');
+                }
+                $nextCursor = filter_var((string) $nextCursor, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 9007199254740991]]);
+                if (false === $nextCursor || $nextCursor <= $nativeCursor) {
+                    throw new T3BridgeException('T3 lieferte einen ungültigen Projektcursor.');
+                }
             }
 
             return [
                 'items' => array_map(static fn (array $project): array => [
                     'external_project_id' => (string) ($project['id'] ?? $project['projectId'] ?? ''),
                     'title' => (string) ($project['title'] ?? $project['name'] ?? ''),
-                    'workspace_label' => (string) ($project['workspaceLabel'] ?? $project['workspace'] ?? ''),
+                    'workspace_label' => (string) ($project['workspaceRoot'] ?? $project['workspaceLabel'] ?? $project['workspace'] ?? ''),
                 ], array_values(array_filter($projects, 'is_array'))),
-                'next_cursor' => $result['nextCursor'] ?? null,
+                'next_cursor' => null === $nextCursor ? null : (string) $nextCursor,
+                'has_more' => null !== $nextCursor,
+            ];
+        });
+    }
+
+    /** @param array<string, mixed> $connection @return array{items: list<array{id: string, title: string, provider_instance_id?: string, model?: string}>, next_cursor: ?string, has_more: bool} */
+    public function threads(array $connection, string $token, string $projectId, ?string $cursor = null, int $limit = 50): array
+    {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($projectId, $cursor, $limit): array {
+            $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
+            if (!in_array('t3_thread_list', $names, true)) {
+                throw new T3BridgeException('Diese T3-Version stellt keine Threadliste bereit. Wähle den T3-Projektstandard oder gib eine bekannte Referenzthread-ID ein.');
+            }
+
+            $offset = null === $cursor ? null : filter_var($cursor, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+            if (null !== $cursor && false === $offset) {
+                throw new T3BridgeException('Der T3-Threadseiten-Cursor ist ungültig. Lade die erste Seite erneut.');
+            }
+            $arguments = ['projectId' => $projectId, 'limit' => $limit];
+            if (null !== $offset) {
+                $arguments['cursor'] = $offset;
+            }
+            $result = $this->tool($client, 't3_thread_list', $arguments);
+            if (($result['projectId'] ?? null) !== $projectId) {
+                throw new T3BridgeException('T3 lieferte eine Threadliste ohne übereinstimmende Projektzugehörigkeit.');
+            }
+            $threads = $result['threads'] ?? null;
+            if (!is_array($threads)) {
+                throw new T3BridgeException('T3 lieferte keine gültige Threadliste.');
+            }
+
+            $items = [];
+            foreach ($threads as $thread) {
+                if (!is_array($thread) || ($thread['projectId'] ?? null) !== $projectId) {
+                    continue;
+                }
+                $id = $thread['threadId'] ?? null;
+                $title = $thread['title'] ?? null;
+                if (!is_string($id) || '' === $id || mb_strlen($id) > 256 || !is_string($title) || mb_strlen($title) > 1000) {
+                    throw new T3BridgeException('T3 lieferte einen ungültigen Thread für das gebundene Projekt.');
+                }
+                $item = ['id' => $id, 'title' => $title];
+                $providerInstanceId = $thread['providerInstanceId'] ?? null;
+                if (is_string($providerInstanceId) && 1 === preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D', $providerInstanceId)) {
+                    $item['provider_instance_id'] = $providerInstanceId;
+                }
+                $model = $thread['model'] ?? null;
+                if (is_string($model) && '' !== $model && mb_strlen($model) <= 256) {
+                    $item['model'] = $model;
+                }
+                $items[] = $item;
+            }
+
+            if (!array_key_exists('nextCursor', $result)) {
+                throw new T3BridgeException('T3 lieferte keine gültige Folgeseiteninformation.');
+            }
+            $nextCursor = $result['nextCursor'];
+            if (null !== $nextCursor && (!is_int($nextCursor) || $nextCursor < 0 || strlen((string) $nextCursor) > 15 || (null !== $offset && $nextCursor <= $offset))) {
+                throw new T3BridgeException('T3 lieferte einen ungültigen Folgeseiten-Cursor. Lade die erste Seite erneut.');
+            }
+
+            return [
+                'items' => $items,
+                'next_cursor' => null === $nextCursor ? null : (string) $nextCursor,
+                'has_more' => null !== $nextCursor,
             ];
         });
     }
@@ -74,7 +164,41 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_read']);
             $result = $this->tool($client, 't3_thread_read', ['threadId' => $threadId, 'afterPosition' => 0, 'limit' => 100, 'runLimit' => 50, 'maxCharsPerItem' => 20000]);
-            $runs = $result['runs'] ?? [];
+            $thread = $result['thread'] ?? null;
+            $nativeRead = is_array($thread);
+            if (null !== $runId) {
+                unset($result['status'], $result['runId'], $result['run'], $result['pendingInput']);
+            }
+            if ($nativeRead) {
+                $nativeThreadId = $thread['threadId'] ?? null;
+                $nativeProjectId = $thread['projectId'] ?? null;
+                if (!is_string($nativeThreadId) || '' === trim($nativeThreadId) || $nativeThreadId !== $threadId
+                    || !is_string($nativeProjectId) || '' === trim($nativeProjectId)) {
+                    throw new T3BridgeException('T3 lieferte eine ungültige Thread- oder Projektzugehörigkeit.');
+                }
+                $result['threadId'] = $nativeThreadId;
+                $result['projectId'] = $nativeProjectId;
+                unset($result['modelSelection']);
+                $providerInstanceId = $thread['providerInstanceId'] ?? null;
+                $model = $thread['model'] ?? null;
+                if (is_string($providerInstanceId) && 1 === preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D', $providerInstanceId)) {
+                    $result['providerInstanceId'] = $providerInstanceId;
+                } else {
+                    unset($result['providerInstanceId']);
+                }
+                if (is_string($model) && '' !== trim($model) && $model === trim($model) && mb_strlen($model) <= 256) {
+                    $result['model'] = $model;
+                } else {
+                    unset($result['model']);
+                }
+                // The nested thread status is not a run status. A requested run must be selected below.
+                unset($result['status'], $result['runId'], $result['run'], $result['pendingInput']);
+                if (isset($result['providerInstanceId'], $result['model'])) {
+                    $result['modelSelection'] = ['instanceId' => $result['providerInstanceId'], 'model' => $result['model']];
+                }
+            }
+
+            $runs = $result['recentRuns'] ?? $result['runs'] ?? [];
             if (is_array($runs) && [] !== $runs) {
                 $selected = null;
                 if (null !== $runId) {
@@ -84,16 +208,32 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
                             break;
                         }
                     }
-                }
-                if (null === $selected) {
+                } elseif ($nativeRead && is_string($thread['latestRunId'] ?? null)) {
+                    foreach ($runs as $candidate) {
+                        if (is_array($candidate) && (string) ($candidate['runId'] ?? $candidate['id'] ?? '') === $thread['latestRunId']) {
+                            $selected = $candidate;
+                            break;
+                        }
+                    }
+                } elseif (!$nativeRead) {
                     $selected = $runs[array_key_last($runs)];
                 }
                 if (is_array($selected)) {
+                    $selectedRunId = $selected['runId'] ?? $selected['id'] ?? null;
+                    if (is_string($selectedRunId) && '' !== $selectedRunId) {
+                        $selected['id'] ??= $selectedRunId;
+                        $selected['runId'] ??= $selectedRunId;
+                    }
                     $result['run'] = $selected;
-                    $result['runId'] ??= $selected['runId'] ?? $selected['id'] ?? null;
-                    $result['status'] ??= $selected['status'] ?? null;
+                    $result['runId'] = $selectedRunId;
+                    $result['status'] = $selected['status'] ?? 'unknown';
                     $result['pendingInput'] ??= $selected['pendingInput'] ?? $selected['pending_input'] ?? null;
+                } elseif (null !== $runId) {
+                    // Never observe a different recent run as if it were the exact dispatch.
+                    $result['status'] = 'unknown';
                 }
+            } elseif (null !== $runId) {
+                $result['status'] = 'unknown';
             }
             if (!isset($result['modelSelection'])) {
                 $instanceId = $result['providerInstanceId'] ?? $result['provider_instance_id'] ?? null;
@@ -225,7 +365,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         return [];
     }
 
-    /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool}> */
+    /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool, models: list<array{id: string, label?: string, reasoning?: array{option_id: string, values: list<string>, default?: string|null}}>, omitted_models?: int}> */
     private function providers(mixed $providers): array
     {
         if (!is_array($providers)) {
@@ -238,17 +378,120 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
                 continue;
             }
             $id = $provider['providerInstanceId'] ?? $provider['instanceId'] ?? null;
-            if (!is_string($id) || '' === $id) {
+            if (!is_string($id) || '' === trim($id) || mb_strlen($id) > 64 || 1 !== preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/D', $id)) {
                 continue;
             }
-            $result[] = [
+            $displayName = $provider['displayName'] ?? null;
+            if (!is_string($displayName) || mb_strlen($displayName) > 200) {
+                $displayName = null;
+            }
+            $models = [];
+            $providerModels = $provider['models'] ?? [];
+            foreach (is_array($providerModels) ? $providerModels : [] as $model) {
+                if (count($models) >= 500) {
+                    break;
+                }
+                if (!is_array($model)) {
+                    continue;
+                }
+                $modelId = $model['id'] ?? null;
+                if (!is_string($modelId) || '' === $modelId || mb_strlen($modelId) > 256) {
+                    continue;
+                }
+                $normalizedModel = ['id' => $modelId];
+                $label = $model['label'] ?? null;
+                if (is_string($label) && mb_strlen($label) <= 200) {
+                    $normalizedModel['label'] = $label;
+                }
+                $reasoning = $this->reasoningOption($model['options'] ?? null, $provider['driverKind'] ?? null);
+                if (null !== $reasoning) {
+                    $normalizedModel['reasoning'] = $reasoning;
+                }
+                $models[] = $normalizedModel;
+            }
+            $normalized = [
                 'provider_instance_id' => $id,
-                'display_name' => isset($provider['displayName']) ? (string) $provider['displayName'] : null,
-                'available' => (bool) ($provider['available'] ?? true),
+                'display_name' => $displayName,
+                // A false signal from either schema takes precedence over a true from the other.
+                // Native T3 uses canRunChildTask; older capability sources may expose available.
+                'available' => $this->providerAvailable($provider),
+                'models' => $models,
             ];
+            $omittedModels = $provider['omittedModels'] ?? $provider['omitted_models'] ?? null;
+            if (is_int($omittedModels) && $omittedModels >= 0) {
+                $normalized['omitted_models'] = $omittedModels;
+            }
+            $result[] = $normalized;
         }
 
         return $result;
+    }
+
+    /** @param mixed $options @param mixed $driverKind @return array{option_id: string, values: list<string>, default?: string|null}|null */
+    private function reasoningOption(mixed $options, mixed $driverKind): ?array
+    {
+        if (!is_array($options) || !is_string($driverKind)) {
+            return null;
+        }
+
+        // T3 v0.1.11's MCP projection omits descriptor.role, so accept only ids
+        // whose specific provider implementations identify them as reasoning controls.
+        $reasoningIds = match ($driverKind) {
+            'codex', 'kiro' => ['reasoningEffort'],
+            'claudeAgent' => ['effort'],
+            'pi' => ['thinking'],
+            default => [],
+        };
+        $matches = [];
+        foreach ($options as $option) {
+            if (!is_array($option) || !is_string($option['id'] ?? null) || !in_array($option['id'], $reasoningIds, true)) {
+                continue;
+            }
+            $nativeValues = $option['values'] ?? null;
+            if (!is_array($nativeValues)) {
+                continue;
+            }
+
+            $values = [];
+            foreach ($nativeValues as $value) {
+                if (!is_string($value) || '' === trim($value) || $value !== trim($value) || mb_strlen($value) > 128) {
+                    continue;
+                }
+                $values[$value] = $value;
+                if (count($values) >= 32) {
+                    break;
+                }
+            }
+            if ('effort' === $option['id']) {
+                unset($values['default']);
+            }
+            if ([] === $values) {
+                continue;
+            }
+
+            $reasoning = ['option_id' => $option['id'], 'values' => array_values($values)];
+            $default = $option['default'] ?? null;
+            if ('effort' === $option['id'] && 'default' === $default) {
+                $reasoning['default'] = null;
+            } elseif (is_string($default) && in_array($default, $values, true)) {
+                $reasoning['default'] = $default;
+            }
+            $matches[] = $reasoning;
+        }
+
+        return 1 === count($matches) ? $matches[0] : null;
+    }
+
+    /** @param array<string, mixed> $provider */
+    private function providerAvailable(array $provider): bool
+    {
+        $legacy = $provider['available'] ?? null;
+        $native = $provider['canRunChildTask'] ?? null;
+        if (false === $legacy || false === $native) {
+            return false;
+        }
+
+        return true === $legacy || true === $native;
     }
 
     /** @param list<string> $tools @return list<string> */

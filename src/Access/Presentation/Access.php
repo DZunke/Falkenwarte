@@ -155,7 +155,14 @@ final class Access implements OperationHandler
 
     private function sessionView(?Actor $a, ?array $owner): array
     {
-        return ['authenticated' => null !== $a, 'actor' => $a?->ref(), 'owner' => $owner, 'csrf_token' => $this->session['csrf'] ?? null, 'expires_at' => $this->session ? gmdate(DATE_ATOM, $this->session['expires']) : null, 'capabilities' => $a?->owner ? ['*'] : ($a->capabilities ?? [])];
+        $projectScope = null === $a
+            ? null
+            : [
+                'all_projects' => $a->owner || $a->allProjects,
+                'project_ids' => $a->owner || $a->allProjects ? [] : $a->projects,
+            ];
+
+        return ['authenticated' => null !== $a, 'actor' => $a?->ref(), 'owner' => $owner, 'csrf_token' => $this->session['csrf'] ?? null, 'expires_at' => $this->session ? gmdate(DATE_ATOM, $this->session['expires']) : null, 'capabilities' => $a?->owner ? ['*'] : ($a->capabilities ?? []), 'project_scope' => $projectScope];
     }
 
     private function timezone(string $zone): void
@@ -204,22 +211,26 @@ final class Access implements OperationHandler
             return array_replace($this->store->accepted(), ['status' => 'succeeded']);
         }
         if ('tokens_list' === $op) {
-            return $this->store->page($this->store->all('tokens'), $p);
+            return $this->store->page(array_map($this->publicTechnicalToken(...), $this->store->all('tokens')), $p);
         }
         if ('tokens_create' === $op) {
-            foreach ($b['project_ids'] as $id) {
+            $allProjects = true === ($b['all_projects'] ?? false);
+            $projectIds = $allProjects ? [] : $b['project_ids'];
+            foreach ($projectIds as $id) {
                 $this->store->get('projects', $id);
             }
+            $b['all_projects'] = $allProjects;
+            $b['project_ids'] = array_values(array_unique($projectIds));
             $credential = TechnicalCredential::issue($b['expires_at'], time());
             $meta = $this->store->save('tokens', $b + ['principal_id' => $this->store->id(), 'last_used_at' => null, 'revoked' => false, '_hash' => $credential->digest], 'access.token_issued');
 
-            return ['metadata' => $meta, 'token' => $credential->bearer, 'token_disclosed' => true];
+            return ['metadata' => $this->publicTechnicalToken($meta), 'token' => $credential->bearer, 'token_disclosed' => true];
         }
         if ('tokens_revoke' === $op) {
             $token = $this->store->get('tokens', $p['token_id']);
             $token['revoked'] = true;
 
-            return $this->store->save('tokens', $token, 'access.token_revoked');
+            return $this->publicTechnicalToken($this->store->save('tokens', $token, 'access.token_revoked'));
         }
         if ('secret_references_list' === $op) {
             return $this->store->page($this->store->all('secret_references'), $p);
@@ -228,5 +239,14 @@ final class Access implements OperationHandler
         $this->store->putSecret($meta['id'], $b['value']);
 
         return $this->store->save('secret_references', array_replace($meta, ['configured' => true, 'rotated_at' => $this->store->now()]), 'access.secret_configured');
+    }
+
+    private function publicTechnicalToken(array $token): array
+    {
+        $allProjects = true === ($token['all_projects'] ?? false);
+        $token['all_projects'] = $allProjects;
+        $token['project_ids'] = $allProjects ? [] : (is_array($token['project_ids'] ?? null) ? array_values($token['project_ids']) : []);
+
+        return $this->store->redact($token);
     }
 }

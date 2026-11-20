@@ -21,7 +21,8 @@ test('the task execution tab explains blockers when no T3 runtime is configured'
   const executionPanel = ownerPage.getByRole('tabpanel', { name: 'Ausführung' });
   await expect(executionPanel).toContainText('Startbedingungen');
   await expect(executionPanel).toContainText('Verschiebe das Ticket zuerst in einen bearbeitbaren Status.');
-  await expect(executionPanel).toContainText('Für dieses Projekt ist kein Rollenprofil freigegeben.');
+  await expect(executionPanel).toContainText('Binde dieses Projekt unter Agents & T3 an eine T3-Verbindung, bevor du einen Auftrag startest.');
+  await expect(executionPanel.getByRole('link', { name: 'Agents & T3' })).toHaveAttribute('href', '#/agents');
   await expect(executionPanel).toContainText('Für dieses Projekt ist kein aktiver Workflow verfügbar.');
   await expect(executionPanel.getByRole('button', { name: 'Einzellauf anfordern' })).toBeDisabled();
   await expect(executionPanel.getByRole('button', { name: 'Workflow starten' })).toHaveCount(0);
@@ -29,6 +30,6 @@ test('the task execution tab explains blockers when no T3 runtime is configured'
 
   recordEvidence(
     'Die Ausführungsansicht zeigt Startblockaden und erlaubt keinen versehentlichen Start ohne startbereiten Status, Rollenprofil oder T3-Konfiguration.',
-    `Das Ticket ${task.id} blieb im Status backlog. Der Browser zeigte die Blockade, das fehlende Rollenprofil und den fehlenden aktiven Workflow; beide Startschaltflächen waren deaktiviert. Es wurde kein T3-Auftrag angefordert.`,
+    `Das Ticket ${task.id} blieb im Status backlog. Der Browser verlinkte zur Einrichtung der fehlenden Projektbindung und zeigte den fehlenden Workflow. Der Einzellauf war deaktiviert und es gab keinen Workflow-Startbutton.`,
   );
 });

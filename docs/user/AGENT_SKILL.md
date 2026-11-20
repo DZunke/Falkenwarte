@@ -2,15 +2,20 @@
 
 Der Falkenwarte-Skill ist eine einzelne Markdown-Datei für Codex, Claude Code und andere Agenten, die Skills und MCP unterstützen. Er erklärt, wie ein Agent im beauftragten Zielprojekt den Ticketkontext liest und sein Ergebnis an Falkenwarte meldet.
 
-Im Bereich **Agents & T3** kannst du **Agent-Skill einrichten** öffnen oder über **Skill herunterladen** die Datei beziehen. Der Download liefert nur den Skill; er richtet keinen MCP-Zugang ein.
+Du richtest zwei Dinge ein. Die Datei `SKILL.md` erklärt dem Agenten den Arbeitsablauf. Der MCP-Servereintrag und ein Token erlauben ihm, Falkenwarte zu erreichen und dort im Rahmen seiner Rechte zu arbeiten.
 
 ## Im Zielprojekt installieren
 
-Wähle das Zielverzeichnis für deinen Agenten und führe den Befehl im Stammverzeichnis des Zielprojekts aus. Für eine T3-Instanz muss der Skill am selben Projektpfad und auf dem Rechner sichtbar sein, auf dem der Provider arbeitet.
+1. Öffne in Falkenwarte **Agents & T3** und klicke auf **Skill herunterladen**. Dein Browser lädt die Datei `SKILL.md` herunter.
+2. Öffne in deinem Editor den Projektordner, den du in T3 gebunden hast. Läuft dein T3-Backend in WSL, öffne diesen Ordner in WSL. Bei Codex und Pi legst du darin den Ordner `.agents/skills/falkenwarte` an, bei Claude Code den Ordner `.claude/skills/falkenwarte`.
+3. Kopiere die heruntergeladene `SKILL.md` in diesen Ordner. Bei Codex solltest du im Projekt jetzt die Datei `.agents/skills/falkenwarte/SKILL.md` öffnen können. Lass das Zielprojekt für die MCP-Konfiguration im Editor geöffnet.
+
+Wenn du einen Skill für mehrere Projekte installieren oder den Download im Terminal ausführen möchtest, kannst du eines dieser Verzeichnisse verwenden.
 
 | Agent | Projektverzeichnis | Benutzerverzeichnis auf dem Provider-Host |
 |---|---|---|
 | Codex | `.agents/skills/falkenwarte` | `$HOME/.agents/skills/falkenwarte` |
+| Pi | `.agents/skills/falkenwarte` | `$HOME/.agents/skills/falkenwarte` |
 | Claude Code | `.claude/skills/falkenwarte` | `${CLAUDE_CONFIG_DIR}/skills/falkenwarte`; standardmäßig `$HOME/.claude/skills/falkenwarte` |
 | Anderer Provider | Das für Skills dokumentierte Verzeichnis | Das Benutzerverzeichnis des dort laufenden Providers |
 
@@ -38,21 +43,56 @@ T3 muss die Datei im aktiven Projekt und in der Umgebung seines ausgewählten Pr
 
 ## MCP-Zugang einrichten
 
-Der MCP-Zugang ist getrennt vom Skill. Stelle in Falkenwarte unter **Einstellungen → Technische Principals** ein technisches Token für das benötigte Projekt aus. Falkenwarte zeigt den Tokenwert nur einmal; bewahre ihn in einem Secret-Manager oder im geschützten Prozessumfeld auf und füge ihn nie in eine eingecheckte Datei oder in den Chat ein.
+Die T3-Verbindung erlaubt Falkenwarte, einen Agenten zu starten. Für den Rückweg braucht der Agent einen eigenen Zugang, damit er das Ticket lesen und sein Ergebnis an Falkenwarte melden kann.
 
-Für einen übergebenen Lauf reichen gewöhnlich **Tickets lesen** (`tasks.read`), **Aufträge lesen** (`runs.read`) und **Ergebnismeldungen senden** (`runs.report`). Zum Anlegen von Tickets oder Nachreichen von Intake-Angaben kommt **Tickets bearbeiten** (`tasks.write`) hinzu. `tasks_intake_get` nutzt `tasks.read`; die Werkzeugliste und deren Sichtbarkeit richten sich nach Projektbindung und Tokenrechten. Erteile `runs.request` nur, wenn eine konkrete Rollenaufgabe es verlangt.
+1. Öffne **Einstellungen → Technische Principals**. Gib unter **Tokenname** einen für dich erkennbaren Namen ein, etwa „Entwickler für Projekt A“.
+2. Wähle unter **Projektzugriff** die gewünschten Projekte. **Alle Projekte** schließt jedes künftig angelegte Falkenwarte-Projekt ein. Die Projektfreigabe der Agentrolle und der Zugriff dieses Tokens lassen sich unabhängig einstellen.
+3. Wähle unter **Berechtigungen** die Aufgaben, die der Agent ausführen darf. Für einen ersten Auftrag reichen **Tickets lesen**, **Aufträge lesen** und **Ergebnismeldungen senden**.
+4. Klicke auf **Token ausstellen**. Erst jetzt erzeugt Falkenwarte den geheimen Wert und zeigt ihn einmal an. Kopiere ihn in deinen Passwortmanager und verwende ihn für die unten beschriebene Providerkonfiguration.
+
+Die drei Rechte für den ersten Auftrag heißen in der API `tasks.read`, `runs.read` und `runs.report`. Soll der Agent Tickets anlegen oder Angaben zum Eingang nachreichen, gib ihm zusätzlich **Tickets bearbeiten** (`tasks.write`).
 
 ### Codex
 
-Ergänze die Codex-Konfiguration auf dem Host, auf dem Codex läuft. Standardmäßig ist das `~/.codex/config.toml`; die Variable enthält den Token und wird außerhalb der Datei gesetzt:
+**1. Serverdatei im Zielprojekt anlegen.** Öffne im Editor die oberste Ebene des gebundenen Projekts. Lege dort den Ordner `.codex` und darin die Datei `config.toml` an, falls sie fehlen. Gibt es die Datei bereits, behalte die vorhandenen Einstellungen und ergänze den folgenden Abschnitt. Gibt es darin bereits einen Abschnitt `[mcp_servers.falkenwarte]`, bearbeite diesen. Speichere die Datei. Für Falkenwarte und den T3-Provider auf derselben WSL-Instanz mit dem Standardport kannst du diesen Eintrag übernehmen.
 
 ```toml
 [mcp_servers.falkenwarte]
-url = "https://falkenwarte.example/mcp"
+url = "https://localhost:8443/mcp"
 bearer_token_env_var = "FALKENWARTE_MCP_TOKEN"
 ```
 
-Setze `FALKENWARTE_MCP_TOKEN` in der Umgebung des Codex- beziehungsweise T3-Provider-Prozesses und starte diesen Prozess neu. Die Codex-CLI, IDE-Erweiterung und Desktop-App teilen auf demselben Rechner ihre MCP-Konfiguration. Prüfe sie mit `codex mcp list` oder im Codex-Terminal mit `/mcp`. [Codex-MCP-Konfiguration](https://developers.openai.com/codex/mcp/)
+Bei einer anderen Installation ersetze `https://localhost:8443` durch die Falkenwarte-Adresse, die **aus der Providerumgebung** erreichbar ist. Belasse `/mcp` am Ende. In der Datei steht der Name der Variablen. Ihren geheimen Wert trägst du im nächsten Schritt ein. Codex lädt Projektkonfigurationen aus vertrauenswürdigen Projekten. [Codex-MCP-Konfiguration](https://developers.openai.com/codex/mcp/)
+
+**2. Token der richtigen Codex-Instanz geben.** Öffne in der T3-App **Settings → Providers**. Klicke links auf die Codex-Instanz, die du in der Falkenwarte-Agentrolle ausgewählt hast. Klicke rechts unter **Environment → Variables** auf **Add variable**. Gib als Namen `FALKENWARTE_MCP_TOKEN` und als Wert das Token ein, das du unter **Token ausstellen** erhalten hast. Übernimm die Änderung. Tokenwerte gehören ausschließlich in die Providerumgebung und deinen Passwortmanager.
+
+**3. Bei einer lokalen Falkenwarte das Zertifikat hinterlegen.** Verwendest du die lokale Standardinstallation, braucht auch der Codex-Prozess Zugriff auf deren öffentliche Zertifizierungsstelle. Falls du die Datei bei der Installation bereits nach WSL kopiert hast, verwende ihren vorhandenen Pfad. Andernfalls öffne in WSL im Falkenwarte-Ordner mit der `compose.yaml` ein Terminal und führe den folgenden Befehl aus. Die zweite Zeile zeigt den vollständigen Pfad, den du gleich einträgst.
+
+```sh
+docker compose cp app:/certs/root.crt "$HOME/falkenwarte-root.crt"
+realpath "$HOME/falkenwarte-root.crt"
+```
+
+Klicke bei derselben Codex-Instanz erneut auf **Add variable**. Gib als Namen `CODEX_CA_CERTIFICATE` ein und füge als Wert den vollständigen Pfad aus WSL ein, zum Beispiel `/home/anna/falkenwarte-root.crt`. Nutzt dein Server bereits ein öffentlich vertrauenswürdiges Zertifikat, fahre direkt mit dem Lesetest fort. [Codex und private Zertifizierungsstellen](https://learn.chatgpt.com/docs/auth?surface=cli#custom-ca-bundles)
+
+**4. Neuen Thread öffnen.** Wähle in T3 das gebundene Projekt, erstelle einen neuen Thread mit genau dieser Codex-Instanz und führe den [Lesetest](#verbindung-im-zielprojekt-prüfen) aus. Die Projektdatei muss für diesen Codex-Prozess lesbar sein.
+
+### Pi
+
+Lege im vertrauenswürdigen Zielprojekt den folgenden Server in `.pi/mcp.json` unter `mcpServers` an. Ersetze die Beispieladresse durch die HTTPS-Adresse deiner Falkenwarte. Pi liest das Token zur Laufzeit aus der Umgebung der jeweiligen Providerinstanz. [Pi-MCP-Konfiguration](https://docs.pi.dev/latest/mcp)
+
+```json
+{
+  "mcpServers": {
+    "falkenwarte": {
+      "url": "https://falkenwarte.example/mcp",
+      "headers": { "Authorization": "Bearer ${FALKENWARTE_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+Öffne in T3 **Settings → Providers**, wähle die Pi-Instanz und trage für sie unter **Environment → Variables** `FALKENWARTE_MCP_TOKEN` als geheimen Wert ein. Zwei Pi-Instanzen können dieselbe Projektdatei mit jeweils eigenen Tokens nutzen. Öffne einen neuen Thread im Zielprojekt. Pi lädt den Projektskill aus `.agents/skills/falkenwarte`. In einer interaktiven Pi-Sitzung kannst du den MCP-Status mit `/mcp` prüfen und den Skill mit `/skill:falkenwarte` aufrufen. Falls Pi meldet, dass Projektdateien übersprungen wurden, prüfe die Projektfreigabe in genau der Umgebung, die diese T3-Instanz verwendet. [Pi in T3](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/providers-pi.md) · [Pi-Skills](https://docs.pi.dev/latest/skills)
 
 ### Claude Code
 
@@ -78,10 +118,14 @@ Für andere Agenten nutze deren dokumentierte HTTP-MCP-Konfiguration und verweis
 
 ## Interne TLS-Zertifizierungsstelle
 
-Bei einer lokalen Zertifizierungsstelle installiere ihr CA-Zertifikat im Vertrauensspeicher des Hosts oder Containers, der die MCP-HTTPS-Verbindung aufbaut, und starte den Provider neu. Die Codex-MCP-Konfiguration dokumentiert keine CA-Datei pro Server. Schalte die Zertifikatsprüfung nicht ab. [Codex-Konfigurationsreferenz](https://developers.openai.com/codex/config-reference)
+Bei einer privaten Zertifizierungsstelle benötigt der Provider ihr öffentliches CA-Zertifikat. Bei Codex kannst du `CODEX_CA_CERTIFICATE` in der Provider-Umgebung auf den Pfad der PEM-Datei setzen. Der Pfad muss auf dem Rechner lesbar sein, auf dem der T3-Provider läuft. Andere Provider können den Vertrauensspeicher ihres Hosts oder Containers verwenden. Starte nach Änderungen einen neuen Provider-Prozess. [Codex und private Zertifizierungsstellen](https://learn.chatgpt.com/docs/auth?surface=cli#custom-ca-bundles)
 
 ## Verbindung im Zielprojekt prüfen
 
-Öffne in T3 einen frischen Thread im tatsächlichen Zielprojekt und wähle den Falkenwarte-Skill über den Skills-Picker des Providers aus. Gib die UUID `task_id` eines Tickets an, das du lesen darfst und mindestens ein noch offenes Kriterium hat, und bitte den Agenten, `task_handoff_get` aufzurufen sowie Ticketkennzeichen und offenen Kriteriumstext zurückzugeben.
+Öffne das Board in Falkenwarte. Kopiere aus der Adresse die Projekt-ID zwischen `/project/` und `/board`. Ersetze in diesem Text `<Projekt-ID>` durch die kopierte ID und sende ihn im neuen T3-Thread mit der Providerinstanz deiner Agentrolle.
 
-Dieser Lesetest sollte den Ticketkontext wirklich aus Falkenwarte beziehen. Der Agent soll keine Aufgabe anlegen, keine Angaben nachreichen, keinen Lauf starten und keinen Bericht senden. Wenn der MCP-Server nur als konfiguriert angezeigt wird, aber `task_handoff_get` nicht verfügbar ist, prüfe Token, Projektbindung und **Tickets lesen** (`tasks.read`) auf dem Provider-Host. [MCP-Werkzeuge](../API.md#mcp-tools-verwenden)
+> Rufe beim MCP-Server falkenwarte das Werkzeug `tasks_list` mit `project_id <Projekt-ID>` und `limit 1` auf. Zeige mir das Ergebnis des Werkzeugaufrufs. Ändere nichts.
+
+Bei einem leeren Board zeigt die Werkzeugantwort `isError: false` und `items: []`. Hat das Projekt schon Tickets, kann `items` ein Ticket enthalten. Beide Antworten bestätigen, dass dieser Agent das Projekt lesen kann.
+
+Wenn der Server fehlt, prüfe die MCP-Konfiguration des gewählten Providers. Bei einem Zertifikatsfehler prüfe die CA im Providerprozess. Bei abgewiesenem Zugriff prüfe dort die Tokenvariable und in Falkenwarte die Gültigkeit, die Projektfreigabe und das Recht **Tickets lesen**. Sobald ein Ticket existiert, kannst du auch die Übergabe mit `task_handoff_get` und der Ticket-UUID prüfen. [MCP-Werkzeuge](../API.md#mcp-tools-verwenden)

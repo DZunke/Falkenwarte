@@ -454,6 +454,34 @@ paths:
       - browser_session: []
         csrf_token: []
       - technical_token: []
+  /projects/{project_id}/t3-threads:
+    parameters:
+    - name: project_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    get:
+      operationId: project_t3_threads_list
+      tags:
+      - projects
+      summary: T3-Referenzthreads des gebundenen Projekts auflisten
+      parameters:
+      - $ref: '#/components/parameters/T3ThreadCursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/T3ThreadPage'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: project_t3_threads_list
+      x-required-capabilities:
+      - agents.read
+      security:
+      - browser_session: []
+      x-owner-only: true
   /projects/{project_id}/statuses:
     parameters:
     - name: project_id
@@ -2029,6 +2057,39 @@ paths:
       security:
       - browser_session: []
       x-owner-only: true
+  /connections/{connection_id}/providers:
+    parameters:
+    - name: connection_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    get:
+      operationId: connection_providers_list
+      tags:
+      - agents
+      summary: Ausführbare T3-Providerinstanzen und ihre Modelle lesen
+      description: Fragt die autorisierte T3-Verbindung live ab und liefert nur Instanzen, die T3 als ausführbar meldet. Eine Modellsuche verwendet denselben Filter.
+      parameters:
+      - name: search
+        in: query
+        required: false
+        description: Sucht gezielt in gekürzten T3-Modellkatalogen. Der Suchbegriff wird an T3 weitergereicht.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 200
+      responses:
+        '200':
+          $ref: '#/components/responses/ProviderInventory'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: connection_providers_list
+      x-required-capabilities:
+      - agents.read
+      security:
+      - browser_session: []
+      x-owner-only: true
   /connections/{connection_id}/projects:
     parameters:
     - name: connection_id
@@ -3158,7 +3219,7 @@ paths:
       operationId: tokens_create
       tags:
       - access
-      summary: Projektgebundenes technisches Token einmalig ausgeben
+      summary: Technisches Token mit Projektfreigabe einmalig ausgeben
       description: Erstausgabe enthält Token. Replays identifizieren denselben Datensatz, liefern token:null; bei verlorener Erstausgabe
         widerrufen und mit neuem Key neu ausstellen.
       parameters:
@@ -4758,6 +4819,13 @@ components:
       schema:
         $ref: '#/components/schemas/Cursor'
       description: Opaque nächste Seite.
+    T3ThreadCursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/T3ThreadCursor'
+      description: Nichtnegative Dezimaldarstellung des T3-Offsets, die unverändert aus next_cursor übernommen wird.
     Limit:
       name: limit
       in: query
@@ -5080,6 +5148,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/CapabilitySnapshot'
+    ProviderInventory:
+      description: Ausführbare Providerinstanzen und ihre Modelle aus der autorisierten T3-Verbindung.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProviderInventory'
     Connection:
       description: Connection-Darstellung.
       content:
@@ -5386,6 +5460,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RemoteProjectPage'
+    T3ThreadPage:
+      description: Referenzthread-Seite aus dem gebundenen T3-Projekt.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/T3ThreadPage'
     CustomFieldDefinitionPage:
       description: CustomFieldDefinitionPage-Darstellung.
       content:
@@ -5546,6 +5626,12 @@ components:
       minLength: 1
       maxLength: 512
       description: Opaque Cursor; nicht selbst zusammensetzen.
+    T3ThreadCursor:
+      type: string
+      pattern: ^(0|[1-9][0-9]*)$
+      minLength: 1
+      maxLength: 15
+      description: Dezimale, nichtnegative T3-Threadlistenposition.
     Slug:
       type: string
       pattern: ^[a-z][a-z0-9-]{1,62}$
@@ -5945,6 +6031,10 @@ components:
             type: string
             maxLength: 100
           maxItems: 200
+        project_scope:
+          anyOf:
+          - $ref: '#/components/schemas/ProjectScope'
+          - type: 'null'
       required:
       - authenticated
       - actor
@@ -5952,6 +6042,22 @@ components:
       - csrf_token
       - expires_at
       - capabilities
+      - project_scope
+      description: 'Projektumfang des aktuellen Akteurs. Owner und global freigegebene technische Principals erhalten all_projects true und eine leere Projekt-ID-Liste; anonyme Sessions erhalten null.'
+    ProjectScope:
+      type: object
+      additionalProperties: false
+      properties:
+        all_projects:
+          type: boolean
+        project_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          maxItems: 200
+      required:
+      - all_projects
+      - project_ids
     UiConfig:
       type: object
       additionalProperties: false
@@ -7804,6 +7910,46 @@ components:
         properties:
           link_ids:
             minItems: 1
+    RunResultArtifactCandidate:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        label:
+          type: string
+          maxLength: 200
+          minLength: 1
+        link_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          minItems: 0
+          maxItems: 100
+        text:
+          type: string
+          maxLength: 10000
+          minLength: 1
+        criterion_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          minItems: 0
+          maxItems: 100
+          uniqueItems: true
+          description: IDs von Kriterien aus dem eingefrorenen Snapshot dieses Runs, die dieser Nachweis belegt.
+      required:
+      - kind
+      - label
+      description: Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. criterion_ids ordnet den Nachweis optional Kriterien des eingefrorenen Run-Snapshots zu.
+      anyOf:
+      - required:
+        - text
+      - required:
+        - link_ids
+        properties:
+          link_ids:
+            minItems: 1
     RunResultReportRequest:
       type: object
       additionalProperties: false
@@ -7830,7 +7976,7 @@ components:
         artifacts:
           type: array
           items:
-            $ref: '#/components/schemas/ArtifactCandidate'
+            $ref: '#/components/schemas/RunResultArtifactCandidate'
           maxItems: 100
         open_questions:
           type: array
@@ -7984,6 +8130,9 @@ components:
           maxItems: 100
           description: Bei Registrierung serverseitig kopierte Linkdaten. Menschliche Bestätigung bezieht sich genau auf diese URLs,
             Titel und Beziehungswerte; keine aktuelle Liveauflösung.
+        current_for_task:
+          type: boolean
+          description: Gültigkeit für die aktuelle Ticketrevision und den aktuellen Link-Snapshot; bei Listen- und Einzelabruf gesetzt.
       required:
       - id
       - version
@@ -8363,9 +8512,7 @@ components:
       additionalProperties: false
       properties:
         provider_instance_id:
-          type: string
-          maxLength: 64
-          minLength: 1
+          $ref: '#/components/schemas/T3ProviderInstanceId'
         display_name:
           anyOf:
           - type: string
@@ -8373,11 +8520,125 @@ components:
           - type: 'null'
         available:
           type: boolean
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderModel'
+          maxItems: 500
+        omitted_models:
+          type: integer
+          minimum: 0
       required:
       - provider_instance_id
       - display_name
       - available
-      description: Lesende Information aus T3; keine Provider- oder Modellkonfiguration in Falkenwarte.
+      description: Lesende Information aus T3; Modelle sind in älteren Capability-Snapshots möglicherweise nicht enthalten.
+    ProviderModel:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        label:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        reasoning:
+          $ref: '#/components/schemas/ProviderModelReasoning'
+      required:
+      - id
+      description: Optional, begrenzte Auswahloption für die Reasoning-Einstellung dieses Modells.
+    ProviderModelReasoning:
+      type: object
+      additionalProperties: false
+      properties:
+        option_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        values:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        default:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 128
+          - type: 'null'
+      required:
+      - option_id
+      - values
+      description: Aus T3 übernommene einzelne String-Option. Werte sind begrenzt, und ältere Inventare dürfen das Feld auslassen.
+    T3ReasoningSelection:
+      type: object
+      additionalProperties: false
+      properties:
+        option_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        value:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+      - option_id
+      - value
+      description: Einzelne Reasoning-Auswahl einer expliziten T3-Providerinstanz.
+    T3ProviderInstanceId:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: ^[a-zA-Z][a-zA-Z0-9_-]*$
+      description: T3-Instanz-Slug. Groß- und Kleinschreibung sind unterscheidbar.
+    ProviderInventory:
+      type: object
+      additionalProperties: false
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderInstance'
+          maxItems: 100
+      required:
+      - providers
+      description: Instanzen, die T3 bei dieser Abfrage als ausführbar meldet, mit ihren jeweiligen Modellen.
+    ProviderInstance:
+      type: object
+      additionalProperties: false
+      properties:
+        provider_instance_id:
+          $ref: '#/components/schemas/T3ProviderInstanceId'
+        display_name:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        available:
+          type: boolean
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderModel'
+          maxItems: 500
+        omitted_models:
+          type: integer
+          minimum: 0
+      required:
+      - provider_instance_id
+      - display_name
+      - available
+      - models
+      description: Aktuell von T3 gelieferte Providerinstanz. Die ID identifiziert eine Instanz innerhalb einer Verbindung; Modelle sind T3-Modell-IDs. `omitted_models` gibt bei gekürzten Katalogen die ausgelassenen Modelltreffer an.
     CapabilitySnapshot:
       type: object
       additionalProperties: false
@@ -8723,6 +8984,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Bei `all_projects: true` wird dieses Feld leer zurückgegeben; sonst ist es die explizite Freigabeliste, wobei eine leere Liste keinen Projektzugriff erlaubt.'
+        all_projects:
+          type: boolean
+          description: Erlaubt alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten.
         max_parallel_runs:
           type: integer
           const: 1
@@ -8764,6 +9029,7 @@ components:
       - connection_id
       - bridge_plugin_id
       - allowed_project_ids
+      - all_projects
       - max_parallel_runs
       - prompt_template
       - prompt_template_version
@@ -8796,6 +9062,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Bei `all_projects: true` werden übermittelte IDs ignoriert und serverseitig auf eine leere Liste normalisiert; sonst ist dies die explizite Freigabeliste, wobei leer keinen Projektzugriff erlaubt.'
+        all_projects:
+          type: boolean
+          description: 'Erlaubt alle aktuellen und zukünftigen Projekte. Beim Anlegen gilt standardmäßig false. Beim Ersetzen bleibt ohne dieses Feld die gespeicherte Freigabe erhalten; bei Legacy-Profilen ohne Feld gilt false.'
         max_parallel_runs:
           type: integer
           const: 1
@@ -10613,6 +10883,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Bei all_projects true leer; sonst explizite Projektfreigaben. Bei fehlendem all_projects in gespeicherten älteren Tokens gilt die Liste.'
+        all_projects:
+          type: boolean
+          description: 'Gilt für alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten.'
         capabilities:
           type: array
           items:
@@ -10643,6 +10917,7 @@ components:
       - label
       - principal_id
       - project_ids
+      - all_projects
       - capabilities
       - created_at
       - expires_at
@@ -10662,6 +10937,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Explizite Projektfreigaben. Bei all_projects true ignoriert der Server die Liste und speichert sie leer; ohne all_projects true gewährt auch eine leere Liste keinen Projektzugriff.'
+        all_projects:
+          type: boolean
+          description: 'Optionales Owner-only Opt-in für alle aktuellen und zukünftigen Projekte. Fehlt das Feld, bleibt das Token projektbeschränkt.'
         capabilities:
           type: array
           items:
@@ -11751,6 +12030,52 @@ components:
       - next_cursor
       - has_more
       description: Cursorseite mit stabiler erlaubter Sortierung; kein unbeschränkter Export.
+    T3Thread:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        title:
+          type: string
+          maxLength: 1000
+        provider_instance_id:
+          anyOf:
+          - $ref: '#/components/schemas/T3ProviderInstanceId'
+          - type: 'null'
+          description: Von T3 gelieferte Providerinstanz für den Thread, falls der Server Routing-Metadaten bereitstellt.
+        model:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+          description: Von T3 geliefertes Modell für den Thread, falls der Server Routing-Metadaten bereitstellt.
+      required:
+      - id
+      - title
+    T3ThreadPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/T3Thread'
+          maxItems: 100
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/T3ThreadCursor'
+          - type: 'null'
+        has_more:
+          type: boolean
+      required:
+      - items
+      - next_cursor
+      - has_more
+      description: T3-Offsetseite des gebundenen Projekts; archived Threads sind in T3 v0.1.11 nicht Teil von t3_thread_list.
     CustomFieldDefinitionPage:
       type: object
       additionalProperties: false
@@ -11960,10 +12285,32 @@ components:
         required:
         - mode
         - reference_thread_id
-      description: Referenz auf Konfiguration in T3. Keine Modell-/Providerdefinition. Referenzthread liefert nur lesbare Routingfelder;
+      - type: object
+        additionalProperties: false
+        properties:
+          mode:
+            const: t3_provider_instance
+          provider_instance_id:
+            $ref: '#/components/schemas/T3ProviderInstanceId'
+            description: Exakte Instanz-ID aus dem Live-Inventar der zugehörigen T3-Verbindung.
+          model:
+            type: string
+            minLength: 1
+            maxLength: 256
+            description: Exakte Modell-ID aus dem Inventar dieser Providerinstanz.
+          reasoning:
+            $ref: '#/components/schemas/T3ReasoningSelection'
+        required:
+        - mode
+        - provider_instance_id
+        - model
+      description: T3-Projektstandard, Referenz auf vorhandene Konfiguration in T3 oder explizite T3-Providerinstanz samt Modell.
+        Referenzthread liefert nur lesbare Routingfelder;
         kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von
         modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet
-        beim Replay den gespeicherten T3-Wert.
+        beim Replay den gespeicherten T3-Wert. Bei einer expliziten Providerinstanz friert Falkenwarte Instanz-ID und Modell ein und
+        sendet sie als modelSelection an T3. Eine Reasoning-Auswahl ist optional und gilt nur für explizite Providerinstanzen; sie wird
+        auf eine einzelne String-Option in modelSelection.options abgebildet. Alte Profile ohne Reasoning-Auswahl bleiben gültig.
     EvidenceReview:
       type: object
       additionalProperties: false

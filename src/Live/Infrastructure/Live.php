@@ -69,17 +69,24 @@ final class Live implements OperationHandler
 
     public function handle(string $name, array $p, array $b, Actor $a): array
     {
-        $projects = array_unique($b['project_ids'] ?? $a->projects);
-        foreach ($projects as $id) {
-            $a->requireProject($id);
-        }
-        $topics = array_map($this->topic(...), $projects);
-        if ($a->owner && !isset($b['project_ids'])) {
-            $topics[] = $this->topic(null);
-        }
-        $topics = array_values($topics);
         if ('live_authorize' === $name) {
             $a->requireOwner();
+        }
+
+        $projects = [];
+        $topics = [];
+        if ('events_catch_up' !== $name) {
+            $projects = array_unique($b['project_ids'] ?? ($a->allProjects ? array_column($this->store->all('projects'), 'id') : $a->projects));
+            foreach ($projects as $id) {
+                $a->requireProject($id);
+            }
+            $topics = array_map($this->topic(...), $projects);
+            if ($a->owner && !isset($b['project_ids'])) {
+                $topics[] = $this->topic(null);
+            }
+            $topics = array_values($topics);
+        }
+        if ('live_authorize' === $name) {
             foreach ($projects as $id) {
                 $this->store->get('projects', $id);
             }

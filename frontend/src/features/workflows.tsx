@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { GitBranch, Plus, Route, TimerReset } from 'lucide-react'
 import { toast } from 'sonner'
@@ -31,7 +31,29 @@ export default function WorkflowsView() {
   const workflows = workflowsQuery.data?.items ?? []
   const profiles = profilesQuery.data?.items ?? []
   const selectedProject = projects.find((project) => project.id === projectId) ?? projects[0]
-  const selectedProjectId = projectId || selectedProject?.id || ''
+  const selectedProjectId = selectedProject?.id ?? ''
+  const projectBindingQuery = useQuery({
+    queryKey: ['project-binding', selectedProjectId],
+    enabled: Boolean(selectedProjectId),
+    queryFn: async () => {
+      const response = await api.GET('/projects/{project_id}/binding', { params: { path: { project_id: selectedProjectId } } })
+      if (response.response.status === 404) return null
+      return request(Promise.resolve(response))
+    },
+  })
+  const projectBinding = projectBindingQuery.isSuccess && projectBindingQuery.data?.active
+    ? projectBindingQuery.data
+    : null
+  const eligibleProfiles = useMemo(() => projectBinding
+    ? profiles.filter((profile) => profile.enabled
+      && (profile.all_projects || profile.allowed_project_ids.includes(selectedProjectId))
+      && profile.connection_id === projectBinding.connection_id)
+    : [], [profiles, projectBinding, selectedProjectId])
+  const selectedProfileIsEligible = eligibleProfiles.some((profile) => profile.id === profileId)
+
+  useEffect(() => {
+    if (profileId && !selectedProfileIsEligible) setProfileId('')
+  }, [profileId, selectedProfileIsEligible])
   const labelsQuery = useQuery({
     queryKey: ['project-labels', selectedProjectId],
     enabled: Boolean(selectedProjectId),
@@ -53,15 +75,16 @@ export default function WorkflowsView() {
   const createWorkflow = useMutation({
     mutationFn: () => {
       if (!selectedProjectId) throw new Error('Wähle ein Projekt aus.')
-      const profile = profileId || null
+      if (profileId && !selectedProfileIsEligible) throw new Error('Das Rollenprofil ist für das ausgewählte Projekt oder dessen T3-Verbindung nicht mehr freigegeben. Bitte wähle die Rolle erneut aus.')
+      const selectedProfileId = profileId || null
       const policy = { require_external_settled: true as const, required_evidence_kinds: [], required_criterion_ids: [], require_human_phase_decision: false, require_human_confirmed_evidence: false }
       return request(api.POST('/workflows', {
         params: mutationParams(),
         body: {
           project_id: selectedProjectId, name: workflowName.trim(), preset_id: 'two-stage-review', enabled: true,
           stages: [
-            { id: 'work', kind: 'agent_run', name: 'Bearbeitung', agent_profile_id: profile, entry_conditions: [], run_completion_policy: policy },
-            { id: 'review', kind: 'review', name: 'Reviewmeldung', agent_profile_id: profile, entry_conditions: [{ type: 'run_succeeded' }], run_completion_policy: { ...policy, require_human_phase_decision: true } },
+            { id: 'work', kind: 'agent_run', name: 'Bearbeitung', agent_profile_id: selectedProfileId, entry_conditions: [], run_completion_policy: policy },
+            { id: 'review', kind: 'review', name: 'Reviewmeldung', agent_profile_id: selectedProfileId, entry_conditions: [{ type: 'run_succeeded' }], run_completion_policy: { ...policy, require_human_phase_decision: true } },
           ],
           transitions: [
             { from_stage_id: 'work', to_stage_id: 'review', on: 'accepted', conditions: [] },
@@ -118,9 +141,29 @@ export default function WorkflowsView() {
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="size-4 text-muted-foreground" />Zwei-Phasen-Workflow</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1.5"><Label>Projekt</Label><Select value={selectedProjectId} onValueChange={setProjectId}><SelectTrigger><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5"><Label htmlFor="workflow-project">Projekt</Label><Select value={selectedProjectId} onValueChange={(id) => { setProjectId(id); setProfileId('') }}><SelectTrigger id="workflow-project"><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1.5"><Label htmlFor="workflow-name">Name</Label><Input id="workflow-name" value={workflowName} onChange={(event) => setWorkflowName(event.target.value)} placeholder="Bearbeitung mit Reviewmeldung" maxLength={120} /></div>
-            <div className="space-y-1.5"><Label>Agentrolle für beide Phasen</Label><Select value={profileId || 'none'} onValueChange={(value) => setProfileId(value === 'none' ? '' : value)}><SelectTrigger><SelectValue placeholder="Rolle wählen" /></SelectTrigger><SelectContent><SelectItem value="none">Keine Rolle festlegen</SelectItem>{profiles.filter((profile) => profile.enabled).map((profile) => <SelectItem key={profile.id} value={profile.id}>{profile.name} · {profile.role}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-profile">Agentrolle für beide Phasen</Label>
+              <Select value={selectedProfileIsEligible ? profileId : 'none'} onValueChange={(value) => setProfileId(value === 'none' ? '' : value)}>
+                <SelectTrigger id="workflow-profile"><SelectValue placeholder="Rolle wählen" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Keine Rolle festlegen</SelectItem>
+                  {eligibleProfiles.map((profile) => <SelectItem key={profile.id} value={profile.id}>{profile.name} · {profile.role}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {!selectedProjectId
+                ? <p role="status" className="text-xs text-muted-foreground">Lege zuerst ein Falkenwarte-Projekt an, um eine Workflowvorlage einzurichten.</p>
+                : projectBindingQuery.isPending
+                ? <p role="status" className="text-xs text-muted-foreground">Aktive Projektbindung und passende Rollen werden geprüft…</p>
+                : projectBindingQuery.isError
+                  ? <div className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Die T3-Projektbindung konnte nicht geprüft werden. Die Rollenauswahl bleibt leer.</span><Button size="sm" variant="link" onClick={() => void projectBindingQuery.refetch()}>Erneut prüfen</Button></div>
+                    : !projectBinding
+                    ? <p role="status" className="text-xs text-amber-900">Für dieses Projekt ist keine aktive T3-Verbindung gebunden. Du kannst den Workflow ohne feste Rolle anlegen; Agentenläufe benötigen später eine aktive Projektbindung. Verbindungen richtest du unter <a className="underline underline-offset-4" href="#/agents">Agents &amp; T3</a> ein.</p>
+                    : eligibleProfiles.length === 0
+                      ? <p role="status" className="text-xs text-muted-foreground">Keine aktivierte Rolle ist für dieses Projekt und dieselbe T3-Verbindung freigegeben. Du kannst ohne feste Rolle fortfahren oder eine passende Rolle unter <a className="underline underline-offset-4" href="#/roles">Rollen</a> einrichten.</p>
+                      : <p className="text-xs text-muted-foreground">Angeboten werden nur aktivierte Rollen, die für dieses Projekt freigegeben und an dieselbe T3-Verbindung gebunden sind.</p>}
+            </div>
             <p className="text-xs text-muted-foreground">Bearbeitung führt nach angenommener Meldung zur Reviewphase. „Änderungen nötig“ führt zur Bearbeitung zurück. Eine menschliche Phasenentscheidung bleibt wirksam.</p>
             <Button disabled={!workflowName.trim() || !selectedProjectId || createWorkflow.isPending} onClick={() => createWorkflow.mutate()}><GitBranch />Workflow anlegen</Button>
           </CardContent>

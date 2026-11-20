@@ -8,13 +8,20 @@ use App\Shared\Domain\Problem;
 
 final readonly class Actor
 {
-    public function __construct(public string $id, public bool $owner, public array $projects = [], public array $capabilities = [], public string $name = '', public string $transport = 'http')
-    {
+    public function __construct(
+        public string $id,
+        public bool $owner,
+        public array $projects = [],
+        public array $capabilities = [],
+        public string $name = '',
+        public string $transport = 'http',
+        public bool $allProjects = false,
+    ) {
     }
 
     public function canProject(string $id): bool
     {
-        return $this->owner || in_array($id, $this->projects, true);
+        return $this->owner || $this->allProjects || in_array($id, $this->projects, true);
     }
 
     public function requireProject(string $id): void

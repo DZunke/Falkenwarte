@@ -35,7 +35,9 @@ final readonly class McpTool implements ToolHandlerInterface
             $key = $arguments['client_request_id'] ?? null;
             $etag = isset($arguments['expected_version']) ? '"'.$arguments['expected_version'].'"' : null;
             unset($arguments['client_request_id'], $arguments['expected_version']);
+            $requestSchema = $this->contract->resolve($op['requestBody']['content']['application/json']['schema'] ?? []);
             $body = array_diff_key($arguments, $p);
+            $body += array_intersect_key($p, $requestSchema['properties'] ?? []);
             $result = $this->app->invoke($op['operationId'], $p, $body, $this->actor, $key, $etag);
             $data = $this->contract->output($op, $this->contract->status($op, $result), $result);
 
