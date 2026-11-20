@@ -1,0 +1,6 @@
+services:
+  app:
+    entrypoint: [bash, /qa/stack-entrypoint.sh]
+    restart: "no"
+    volumes:
+      - ./tests/e2e/stack-entrypoint.sh:/qa/stack-entrypoint.sh:ro

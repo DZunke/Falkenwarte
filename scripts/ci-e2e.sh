@@ -7,7 +7,7 @@ cd "$root"
 project="falkenwarte-e2e-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-1}"
 runner="${project}-runner"
 reports="${project}-reports"
-compose=(docker compose --project-name "$project" -f compose.yaml -f compose.test.yaml --profile test)
+compose=(docker compose --project-name "$project" -f compose.yaml -f compose.test.yaml -f compose.e2e.yaml --profile test)
 control="$(mktemp -d)"
 watcher=''
 cleanup() {
@@ -20,16 +20,16 @@ cleanup() {
 trap cleanup EXIT
 
 reset_stack() {
-    local mode="$1"
-    [[ "$mode" = reset || "$mode" = restart-hub ]] || return 1
-    "${compose[@]}" stop --timeout 12 app &&
-    "${compose[@]}" run -T --no-deps --rm --entrypoint sh app -ec '
-        test "$APP_ENV" = test
-        test "$FALKENWARTE_DB" = /data/falkenwarte.sqlite
-        if [ "$1" = reset ]; then find /data -mindepth 1 -maxdepth 1 ! -name caddy -exec rm -rf -- {} +; fi
-        rm -f /data/caddy/mercure.db
-    ' qa-reset "$mode" &&
-    "${compose[@]}" start app || return 1
+    case "$1" in
+        reset)
+            "${compose[@]}" exec -T app bash /qa/stack-entrypoint.sh reset
+            return $?
+            ;;
+        restart-hub)
+            "${compose[@]}" restart --timeout 40 app || return 1
+            ;;
+        *) return 1 ;;
+    esac
     for ((attempt = 0; attempt < 60; attempt++)); do
         if "${compose[@]}" exec -T app php /usr/local/bin/falkenwarte-healthcheck >/dev/null 2>&1; then
             return 0
@@ -40,11 +40,15 @@ reset_stack() {
 }
 
 watch_resets() {
+    local request result mode start
     shopt -s nullglob
     while true; do
         for request in "$control"/*.request; do
-            local result="${request%.request}.result"
-            if reset_stack "$(<"$request")"; then echo ready > "$result.tmp"; else echo failed > "$result.tmp"; fi
+            result="${request%.request}.result"
+            mode="$(<"$request")"
+            start=$SECONDS
+            if reset_stack "$mode"; then echo ready > "$result.tmp"; else echo failed > "$result.tmp"; fi
+            printf 'E2E fixture %s: %s (%ds)\n' "$mode" "$(<"$result.tmp")" "$((SECONDS - start))"
             mv "$result.tmp" "$result"
             rm -f "$request"
         done
