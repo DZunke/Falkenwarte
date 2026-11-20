@@ -1186,6 +1186,30 @@ final class RunHandler implements OperationHandler
 
                     return;
                 }
+                $hasReasoningChoice = array_key_exists('reasoning', $target);
+                $reasoningChoice = $target['reasoning'] ?? null;
+                $reasoningOptionId = is_array($reasoningChoice) ? ($reasoningChoice['option_id'] ?? null) : null;
+                $reasoningValue = is_array($reasoningChoice) ? ($reasoningChoice['value'] ?? null) : null;
+                if ($hasReasoningChoice && (
+                    !is_string($reasoningOptionId)
+                    || '' === trim($reasoningOptionId)
+                    || $reasoningOptionId !== trim($reasoningOptionId)
+                    || mb_strlen($reasoningOptionId) > 128
+                    || !is_string($reasoningValue)
+                    || '' === trim($reasoningValue)
+                    || $reasoningValue !== trim($reasoningValue)
+                    || mb_strlen($reasoningValue) > 128
+                )) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                        'Die Reasoning-Auswahl der Agentrolle ist ungültig. Passe die Agentrolle an und starte einen neuen Auftrag.',
+                    );
+
+                    return;
+                }
 
                 try {
                     $token = $this->connectionToken($connection);
@@ -1235,9 +1259,31 @@ final class RunHandler implements OperationHandler
                     return;
                 }
 
+                if ($hasReasoningChoice && !$this->providerModelSupportsReasoning(
+                    $selection['reasoning'] ?? null,
+                    (string) $reasoningOptionId,
+                    (string) $reasoningValue,
+                )) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                        'Die gewählte Reasoning-Stufe ist für das bestätigte T3-Modell nicht mehr verfügbar. Passe die Agentrolle an und starte einen neuen Auftrag.',
+                    );
+
+                    return;
+                }
+
                 $run = $currentRun;
                 $attempt = $this->attempt($run, $expectedAttemptNo);
                 $payload['modelSelection'] = ['instanceId' => $instanceId, 'model' => $modelId];
+                if ($hasReasoningChoice) {
+                    $payload['modelSelection']['options'] = [[
+                        'id' => $reasoningOptionId,
+                        'value' => $reasoningValue,
+                    ]];
+                }
             }
             $dispatchRequest = DispatchRequest::fromPayload($payload);
             $payload = $dispatchRequest->payload;
@@ -1303,7 +1349,7 @@ final class RunHandler implements OperationHandler
         $this->store->enqueue('run.observe', ['run_id' => $runId]);
     }
 
-    /** @param list<array<string, mixed>> $providers @return array{model_available: bool, may_search: bool} */
+    /** @param list<array<string, mixed>> $providers @return array{model_available: bool, may_search: bool, reasoning?: array<string, mixed>} */
     private function providerSelectionStatus(string $instanceId, string $modelId, array $providers): array
     {
         foreach ($providers as $provider) {
@@ -1313,22 +1359,37 @@ final class RunHandler implements OperationHandler
 
             $available = true === ($provider['available'] ?? false);
             $modelAvailable = false;
+            $reasoning = null;
             foreach (($provider['models'] ?? []) as $model) {
                 if (is_array($model) && ($model['id'] ?? null) === $modelId) {
                     $modelAvailable = true;
+                    $reasoning = is_array($model['reasoning'] ?? null) ? $model['reasoning'] : null;
                     break;
                 }
             }
             $omittedModels = $provider['omitted_models'] ?? null;
 
-            return [
+            $status = [
                 'model_available' => $available && $modelAvailable,
                 // T3 omits the field when its complete catalog contains no more models.
                 'may_search' => $available && is_int($omittedModels) && $omittedModels > 0,
             ];
+            if (null !== $reasoning) {
+                $status['reasoning'] = $reasoning;
+            }
+
+            return $status;
         }
 
         return ['model_available' => false, 'may_search' => false];
+    }
+
+    private function providerModelSupportsReasoning(mixed $reasoning, string $optionId, string $value): bool
+    {
+        return is_array($reasoning)
+            && ($reasoning['option_id'] ?? null) === $optionId
+            && is_array($reasoning['values'] ?? null)
+            && in_array($value, $reasoning['values'], true);
     }
 
     /** @return array<string, mixed>|null */
@@ -1360,15 +1421,16 @@ final class RunHandler implements OperationHandler
         int $expectedRunVersion,
         int $expectedAttemptNo,
         string $expectedDispatchId,
+        ?string $statusReason = null,
     ): void {
-        $this->store->atomic(function () use ($runId, $expectedRunVersion, $expectedAttemptNo, $expectedDispatchId): void {
+        $this->store->atomic(function () use ($runId, $expectedRunVersion, $expectedAttemptNo, $expectedDispatchId, $statusReason): void {
             $run = $this->currentProviderDispatchRun($runId, $expectedRunVersion, $expectedAttemptNo, $expectedDispatchId);
             if (null === $run) {
                 return;
             }
 
             $run['state'] = 'failed';
-            $run['status_reason'] = 'Die gewählte T3-Providerinstanz oder das Modell ist in der gebundenen Verbindung nicht mehr verfügbar. Passe die Agentrolle an und starte einen neuen Auftrag.';
+            $run['status_reason'] = $statusReason ?? 'Die gewählte T3-Providerinstanz oder das Modell ist in der gebundenen Verbindung nicht mehr verfügbar. Passe die Agentrolle an und starte einen neuen Auftrag.';
             $attempt = $this->attempt($run, $expectedAttemptNo);
             $attempt['ended_at'] ??= $this->store->now();
             $attempts = $run['attempts'];

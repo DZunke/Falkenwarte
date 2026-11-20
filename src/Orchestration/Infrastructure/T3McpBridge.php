@@ -365,7 +365,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         return [];
     }
 
-    /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool, models: list<array{id: string, label?: string}>, omitted_models?: int}> */
+    /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool, models: list<array{id: string, label?: string, reasoning?: array{option_id: string, values: list<string>, default?: string|null}}>, omitted_models?: int}> */
     private function providers(mixed $providers): array
     {
         if (!is_array($providers)) {
@@ -403,6 +403,10 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
                 if (is_string($label) && mb_strlen($label) <= 200) {
                     $normalizedModel['label'] = $label;
                 }
+                $reasoning = $this->reasoningOption($model['options'] ?? null, $provider['driverKind'] ?? null);
+                if (null !== $reasoning) {
+                    $normalizedModel['reasoning'] = $reasoning;
+                }
                 $models[] = $normalizedModel;
             }
             $normalized = [
@@ -421,6 +425,61 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         }
 
         return $result;
+    }
+
+    /** @param mixed $options @param mixed $driverKind @return array{option_id: string, values: list<string>, default?: string|null}|null */
+    private function reasoningOption(mixed $options, mixed $driverKind): ?array
+    {
+        if (!is_array($options) || !is_string($driverKind)) {
+            return null;
+        }
+
+        // T3 v0.1.11's MCP projection omits descriptor.role, so accept only ids
+        // whose specific provider implementations identify them as reasoning controls.
+        $reasoningIds = match ($driverKind) {
+            'codex', 'kiro' => ['reasoningEffort'],
+            'claudeAgent' => ['effort'],
+            'pi' => ['thinking'],
+            default => [],
+        };
+        $matches = [];
+        foreach ($options as $option) {
+            if (!is_array($option) || !is_string($option['id'] ?? null) || !in_array($option['id'], $reasoningIds, true)) {
+                continue;
+            }
+            $nativeValues = $option['values'] ?? null;
+            if (!is_array($nativeValues)) {
+                continue;
+            }
+
+            $values = [];
+            foreach ($nativeValues as $value) {
+                if (!is_string($value) || '' === trim($value) || $value !== trim($value) || mb_strlen($value) > 128) {
+                    continue;
+                }
+                $values[$value] = $value;
+                if (count($values) >= 32) {
+                    break;
+                }
+            }
+            if ('effort' === $option['id']) {
+                unset($values['default']);
+            }
+            if ([] === $values) {
+                continue;
+            }
+
+            $reasoning = ['option_id' => $option['id'], 'values' => array_values($values)];
+            $default = $option['default'] ?? null;
+            if ('effort' === $option['id'] && 'default' === $default) {
+                $reasoning['default'] = null;
+            } elseif (is_string($default) && in_array($default, $values, true)) {
+                $reasoning['default'] = $default;
+            }
+            $matches[] = $reasoning;
+        }
+
+        return 1 === count($matches) ? $matches[0] : null;
     }
 
     /** @param array<string, mixed> $provider */

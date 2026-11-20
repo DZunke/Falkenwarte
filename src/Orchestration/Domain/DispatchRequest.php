@@ -35,6 +35,27 @@ final readonly class DispatchRequest
                 || mb_strlen($selection['model']) > 256) {
                 throw new \InvalidArgumentException('An explicit T3 model selection needs an instance ID and model.');
             }
+
+            if (array_key_exists('options', $selection)) {
+                $options = $selection['options'];
+                $option = is_array($options) && array_is_list($options) ? ($options[0] ?? null) : null;
+                if (!is_array($options)
+                    || !array_is_list($options)
+                    || 1 !== count($options)
+                    || !is_array($option)
+                    || 2 !== count($option)
+                    || !is_string($option['id'] ?? null)
+                    || '' === trim($option['id'])
+                    || $option['id'] !== trim($option['id'])
+                    || mb_strlen($option['id']) > 128
+                    || !is_string($option['value'] ?? null)
+                    || '' === trim($option['value'])
+                    || $option['value'] !== trim($option['value'])
+                    || mb_strlen($option['value']) > 128
+                ) {
+                    throw new \InvalidArgumentException('T3 model options must contain one bounded string option selection.');
+                }
+            }
         }
 
         return new self($payload);

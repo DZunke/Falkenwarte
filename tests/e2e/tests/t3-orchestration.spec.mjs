@@ -704,7 +704,12 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
   test.setTimeout(240_000);
   const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'Providerinstanzen');
   const generalTarget = { mode: 't3_provider_instance', provider_instance_id: 'codex_general', model: 'qa-general-model' };
-  const reviewTarget = { mode: 't3_provider_instance', provider_instance_id: 'codex_review', model: 'qa-review-model' };
+  const reviewTarget = {
+    mode: 't3_provider_instance',
+    provider_instance_id: 'codex_review',
+    model: 'qa-review-model',
+    reasoning: { option_id: 'reasoningEffort', value: 'high' },
+  };
   const generalProfile = await createProfileRecord(ownerApi, project, connection, 'Codex Allgemein', generalTarget);
   const reviewProfile = await createProfileRecord(ownerApi, project, connection, 'Codex Review', reviewTarget);
   const reporter = await createReportingAgent(ownerApi, project, baseURL);
@@ -718,8 +723,16 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
     expect(providerInventory.provider_inventory.map((provider) => provider.driverKind)).toEqual(['codex', 'codex', 'codex', 'codex', 'claude-code']);
     expect(providerInventory.provider_inventory.slice(0, 3).every((provider) => provider.canRunChildTask === true && provider.constraints.length === 0)).toBe(true);
     expect(providerInventory.provider_inventory[0].models).toContainEqual({ id: 'qa-codex-model', label: 'QA Codex Model' });
-    expect(providerInventory.provider_inventory[1].models).toContainEqual({ id: 'qa-general-model', label: 'QA General Model' });
-    expect(providerInventory.provider_inventory[2].models).toContainEqual({ id: 'qa-review-model', label: 'QA Review Model' });
+    expect(providerInventory.provider_inventory[1].models).toContainEqual(expect.objectContaining({
+      id: 'qa-general-model',
+      label: 'QA General Model',
+      options: [{ id: 'reasoningEffort', values: ['low', 'medium'], default: 'low' }],
+    }));
+    expect(providerInventory.provider_inventory[2].models).toContainEqual(expect.objectContaining({
+      id: 'qa-review-model',
+      label: 'QA Review Model',
+      options: [{ id: 'reasoningEffort', values: ['low', 'medium', 'high'], default: 'medium' }],
+    }));
     expect(providerInventory.provider_inventory[3]).toMatchObject({
       canRunChildTask: false,
       canRunCrossProviderChildTask: false,
@@ -750,8 +763,13 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
       const t3 = await qaMocks.t3Journal();
       expect(t3.accepted_launches).toHaveLength(index + 1);
       const launch = t3.accepted_launches[index];
-      expect(launch.payload.modelSelection).toEqual({ instanceId: target.provider_instance_id, model: target.model });
-      expect(launch.response.modelSelection).toEqual({ instanceId: target.provider_instance_id, model: target.model });
+      const expectedModelSelection = {
+        instanceId: target.provider_instance_id,
+        model: target.model,
+        ...(target.reasoning ? { options: [{ id: target.reasoning.option_id, value: target.reasoning.value }] } : {}),
+      };
+      expect(launch.payload.modelSelection).toEqual(expectedModelSelection);
+      expect(launch.response.modelSelection).toEqual(expectedModelSelection);
       expect(run.attempts[0].external_thread_id).toBe(launch.response.threadId);
       const launchedThreadRead = t3.journal.find((entry) => entry.tool === 't3_thread_read'
         && entry.thread_read_target_thread_id === launch.response.threadId
@@ -775,6 +793,22 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
       await reportThroughMcp(reporter.agent, run, task, ownerApi);
       await readUntil(ownerApi, `/runs/${runId}`, (current) => current.state === 'succeeded');
     }
+
+    await qaMocks.setT3Scenario('reasoning_option_missing');
+    const staleReasoningTaskResult = await createReadyTask(ownerApi, project.id, 'Veraltetes Reasoning-Level blockieren');
+    const staleReasoningTask = (await ownerApi.get(`/tasks/${staleReasoningTaskResult.id}`)).data;
+    const staleReasoningRunId = await requestRun(ownerApi, staleReasoningTask, reviewProfile);
+    const staleReasoningRun = await readUntil(ownerApi, `/runs/${staleReasoningRunId}`, (current) => current.state === 'failed');
+    expect(staleReasoningRun.status_reason).toBe('Die gewählte Reasoning-Stufe ist für das bestätigte T3-Modell nicht mehr verfügbar. Passe die Agentrolle an und starte einen neuen Auftrag.');
+    expect(staleReasoningRun.snapshot.execution_target).toEqual(reviewTarget);
+    const afterStaleReasoningDispatch = await qaMocks.t3Journal();
+    expect(afterStaleReasoningDispatch.accepted_launches).toHaveLength(2);
+    expect(afterStaleReasoningDispatch.journal.filter((entry) => entry.tool === 't3_thread_launch')).toHaveLength(2);
+    const staleReasoningCheck = afterStaleReasoningDispatch.journal.filter((entry) => entry.tool === 'orchestrator_capabilities').at(-1);
+    expect(staleReasoningCheck.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_review').models)
+      .toContainEqual(expect.objectContaining({ id: 'qa-review-model' }));
+    expect(staleReasoningCheck.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_review').models
+      .find((model) => model.id === 'qa-review-model')).not.toHaveProperty('options');
 
     const disabledTarget = { mode: 't3_provider_instance', provider_instance_id: 'codex_disabled', model: 'qa-disabled-model' };
     const disabledProfile = await createProfileRecord(ownerApi, project, connection, 'Deaktivierter Codex', disabledTarget);
@@ -816,8 +850,8 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
     expect(missingProviderCheck.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_disabled')).toMatchObject({ canRunChildTask: false });
     expect(missingProviderCheck.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_uninstalled_agent')).toMatchObject({ canRunChildTask: false });
     recordEvidence(
-      'Zwei verfügbare T3-Providerinstanzen desselben Drivers erzeugen je einen neuen Thread mit exakt ihrer eigenen Instanz- und Modell-ID. Eine deaktivierte Instanz und eine später fehlende Instanz werden vor dem Launch mit Owner-Handlungsbedarf beendet, ohne stillen Ersatzprovider.',
-      `Codex Allgemein und Codex Review starteten je einen T3-Thread. Die Launchantworten bestätigten modelSelection codex_general/qa-general-model und codex_review/qa-review-model. Die deaktivierte Instanz codex_disabled mit vorhandenem Modell wurde vor dem Launch abgelehnt; danach fehlte codex_review im Inventar und sein Auftrag endete ebenfalls failed. T3 nahm weiterhin exakt zwei Launches an; Beobachtungs-Reads betrafen ausschließlich gestartete Threads.`,
+      'T3-Starts übernehmen ein explizites, weiterhin verfügbares Reasoning-Level exakt; ein veralteter Wert wird vor dem Launch blockiert.',
+      `Codex Allgemein startete mit codex_general/qa-general-model ohne explizites Reasoning-Level. Codex Review startete mit codex_review/qa-review-model und modelSelection.options=[{id: reasoningEffort, value: high}]. Nachdem T3 weiterhin das Review-Modell, aber die Option nicht mehr anbot, endete der Auftrag vor dem T3-Launch mit der konkreten Reasoning-Fehlermeldung; T3 nahm weiterhin exakt zwei Launches an. Eine deaktivierte Instanz mit vorhandenem Modell und anschließend eine fehlende Instanz wurden ebenfalls vor einem Fallback abgelehnt. Beobachtungs-Reads betrafen ausschließlich gestartete Threads.`,
       { t3 },
     );
   } finally {

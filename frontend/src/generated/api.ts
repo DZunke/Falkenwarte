@@ -3175,9 +3175,22 @@ export interface components {
             models?: components["schemas"]["ProviderModel"][];
             omitted_models?: number;
         };
+        /** @description Optional, begrenzte Auswahloption für die Reasoning-Einstellung dieses Modells. */
         ProviderModel: {
             id: string;
             label?: string | null;
+            reasoning?: components["schemas"]["ProviderModelReasoning"];
+        };
+        /** @description Aus T3 übernommene einzelne String-Option. Werte sind begrenzt, und ältere Inventare dürfen das Feld auslassen. */
+        ProviderModelReasoning: {
+            option_id: string;
+            values: string[];
+            default?: string | null;
+        };
+        /** @description Einzelne Reasoning-Auswahl einer expliziten T3-Providerinstanz. */
+        T3ReasoningSelection: {
+            option_id: string;
+            value: string;
         };
         /** @description T3-Instanz-Slug. Groß- und Kleinschreibung sind unterscheidbar. */
         T3ProviderInstanceId: string;
@@ -4329,7 +4342,7 @@ export interface components {
             require_human_phase_decision: boolean;
             require_human_confirmed_evidence: boolean;
         };
-        /** @description T3-Projektstandard, Referenz auf vorhandene Konfiguration in T3 oder explizite T3-Providerinstanz samt Modell. Referenzthread liefert nur lesbare Routingfelder; kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet beim Replay den gespeicherten T3-Wert. Bei einer expliziten Providerinstanz friert Falkenwarte Instanz-ID und Modell ein und sendet sie als modelSelection an T3. */
+        /** @description T3-Projektstandard, Referenz auf vorhandene Konfiguration in T3 oder explizite T3-Providerinstanz samt Modell. Referenzthread liefert nur lesbare Routingfelder; kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet beim Replay den gespeicherten T3-Wert. Bei einer expliziten Providerinstanz friert Falkenwarte Instanz-ID und Modell ein und sendet sie als modelSelection an T3. Eine Reasoning-Auswahl ist optional und gilt nur für explizite Providerinstanzen; sie wird auf eine einzelne String-Option in modelSelection.options abgebildet. Alte Profile ohne Reasoning-Auswahl bleiben gültig. */
         T3ExecutionTarget: {
             /** @constant */
             mode: "t3_project_default";
@@ -4344,6 +4357,7 @@ export interface components {
             provider_instance_id: components["schemas"]["T3ProviderInstanceId"];
             /** @description Exakte Modell-ID aus dem Inventar dieser Providerinstanz. */
             model: string;
+            reasoning?: components["schemas"]["T3ReasoningSelection"];
         };
         /** @description Nur Eigentümer. Bestätigt die bewertete Meldung und ihre unveränderte Revision. */
         EvidenceReview: {

@@ -41,14 +41,19 @@ function buildExecutionTarget(mode: TargetMode, referenceThread: string, provide
   if (mode === 't3_reference_thread') return { mode, reference_thread_id: referenceThread.trim() }
   if (!providerSelection?.model) throw new Error('Wähle eine verfügbare Providerinstanz und ein Modell aus dem aktuellen T3-Inventar.')
 
-  return { mode, provider_instance_id: providerSelection.provider_instance_id, model: providerSelection.model }
+  return {
+    mode,
+    provider_instance_id: providerSelection.provider_instance_id,
+    model: providerSelection.model,
+    ...(providerSelection.reasoning ? { reasoning: providerSelection.reasoning } : {}),
+  }
 }
 
 function executionTargetLabel(target: ExecutionTarget) {
   if (target.mode === 't3_project_default') return 'T3-Projektstandard'
   if (target.mode === 't3_reference_thread') return `Referenzthread ${target.reference_thread_id}`
 
-  return `Providerinstanz ${target.provider_instance_id} · Modell ${target.model}`
+  return `Providerinstanz ${target.provider_instance_id} · Modell ${target.model} · Reasoning-Level ${target.reasoning?.value ?? 'T3-Standard'}`
 }
 
 export default function RolesView({ initialProjectId, initialConnectionId }: { initialProjectId?: string; initialConnectionId?: string }) {
@@ -86,7 +91,7 @@ export default function RolesView({ initialProjectId, initialConnectionId }: { i
   const createProfile = useMutation({
     mutationFn: () => {
       if (!connectionId) throw new Error('Wähle zuerst eine T3-Verbindung aus.')
-      if (targetMode === 't3_provider_instance' && !providerTargetReady) throw new Error('Wähle eine verfügbare Providerinstanz und ein Modell aus dem aktuellen T3-Inventar.')
+      if (targetMode === 't3_provider_instance' && !providerTargetReady) throw new Error('Wähle eine verfügbare Providerinstanz, ein Modell und gegebenenfalls ein von T3 bestätigtes Reasoning-Level.')
       const executionTarget = buildExecutionTarget(targetMode, referenceThread, providerTarget)
       return request(api.POST('/agent-profiles', {
         params: mutationParams(),
@@ -125,7 +130,7 @@ export default function RolesView({ initialProjectId, initialConnectionId }: { i
   const updateProfileTarget = useMutation({
     mutationFn: ({ profile, editor }: { profile: AgentProfile; editor: TargetEditorState }) => {
       if (editor.mode === 't3_provider_instance' && (!editor.providerReady || !editor.providerSelection?.model)) {
-        throw new Error('Wähle eine verfügbare Providerinstanz und ein Modell aus dem aktuellen T3-Inventar.')
+        throw new Error('Wähle eine verfügbare Providerinstanz, ein Modell und gegebenenfalls ein von T3 bestätigtes Reasoning-Level.')
       }
       const target = buildExecutionTarget(editor.mode, editor.referenceThread, editor.providerSelection)
 
@@ -186,7 +191,9 @@ export default function RolesView({ initialProjectId, initialConnectionId }: { i
       profileVersion: profile.version,
       mode: target.mode,
       referenceThread: target.mode === 't3_reference_thread' ? target.reference_thread_id : '',
-      providerSelection: target.mode === 't3_provider_instance' ? { provider_instance_id: target.provider_instance_id, model: target.model } : null,
+      providerSelection: target.mode === 't3_provider_instance'
+        ? { provider_instance_id: target.provider_instance_id, model: target.model, ...(target.reasoning ? { reasoning: target.reasoning } : {}) }
+        : null,
       providerReady: false,
     })
   }

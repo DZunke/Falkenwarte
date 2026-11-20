@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import type { components } from '@/generated/api'
 import { RefreshCw } from 'lucide-react'
 import { api, formatError, request } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 export type ProviderSelection = {
   provider_instance_id: string
   model?: string
+  reasoning?: components['schemas']['T3ReasoningSelection']
 }
 
 type Props = {
@@ -24,6 +26,8 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
   const providerFieldId = `provider-instance-${id}`
   const modelSearchFieldId = `provider-model-search-${id}`
   const modelFieldId = `provider-model-${id}`
+  const reasoningFieldId = `provider-reasoning-${id}`
+  const defaultReasoningValue = `__t3_standard_${id}__`
   const [search, setSearch] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const inventory = useQuery({
@@ -43,7 +47,16 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
   const matchingModel = models.find((model) => model.id === value?.model)
   const selectedModelId = matchingModel?.id ?? (!value?.model && models.length === 1 && omittedModels === 0 ? models[0].id : '')
   const selectedModel = models.find((model) => model.id === selectedModelId)
-  const ready = Boolean(inventory.isSuccess && !inventory.isFetching && selectedProvider && selectedModel)
+  const reasoningOption = selectedModel?.reasoning
+  const confirmedReasoningValues = reasoningOption?.values.filter((reasoningValue) => reasoningValue.length > 0) ?? []
+  const savedReasoning = value?.reasoning
+  const savedReasoningIsCurrent = Boolean(savedReasoning
+    && reasoningOption?.option_id === savedReasoning.option_id
+    && confirmedReasoningValues.includes(savedReasoning.value))
+  const savedReasoningIsUnconfirmed = Boolean(savedReasoning && !savedReasoningIsCurrent)
+  const showReasoningSelect = Boolean(selectedModel && (reasoningOption || savedReasoning))
+  const reasoningSelectValue = savedReasoningIsCurrent && savedReasoning ? savedReasoning.value : savedReasoning ? '' : defaultReasoningValue
+  const ready = Boolean(inventory.isSuccess && !inventory.isFetching && selectedProvider && selectedModel && !savedReasoningIsUnconfirmed)
 
   useEffect(() => {
     onReadyChange(ready)
@@ -141,6 +154,35 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
               </Select>
               <p className="text-xs text-muted-foreground">T3 erwartet die konkrete Modell-ID für diesen Provider.</p>
             </div>
+          )}
+          {showReasoningSelect && selectedModel && (
+            <div className="space-y-1.5">
+              <Label htmlFor={reasoningFieldId}>Reasoning-Level</Label>
+              <Select
+                value={reasoningSelectValue}
+                disabled={inventory.isFetching}
+                onValueChange={(reasoningValue) => {
+                  const selection = { provider_instance_id: selectedProvider!.provider_instance_id, model: selectedModel.id }
+                  if (reasoningValue === defaultReasoningValue || !reasoningOption) {
+                    onChange(selection)
+                    return
+                  }
+                  onChange({ ...selection, reasoning: { option_id: reasoningOption.option_id, value: reasoningValue } })
+                }}
+              >
+                <SelectTrigger id={reasoningFieldId} data-testid="provider-reasoning-picker" aria-label="Reasoning-Level">
+                  <SelectValue placeholder={savedReasoningIsUnconfirmed ? 'Reasoning-Level erneut wählen' : 'T3-Standard'} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={defaultReasoningValue}>T3-Standard</SelectItem>
+                  {confirmedReasoningValues.map((reasoningValue) => <SelectItem key={reasoningValue} value={reasoningValue}>{reasoningValue}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">T3-Standard überlässt die Wahl T3.{reasoningOption?.default ? ` Gemeldeter T3-Standard: ${reasoningOption.default}.` : ''}</p>
+            </div>
+          )}
+          {savedReasoning && savedReasoningIsUnconfirmed && (
+            <p role="status" className="text-sm text-amber-900">Gespeichertes Reasoning-Level „{savedReasoning.value}“ (Option {savedReasoning.option_id}) wird für dieses Modell aktuell nicht von T3 bestätigt. Wähle T3-Standard oder einen bestätigten Wert, um die gespeicherte Einstellung zu entfernen oder zu ersetzen.</p>
           )}
           {selectedProvider && models.length === 0 && omittedModels === 0 && <p role="status" className="text-sm text-muted-foreground">Für diese Providerinstanz meldet T3 keine Modelle. Suche nach Modell-ID oder Name.</p>}
         </>

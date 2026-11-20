@@ -26,7 +26,7 @@ Klicke in der verbundenen Projektzeile auf **Agentrolle einrichten**. Projekt un
 
 1. Gib unter **Rolle hinzufügen** einen **Namen** ein, den du später im Ticket wiedererkennst. Unter **Rolle** beschreibst du die Aufgabe, etwa `Entwicklung`.
 2. Prüfe **T3-Verbindung** und **Erlaubte Projekte**. Wähle dein Projekt oder **Alle Projekte**, wenn die Rolle auch für künftige Projekte verfügbar sein soll. Ein Agent kann für ein Projekt starten, wenn es an dieselbe T3-Verbindung gebunden ist.
-3. Wähle unter **Ausführungsziel in T3** den Eintrag **T3-Providerinstanz**. Wähle unter **Providerinstanz aus T3** deine Instanz und unter **Modell aus T3** ihr Modell. Der Slug neben dem Namen unterscheidet auch zwei Varianten desselben Providers. Ist nur ein Modell verfügbar, kann es schon ausgewählt sein.
+3. Wähle unter **Ausführungsziel in T3** den Eintrag **T3-Providerinstanz**. Wähle unter **Providerinstanz aus T3** deine Instanz und unter **Modell aus T3** ihr Modell. Der Slug neben dem Namen unterscheidet auch zwei Varianten desselben Providers. Ist nur ein Modell verfügbar, kann es schon ausgewählt sein. Wenn T3 für das Modell Reasoning-Werte meldet, kannst du unter **Reasoning-Level** einen davon oder **T3-Standard** wählen. **T3-Standard** sendet keine zusätzliche Reasoning-Auswahl. Ein von T3 gemeldeter Standardwert erscheint nur als Hinweis. Ohne gemeldete Werte gibt es nichts auszuwählen.
 4. Klicke auf **Rolle anlegen**. Prüfe in der Rollenliste den Namen, das Ziel und die Anzeige **Konfiguration bereit**.
 
 ## 5. Das Board einrichten
@@ -106,7 +106,7 @@ Klicke im Ticket auf **Ablauf**. Unter **Ticketstand** siehst du den Status, off
 
 ## Weitere Ausführungsziele und Workflows
 
-Unter **Agentrollen** kannst du eine gespeicherte Rolle **Aktivieren**, ihre **Projektfreigaben ändern** oder ihr **Ausführungsziel ändern**. Bereits gestartete Läufe behalten das beim Start gespeicherte Ziel. Nach Änderungen in T3 kannst du **Provider neu laden** oder über **Modellsuche in T3** nach einem Modell suchen.
+Unter **Agentrollen** kannst du eine gespeicherte Rolle **Aktivieren**, ihre **Projektfreigaben ändern** oder ihr **Ausführungsziel ändern**. Änderungen gelten für künftige Starts. Bereits laufende Aufträge behalten die bei ihrem Start gespeicherte Auswahl samt Reasoning-Level. Nach Änderungen in T3 kannst du **Provider neu laden** oder über **Modellsuche in T3** nach einem Modell suchen.
 
 | Ausführungsziel der Rolle | Wann es passt |
 | --- | --- |

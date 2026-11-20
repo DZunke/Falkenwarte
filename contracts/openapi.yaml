@@ -8503,8 +8503,54 @@ components:
           - type: string
             maxLength: 200
           - type: 'null'
+        reasoning:
+          $ref: '#/components/schemas/ProviderModelReasoning'
       required:
       - id
+      description: Optional, begrenzte Auswahloption für die Reasoning-Einstellung dieses Modells.
+    ProviderModelReasoning:
+      type: object
+      additionalProperties: false
+      properties:
+        option_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        values:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        default:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 128
+          - type: 'null'
+      required:
+      - option_id
+      - values
+      description: Aus T3 übernommene einzelne String-Option. Werte sind begrenzt, und ältere Inventare dürfen das Feld auslassen.
+    T3ReasoningSelection:
+      type: object
+      additionalProperties: false
+      properties:
+        option_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        value:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+      - option_id
+      - value
+      description: Einzelne Reasoning-Auswahl einer expliziten T3-Providerinstanz.
     T3ProviderInstanceId:
       type: string
       minLength: 1
@@ -12209,6 +12255,8 @@ components:
             minLength: 1
             maxLength: 256
             description: Exakte Modell-ID aus dem Inventar dieser Providerinstanz.
+          reasoning:
+            $ref: '#/components/schemas/T3ReasoningSelection'
         required:
         - mode
         - provider_instance_id
@@ -12218,7 +12266,8 @@ components:
         kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von
         modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet
         beim Replay den gespeicherten T3-Wert. Bei einer expliziten Providerinstanz friert Falkenwarte Instanz-ID und Modell ein und
-        sendet sie als modelSelection an T3.
+        sendet sie als modelSelection an T3. Eine Reasoning-Auswahl ist optional und gilt nur für explizite Providerinstanzen; sie wird
+        auf eine einzelne String-Option in modelSelection.options abgebildet. Alte Profile ohne Reasoning-Auswahl bleiben gültig.
     EvidenceReview:
       type: object
       additionalProperties: false

@@ -192,8 +192,18 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   const reviewProvider = inventory.data.providers.find((provider) => provider.provider_instance_id === 'codex_review');
   expect(generalProvider).toMatchObject({ display_name: 'Codex Allgemein', available: true });
   expect(generalProvider.models.map((model) => model.id)).toEqual(['qa-general-model', 'qa-general-fast']);
+  expect(generalProvider.models.find((model) => model.id === 'qa-general-model').reasoning).toEqual({
+    option_id: 'reasoningEffort',
+    values: ['low', 'medium'],
+    default: 'low',
+  });
   expect(reviewProvider).toMatchObject({ display_name: 'Codex Review', available: true });
   expect(reviewProvider.models.map((model) => model.id)).toEqual(['qa-review-featured', 'qa-review-model']);
+  expect(reviewProvider.models.find((model) => model.id === 'qa-review-model').reasoning).toEqual({
+    option_id: 'reasoningEffort',
+    values: ['low', 'medium', 'high'],
+    default: 'medium',
+  });
 
   await openRoles(ownerPage);
   await selectRoleConnectionAndProject(ownerPage, connection.name, project.name);
@@ -202,8 +212,8 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   await visibleProviderOptions(ownerPage);
 
   const targets = [
-    { label: 'Codex Allgemein · codex_general', providerInstanceId: 'codex_general', model: 'qa-general-model', modelOption: 'QA General Model · qa-general-model', roleName: 'Codex Allgemein Rolle' },
-    { label: 'Codex Review · codex_review', providerInstanceId: 'codex_review', model: 'qa-review-model', modelOption: 'QA Review Model · qa-review-model', roleName: 'Codex Review Rolle' },
+    { label: 'Codex Allgemein · codex_general', providerInstanceId: 'codex_general', model: 'qa-general-model', modelOption: 'QA General Model · qa-general-model', roleName: 'Codex Allgemein Rolle', reasoningOptions: ['T3-Standard', 'low', 'medium'], reasoning: 'T3-Standard' },
+    { label: 'Codex Review · codex_review', providerInstanceId: 'codex_review', model: 'qa-review-model', modelOption: 'QA Review Model · qa-review-model', roleName: 'Codex Review Rolle', reasoningOptions: ['T3-Standard', 'low', 'medium', 'high'], reasoning: 'high' },
   ];
 
   for (const target of targets) {
@@ -223,17 +233,26 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
     await modelPicker.click();
     await ownerPage.getByRole('option', { name: target.modelOption, exact: true }).click();
     await expect(modelPicker).toContainText(target.model);
+    const reasoningPicker = ownerPage.getByTestId('provider-reasoning-picker');
+    await expect(reasoningPicker).toBeVisible();
+    await expect(ownerPage.getByText(new RegExp(`Gemeldeter T3-Standard: ${target.providerInstanceId === 'codex_general' ? 'low' : 'medium'}\\.`))).toBeVisible();
+    await reasoningPicker.click();
+    await expect(ownerPage.getByRole('option')).toHaveText(target.reasoningOptions);
+    await ownerPage.getByRole('option', { name: target.reasoning, exact: true }).click();
     await expect(createButton).toBeEnabled();
     await createButton.click();
     await expect(ownerPage.getByText('Rolle angelegt', { exact: true })).toBeVisible();
     const profile = await roleByName(ownerApi, target.roleName);
     expect(profile).toBeTruthy();
-    expect(profile.execution_target).toEqual({
+    const expectedTarget = {
       mode: 't3_provider_instance',
       provider_instance_id: target.providerInstanceId,
       model: target.model,
-    });
+      ...(target.reasoning === 'T3-Standard' ? {} : { reasoning: { option_id: 'reasoningEffort', value: target.reasoning } }),
+    };
+    expect(profile.execution_target).toEqual(expectedTarget);
     await expect(ownerPage.getByRole('article').filter({ hasText: target.roleName })).toContainText(`Providerinstanz ${target.providerInstanceId} · Modell ${target.model}`);
+    await expect(ownerPage.getByRole('article').filter({ hasText: target.roleName })).toContainText(`Reasoning-Level ${target.reasoning}`);
   }
 
   const inactiveModelSearch = await ownerApi.get(`/connections/${connection.id}/providers?search=qa-disabled-model`);
@@ -276,15 +295,55 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   await editedModelPicker.click();
   await ownerPage.getByRole('option', { name: targets[1].modelOption, exact: true }).click();
   await expect(editedModelPicker).toContainText(targets[1].model);
+  const editedReasoningPicker = editor.getByTestId('provider-reasoning-picker');
+  await expect(editedReasoningPicker).toBeVisible();
+  await editedReasoningPicker.click();
+  await expect(ownerPage.getByRole('option')).toHaveText(targets[1].reasoningOptions);
+  await ownerPage.getByRole('option', { name: 'high', exact: true }).click();
   await expect(saveTargetButton).toBeEnabled();
   await saveTargetButton.click();
   await expect.poll(async () => (await roleByName(ownerApi, targets[0].roleName))?.execution_target, {
     timeout: 45_000,
     message: 'Die vorhandene Rolle muss auf die zweite T3-Providerinstanz umgestellt werden.',
-  }).toEqual({ mode: 't3_provider_instance', provider_instance_id: targets[1].providerInstanceId, model: targets[1].model });
+  }).toEqual({
+    mode: 't3_provider_instance',
+    provider_instance_id: targets[1].providerInstanceId,
+    model: targets[1].model,
+    reasoning: { option_id: 'reasoningEffort', value: 'high' },
+  });
   const changedProfile = await roleByName(ownerApi, targets[0].roleName);
   for (const field of preservedFields) expect(changedProfile[field]).toEqual(originalValues[field]);
   expect(changedProfile.version).toBe(generalProfile.version + 1);
+
+  await qaMocks.setT3Scenario('reasoning_option_missing');
+  await generalArticle.getByRole('button', { name: 'Ausführungsziel ändern', exact: true }).click();
+  const staleReasoningEditor = ownerPage.getByTestId(`profile-target-editor-${generalProfile.id}`);
+  const refreshedCapabilitiesBefore = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities').length;
+  await staleReasoningEditor.getByRole('button', { name: 'Provider neu laden', exact: true }).click();
+  await expect.poll(async () => (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities').length, {
+    timeout: 45_000,
+    message: 'Die Rolle muss ihre Reasoning-Auswahl gegen das aktuelle native T3-Inventar prüfen.',
+  }).toBe(refreshedCapabilitiesBefore + 1);
+  const staleCapability = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities').at(-1);
+  expect(staleCapability.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_review').models
+    .find((model) => model.id === 'qa-review-model')).not.toHaveProperty('options');
+  await expect(staleReasoningEditor.getByText(/Gespeichertes Reasoning-Level „high“ \(Option reasoningEffort\)/)).toBeVisible();
+  const staleReasoningPicker = staleReasoningEditor.getByTestId('provider-reasoning-picker');
+  const staleSaveButton = staleReasoningEditor.getByRole('button', { name: 'Ausführungsziel speichern', exact: true });
+  await expect(staleSaveButton).toBeDisabled();
+  await staleReasoningPicker.click();
+  await expect(ownerPage.getByRole('option')).toHaveText(['T3-Standard']);
+  await ownerPage.getByRole('option', { name: 'T3-Standard', exact: true }).click();
+  await expect(staleSaveButton).toBeEnabled();
+  await staleSaveButton.click();
+  await expect.poll(async () => (await roleByName(ownerApi, targets[0].roleName))?.execution_target, {
+    timeout: 45_000,
+    message: 'Die veraltete Reasoning-Auswahl muss nur nach bewusster Wahl von T3-Standard entfernt werden.',
+  }).toEqual({ mode: 't3_provider_instance', provider_instance_id: targets[1].providerInstanceId, model: targets[1].model });
+  const removedReasoningProfile = await roleByName(ownerApi, targets[0].roleName);
+  for (const field of preservedFields) expect(removedReasoningProfile[field]).toEqual(originalValues[field]);
+  expect(removedReasoningProfile.version).toBe(generalProfile.version + 2);
+  await qaMocks.setT3Scenario('default');
 
   await qaMocks.setT3Scenario('provider_signals');
   const signalInventory = await ownerApi.get(`/connections/${connection.id}/providers`);
@@ -305,8 +364,8 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   const t3 = await qaMocks.t3Journal();
   expect(t3.unexpected).toEqual([]);
   recordEvidence(
-    'Agentrollen können zwei Providerinstanzen desselben T3-Treibers anhand ihrer Verbindungs-ID unterscheiden und die jeweilige Modell-ID speichern.',
-    'Der Capability-Snapshot enthielt drei aktive und zwei inaktive T3-Instanzen samt Modellen. Die Live-Provider-API und das Browser-Dropdown enthielten nur codex, codex_general und codex_review; die inaktiven Slugs blieben auch bei Suche nach ihrem Modell und nach Provider-Refresh ausgeschlossen. Die Browserauswahl speicherte codex_general/qa-general-model und codex_review/qa-review-model. Eine vorhandene Rolle wurde anschließend auf codex_review umgestellt; ID und übrige Profilfelder blieben erhalten. Die API-Signalvariante ergänzte, dass ein natives true und ein Legacy-true verfügbar sind; fehlende, falsch typisierte oder widersprüchlich falsche Signale wurden ausgeschlossen.',
+    'Agentrollen speichern das T3-gemeldete Reasoning-Level pro Modell und entfernen veraltete Werte nur nach bewusster Auswahl.',
+    'Die API und Browserauswahl zeigten für qa-general-model nur low/medium und für qa-review-model zusätzlich high, jeweils aus dem nativen Modellinventar. Die erste Rolle speicherte T3-Standard ohne Reasoning-Wert; die zweite speicherte reasoningEffort/high. Beim Bearbeiten wechselte eine vorhandene Rolle auf das Review-Modell und high, wobei übrige Profilfelder erhalten blieben. Als T3 den Wert nicht mehr anbot, blockierte die Oberfläche das Speichern, zeigte gespeicherten Wert und Option-ID und erlaubte nach Auswahl von T3-Standard die gezielte Entfernung. Der getrennte Providerfall enthielt drei aktive und zwei inaktive T3-Instanzen; Suche und Refresh schlossen inaktive Slugs weiter aus. Die API-Signalvariante zeigte natives und Legacy-Verfügbarkeitssignal sowie ausgeschlossene fehlende, falsch typisierte oder widersprüchliche Signale.',
     { t3 },
   );
 });

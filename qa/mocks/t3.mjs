@@ -286,7 +286,7 @@ function providerInventory(scenario, search) {
       driverKind: 'codex',
       displayName: 'Codex Allgemein',
       allModels: [
-        { id: 'qa-general-model', label: 'QA General Model' },
+        { id: 'qa-general-model', label: 'QA General Model', options: [{ id: 'reasoningEffort', values: ['low', 'medium'], default: 'low' }] },
         { id: 'qa-general-fast', label: 'QA General Fast' },
       ],
       canRunChildTask: true,
@@ -299,7 +299,7 @@ function providerInventory(scenario, search) {
       displayName: 'Codex Review',
       allModels: [
         { id: 'qa-review-featured', label: 'QA Review Featured' },
-        { id: 'qa-review-model', label: 'QA Review Model' },
+        { id: 'qa-review-model', label: 'QA Review Model', options: [{ id: 'reasoningEffort', values: ['low', 'medium', 'high'], default: 'medium' }] },
       ],
       canRunChildTask: true,
       canRunCrossProviderChildTask: true,
@@ -337,7 +337,10 @@ function providerInventory(scenario, search) {
         : scenario === 'models_omitted' && provider.providerInstanceId === 'codex_review'
           ? allModels.length - visibleModels.length
           : undefined;
-      return { ...provider, models: visibleModels, ...(undefined === omittedModels ? {} : { omittedModels }) };
+      const models = scenario === 'reasoning_option_missing' && provider.providerInstanceId === 'codex_review'
+        ? visibleModels.map((model) => model.id === 'qa-review-model' ? { id: model.id, label: model.label } : model)
+        : visibleModels;
+      return { ...provider, models, ...(undefined === omittedModels ? {} : { omittedModels }) };
     });
 }
 
@@ -367,8 +370,16 @@ function launch(namespace, args, scenario) {
 
   const provider = providerInventory(scenario, modelSelection.model).find((candidate) => candidate.providerInstanceId === modelSelection.instanceId);
   if (!provider || provider.canRunChildTask !== true) return { result: toolError('provider_unavailable', `Provider instance ${modelSelection.instanceId} is unavailable.`) };
-  if (!provider.models.some((candidate) => candidate.id === modelSelection.model)) {
+  const selectedModel = provider.models.find((candidate) => candidate.id === modelSelection.model);
+  if (!selectedModel) {
     return { result: toolError('model_unavailable', `Model ${modelSelection.model} is unavailable on ${modelSelection.instanceId}.`) };
+  }
+  if (undefined !== modelSelection.options) {
+    if (!Array.isArray(modelSelection.options) || modelSelection.options.length !== 1 || modelSelection.options.some((selection) => !selection
+      || typeof selection.id !== 'string' || typeof selection.value !== 'string'
+      || !selectedModel.options?.some((option) => option.id === selection.id && Array.isArray(option.values) && option.values.includes(selection.value)))) {
+      return { result: toolError('model_option_unavailable', `A model option is unavailable for ${modelSelection.model}.`) };
+    }
   }
 
   const number = Object.keys(state.acceptedLaunches).length + 1;
@@ -765,7 +776,11 @@ async function mcpRequest(request, response) {
           ...(Object.hasOwn(provider, 'enabled') ? { enabled: provider.enabled } : {}),
           ...(Object.hasOwn(provider, 'installed') ? { installed: provider.installed } : {}),
           constraints: provider.constraints ?? [],
-          models: provider.models?.map((model) => ({ id: model.id, label: model.label })) ?? [],
+          models: provider.models?.map((model) => ({
+            id: model.id,
+            label: model.label,
+            ...(Array.isArray(model.options) ? { options: model.options } : {}),
+          })) ?? [],
           omittedModels: provider.omittedModels ?? 0,
         })) ?? [],
       } : {}),
@@ -841,7 +856,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/reset' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario ?? 'default';
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'] });
     state = { ...emptyState(), scenario: next };
     waitingLaunches = [];
     agentCallback = null;
@@ -851,7 +866,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/scenario' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario;
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted', 'provider_signals', 'reasoning_option_missing'] });
     state.scenario = next;
     persist();
     return sendJson(response, 200, { scenario: state.scenario });

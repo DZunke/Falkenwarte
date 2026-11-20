@@ -51,6 +51,26 @@ final class AgentProfileRules
             }
         }
 
+        if (array_key_exists('reasoning', $executionTarget)) {
+            if ('t3_provider_instance' !== $mode) {
+                throw new Problem(422, 'validation_failed', 'Eine Reasoning-Auswahl ist nur bei einer expliziten T3-Providerinstanz möglich.');
+            }
+
+            $reasoning = $executionTarget['reasoning'];
+            if (!is_array($reasoning)
+                || [] !== array_diff(array_keys($reasoning), ['option_id', 'value'])
+                || [] !== array_diff(['option_id', 'value'], array_keys($reasoning))) {
+                throw new Problem(422, 'validation_failed', 'Die Reasoning-Auswahl benötigt genau eine Options-ID und einen Wert.');
+            }
+
+            foreach (['option_id', 'value'] as $field) {
+                $value = $reasoning[$field];
+                if (!is_string($value) || '' === trim($value) || $value !== trim($value) || mb_strlen($value) > 128) {
+                    throw new Problem(422, 'validation_failed', 'Die Reasoning-Options-ID und ihr Wert müssen kurze, getrimmte Strings sein.');
+                }
+            }
+        }
+
         if (!in_array($mode, ['t3_project_default', 't3_reference_thread', 't3_provider_instance'], true)) {
             throw new Problem(422, 'validation_failed', 'Das Ausführungsziel ist unbekannt.');
         }
