@@ -63,7 +63,7 @@ foreach ($pages as $page) {
         if ('' === $url || preg_match('~^(?:[a-z]+:|/|#)~i', $url)) {
             continue;
         }
-        [$file,$hash] = array_pad(explode('#', $url, 2), 2, '');
+        [$file, $hash] = array_pad(explode('#', $url, 2), 2, '');
         $resolved = $copyPath($file, 'docs'.('.' === $dir ? '' : '/'.$dir));
         $doc = str_starts_with($resolved, 'docs/') ? substr($resolved, 5) : null;
         if (null !== $doc && isset($names[$doc])) {

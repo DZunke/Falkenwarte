@@ -14,14 +14,14 @@ use Symfony\Component\Console\Output\OutputInterface;
 #[AsCommand(name: 'app:restore:finalize', description: 'Schließt den Wiederherstellungsabgleich ab.')]
 final class RestoreFinalizeCommand extends Command
 {
-    public function __construct(private readonly BackupHandler $backups, private readonly RunHandler $runs)
+    public function __construct(private readonly BackupHandler $backups, private readonly RunHandler $runs, private readonly string $dataDirectory)
     {
         parent::__construct();
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $dataDirectory = rtrim(getenv('FALKENWARTE_DATA_DIR') ?: '/data', '/');
+        $dataDirectory = rtrim($this->dataDirectory, '/');
         $failurePath = $dataDirectory.'/restore-failure.json';
         $markerPath = $dataDirectory.'/restore-result.json';
         if (is_file($failurePath)) {

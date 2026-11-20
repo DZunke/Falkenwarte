@@ -7,12 +7,18 @@ namespace App\Orchestration\Infrastructure;
 use App\AgentCatalog\Application\AgentCatalogOAuthClient;
 use App\Orchestration\Application\T3BridgeException;
 use App\Orchestration\Application\T3OAuthClient;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
+#[AsAlias(T3OAuthClient::class)]
+#[AsAlias(AgentCatalogOAuthClient::class)]
 final class T3OAuthAuthenticator implements T3OAuthClient, AgentCatalogOAuthClient
 {
-    public function __construct(private readonly HttpClientInterface $http)
-    {
+    public function __construct(
+        #[Autowire(service: 't3.client')]
+        private readonly HttpClientInterface $http,
+    ) {
     }
 
     public function begin(string $canonicalUrl, string $callbackUrl, string $resourceUrl, string $state, string $codeChallenge): array

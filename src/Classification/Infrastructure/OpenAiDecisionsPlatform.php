@@ -10,25 +10,32 @@ use Symfony\AI\Platform\ModelCatalog\ModelCatalogInterface;
 use Symfony\AI\Platform\PlatformInterface;
 use Symfony\AI\Platform\Result\DeferredResult;
 use Symfony\AI\Platform\Result\InMemoryRawResult;
-use Symfony\AI\Platform\Result\ObjectResult;
-use Symfony\AI\Platform\Result\RawResultInterface;
-use Symfony\AI\Platform\Result\ResultInterface;
-use Symfony\AI\Platform\ResultConverterInterface;
-use Symfony\AI\Platform\TokenUsage\TokenUsageExtractorInterface;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
+use Symfony\Component\DependencyInjection\Attribute\AutoconfigureTag;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /**
  * Compatibility bridge for the released Symfony AI Platform contract.
  * It calls the native OpenAI Decisions endpoint and is the only component that knows its wire format.
  */
+#[AsAlias(PlatformInterface::class)]
+#[AutoconfigureTag('ai.platform', ['name' => 'openai.decisions'])]
 final readonly class OpenAiDecisionsPlatform implements PlatformInterface
 {
     private const string ENDPOINT = 'https://api.openai.com/v1/decisions';
-    private ModelCatalogInterface $modelCatalog;
 
-    public function __construct(private HttpClientInterface $httpClient)
-    {
-        $this->modelCatalog = new OpenAiDecisionsModelCatalog();
+    public function __construct(
+        #[Autowire(service: 'decisions.client')]
+        private HttpClientInterface $httpClient,
+        #[Autowire('%kernel.environment%')]
+        private string $appEnv,
+        #[Autowire('%env(DECISIONS_TEST_ENDPOINT)%')]
+        private string $decisionsTestEndpoint,
+        #[Autowire(service: OpenAiDecisionsModelCatalog::class)]
+        private ModelCatalogInterface $modelCatalog,
+        private DecisionResultConverter $resultConverter,
+    ) {
     }
 
     public function invoke(string|Model $model, array|string|object $input, array $options = []): DeferredResult
@@ -87,7 +94,7 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
         $providerModel = $body['model'] ?? null;
         $usage = $body['usage']['input_tokens'] ?? null;
         $raw = new InMemoryRawResult($body);
-        $deferred = new DeferredResult(new DecisionResultConverter($modelName), $raw);
+        $deferred = new DeferredResult($this->resultConverter, $raw);
         $deferred->getMetadata()->set([
             'request_id' => is_string($requestId) ? $requestId : null,
             'model' => is_string($providerModel) ? $providerModel : null,
@@ -126,65 +133,26 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
 
     private function endpoint(): string
     {
-        $environment = $_SERVER['APP_ENV'] ?? $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'prod';
-        if ('test' !== $environment) {
+        if ('test' !== $this->appEnv) {
             return self::ENDPOINT;
         }
 
-        $endpoint = $_SERVER['DECISIONS_TEST_ENDPOINT'] ?? $_ENV['DECISIONS_TEST_ENDPOINT'] ?? getenv('DECISIONS_TEST_ENDPOINT') ?: '';
+        $endpoint = trim($this->decisionsTestEndpoint);
         if ('' === $endpoint) {
             throw new DecisionProviderException('Der Decisions-Testendpunkt ist nicht konfiguriert.', retryable: false);
         }
 
-        $host = parse_url($endpoint, PHP_URL_HOST);
-        if (!is_string($host) || !in_array($host, ['localhost', '127.0.0.1', 'decisions-mock'], true)) {
+        $parts = parse_url($endpoint);
+        $host = is_array($parts) ? ($parts['host'] ?? null) : null;
+        if ('http' !== parse_url($endpoint, PHP_URL_SCHEME)
+            || !is_array($parts)
+            || !is_string($host)
+            || !in_array($host, ['localhost', '127.0.0.1', 'decisions-mock'], true)
+            || isset($parts['user'], $parts['pass'], $parts['query'], $parts['fragment'])
+        ) {
             throw new DecisionProviderException('Der Decisions-Testendpunkt muss auf einen lokalen Mock zeigen.', retryable: false);
         }
 
         return rtrim($endpoint, '/').'/v1/decisions';
-    }
-}
-
-final readonly class DecisionResultConverter implements ResultConverterInterface
-{
-    public function __construct(private string $modelName)
-    {
-    }
-
-    public function supports(Model $model): bool
-    {
-        return $model->getName() === $this->modelName;
-    }
-
-    public function convert(RawResultInterface $result, array $options = []): ResultInterface
-    {
-        $data = $result->getData();
-        if (!isset($data['answers']) || !is_array($data['answers'])) {
-            throw new DecisionProviderException('Die Decisions-Antwort konnte nicht eingelesen werden.', retryable: false);
-        }
-
-        return new ObjectResult($data);
-    }
-
-    public function getTokenUsageExtractor(): ?TokenUsageExtractorInterface
-    {
-        return null;
-    }
-}
-
-final readonly class OpenAiDecisionsModelCatalog implements ModelCatalogInterface
-{
-    public function getModel(string $modelName): Model
-    {
-        if ('gpt-6-luna' !== $modelName) {
-            throw new \InvalidArgumentException('Unbekanntes Decisions-Modell.');
-        }
-
-        return new Model($modelName);
-    }
-
-    public function getModels(): array
-    {
-        return ['gpt-6-luna' => ['class' => Model::class, 'capabilities' => []]];
     }
 }

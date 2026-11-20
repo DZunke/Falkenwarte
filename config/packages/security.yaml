@@ -1,0 +1,13 @@
+security:
+  password_hashers:
+    owner:
+      algorithm: auto
+  firewalls:
+    mcp:
+      pattern: ^/mcp$
+      stateless: true
+      custom_authenticators:
+        - App\Access\Infrastructure\McpBearerAuthenticator
+      entry_point: App\Access\Infrastructure\McpBearerAuthenticator
+  access_control:
+    - { path: ^/mcp$, roles: ROLE_MCP }

@@ -7,12 +7,14 @@ namespace App\Classification\Infrastructure;
 use App\Classification\Application\DecisionGateway;
 use App\Classification\Application\DecisionProviderException;
 use Symfony\AI\Platform\PlatformInterface;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
 /**
  * Keeps application handlers on the DecisionGateway port while routing calls through Symfony AI.
  * The current released OpenAI bridge only supports Responses, so the installed platform service
  * is Falkenwarte's narrow Decisions implementation of PlatformInterface.
  */
+#[AsAlias(DecisionGateway::class)]
 final readonly class SymfonyAiDecisionAdapter implements DecisionGateway
 {
     public function __construct(private PlatformInterface $platform)

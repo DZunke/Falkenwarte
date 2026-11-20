@@ -6,7 +6,9 @@ namespace App\Operations\Infrastructure;
 
 use App\Operations\Application\OperationsPersistence;
 use Doctrine\DBAL\Connection;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+#[AsAlias]
 final readonly class DbalOperationsPersistence implements OperationsPersistence
 {
     public function __construct(private Connection $connection)

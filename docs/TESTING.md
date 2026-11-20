@@ -97,6 +97,8 @@ Die Ausnahme eröffnet keine allgemeine Backend-Testsuite. Ein isolierter Task-A
 
 ## 8. Statische Qualitätsprüfungen
 
+Nach `make install` zeigt `make format-check` PHP-Stilabweichungen mit ihrem Diff. `make format` wendet dieselben Regeln von PHP-CS-Fixer an. `make check` führt den Formatcheck zusammen mit den statischen Prüfungen, dem Handbuchbau und der Background-Suite aus. Der GitHub-Job `static-quality` verwendet dieselbe Fixer-Konfiguration.
+
 Formatierung, PHPStan, TypeScript, ESLint, Composer-Validierung, Abhängigkeits- und Lizenzprüfung, OpenAPI-/JSON-Schema-Validierung, generierte Clienttypen sowie Dokumentationslinks sind statische Prüfungen. Sie starten keine verdeckte zusätzliche Laufzeittestebene.
 
 Eine statische Abhängigkeitsregel prüft die Domain-Grenzen und die ORM-Abwesenheit. Eine Dokumentationsregel verlangt bei fachlichen Änderungen aktualisierte Kontext-/Lifecycle-/Vertragsdokumente oder eine konkrete, überprüfbare Begründung im Pull Request. Die fachliche Abnahme bleibt E2E.

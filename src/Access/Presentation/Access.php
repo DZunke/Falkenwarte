@@ -6,20 +6,42 @@ namespace App\Access\Presentation;
 
 use App\Access\Application\AccessPersistence;
 use App\Access\Domain\TechnicalCredential;
+use App\Access\Infrastructure\TechnicalPrincipalAuthenticator;
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\Cookie;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\PasswordHasher\Exception\InvalidPasswordException;
+use Symfony\Component\PasswordHasher\PasswordHasherInterface;
+use Symfony\Component\Security\Csrf\TokenGenerator\TokenGeneratorInterface;
+use Symfony\Component\Validator\Constraints\Timezone;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
-final class Access
+final class Access implements OperationHandler
 {
     public const SETTINGS = '00000000-0000-4000-8000-000000000001';
+
     public ?Cookie $cookie = null;
+
     private ?array $session = null;
 
-    public function __construct(private readonly Store $store, private readonly AccessPersistence $persistence, private readonly string $appVersion)
-    {
+    public function __construct(
+        private readonly Store $store,
+        private readonly AccessPersistence $persistence,
+        private readonly TechnicalPrincipalAuthenticator $technicalPrincipalAuthenticator,
+        #[Autowire(service: 'security.password_hasher.owner')]
+        private readonly PasswordHasherInterface $ownerPasswordHasher,
+        private readonly ValidatorInterface $validator,
+        #[Autowire('%falkenwarte.database_path%')]
+        private readonly string $databasePath,
+        private readonly TokenGeneratorInterface $csrfTokenGenerator,
+        #[Autowire('%env(APP_SETUP_TOKEN)%')]
+        private readonly string $setupToken,
+        private readonly string $appVersion,
+    ) {
     }
 
     public function authenticate(Request $request, bool $mcp = false): ?Actor
@@ -27,15 +49,10 @@ final class Access
         $this->session = null;
         $this->cookie = null;
         if ($request->headers->has('Authorization')) {
-            $header = $request->headers->get('Authorization', '');
-            $hash = TechnicalCredential::digestFromHeader($header);
-            if (null !== $hash) {
-                $token = $this->persistence->findTechnicalTokenByHash($hash);
-                if ($token && TechnicalCredential::active($token, time())) {
-                    return new Actor($token['principal_id'], false, $token['project_ids'], $token['capabilities'], $token['label'], $mcp ? 'mcp' : 'http');
-                }
-            }
-            throw new Problem(401, 'unauthenticated', 'Das technische Token ist ungültig oder abgelaufen.');
+            return $this->technicalPrincipalAuthenticator->authenticate(
+                $request->headers->get('Authorization', ''),
+                $mcp ? 'mcp' : 'http',
+            );
         }
         if ($mcp) {
             throw new Problem(401, 'unauthenticated', 'Ein technisches Bearer-Token ist erforderlich.');
@@ -82,12 +99,12 @@ final class Access
                 if ($this->store->all('owners')) {
                     throw new Problem(409, 'setup_complete', 'Der Eigentümer wurde bereits eingerichtet.');
                 }
-                $token = getenv('APP_SETUP_TOKEN') ?: $this->localSetupToken();
+                $token = '' !== $this->setupToken ? $this->setupToken : $this->localSetupToken();
                 if (!hash_equals($token, $b['setup_token'])) {
                     throw new Problem(403, 'forbidden', 'Der Einrichtungsschlüssel ist ungültig.');
                 }
                 $this->timezone($b['timezone']);
-                $owner = $this->store->save('owners', ['display_name' => $b['display_name'], 'timezone' => $b['timezone'], 'locale' => 'de', '_password' => password_hash($b['password'], PASSWORD_DEFAULT)], 'access.owner_created');
+                $owner = $this->store->save('owners', ['display_name' => $b['display_name'], 'timezone' => $b['timezone'], 'locale' => 'de', '_password' => $this->ownerPasswordHasher->hash($b['password'])], 'access.owner_created');
                 $this->store->save('settings', ['id' => self::SETTINGS, 'timezone' => $b['timezone'], 'locale' => 'de', 'theme' => 'system', 'maintenance_mode' => false, 'default_parallel_runs' => 1, 'api_idempotency_retention_days' => 30, 'ui_event_retention_hours' => 24], 'access.settings_created');
 
                 return $this->login($request, $owner);
@@ -98,7 +115,7 @@ final class Access
         if ($rate && $rate['until_ts'] > time() && $rate['attempts'] >= 12) {
             throw new Problem(429, 'rate_limited', 'Zu viele Anmeldeversuche. In fünf Minuten erneut versuchen.');
         }
-        if (!$owner || !password_verify($b['password'], $owner['_password'])) {
+        if (!$owner || !$this->verifyOwnerPassword($owner['_password'], $b['password'])) {
             $this->persistence->recordLoginFailure($ip, time());
             throw new Problem(401, 'unauthenticated', 'Die Anmeldung ist fehlgeschlagen.');
         }
@@ -109,7 +126,7 @@ final class Access
 
     private function localSetupToken(): string
     {
-        $path = dirname(getenv('FALKENWARTE_DB') ?: dirname(__DIR__, 3).'/var/falkenwarte.sqlite').'/setup-token';
+        $path = dirname($this->databasePath).'/setup-token';
         if (!is_file($path)) {
             throw new Problem(503, 'setup_token_missing', 'APP_SETUP_TOKEN setzen oder den Einrichtungsschlüssel im Datenverzeichnis bereitstellen.');
         }
@@ -117,10 +134,19 @@ final class Access
         return trim(file_get_contents($path));
     }
 
+    private function verifyOwnerPassword(string $hashedPassword, string $plainPassword): bool
+    {
+        try {
+            return $this->ownerPasswordHasher->verify($hashedPassword, $plainPassword);
+        } catch (InvalidPasswordException) {
+            return false;
+        }
+    }
+
     private function login(Request $request, array $owner): array
     {
         $raw = bin2hex(random_bytes(32));
-        $this->session = ['hash' => hash('sha256', $raw), 'owner_id' => $owner['id'], 'csrf' => bin2hex(random_bytes(32)), 'expires' => time() + 43200];
+        $this->session = ['hash' => hash('sha256', $raw), 'owner_id' => $owner['id'], 'csrf' => $this->csrfTokenGenerator->generateToken(), 'expires' => time() + 43200];
         $this->persistence->saveSession($this->session);
         $this->cookie = Cookie::create('falkenwarte_session', $raw, $this->session['expires'], '/', null, $request->isSecure(), true, false, 'strict');
 
@@ -134,14 +160,15 @@ final class Access
 
     private function timezone(string $zone): void
     {
-        if (!in_array($zone, timezone_identifiers_list(), true)) {
+        $violations = $this->validator->validate($zone, new Timezone(zone: \DateTimeZone::ALL_WITH_BC));
+        if (count($violations) > 0) {
             throw new Problem(422, 'validation_failed', 'Eine gültige IANA-Zeitzone angeben.');
         }
     }
 
-    public function handles(string $op): bool
+    public function handles(string $operation): bool
     {
-        return in_array($op, ['owner_get', 'owner_update', 'owner_password_change', 'settings_get', 'settings_update', 'ui_config_get', 'tokens_list', 'tokens_create', 'tokens_revoke', 'secret_references_list', 'secret_references_create', 'secret_references_rotate'], true);
+        return in_array($operation, ['owner_get', 'owner_update', 'owner_password_change', 'settings_get', 'settings_update', 'ui_config_get', 'tokens_list', 'tokens_create', 'tokens_revoke', 'secret_references_list', 'secret_references_create', 'secret_references_rotate'], true);
     }
 
     public function handle(string $op, array $p, array $b, Actor $a): array
@@ -167,10 +194,10 @@ final class Access
         }
         if ('owner_password_change' === $op) {
             $owner = $this->store->get('owners', $a->id);
-            if (!password_verify($b['current_password'], $owner['_password'])) {
+            if (!$this->verifyOwnerPassword($owner['_password'], $b['current_password'])) {
                 throw new Problem(403, 'forbidden', 'Aktuelles Passwort prüfen.');
             }
-            $owner['_password'] = password_hash($b['new_password'], PASSWORD_DEFAULT);
+            $owner['_password'] = $this->ownerPasswordHasher->hash($b['new_password']);
             $this->store->save('owners', $owner, 'access.password_changed');
             $this->persistence->removeOtherSessions($this->session['hash']);
 

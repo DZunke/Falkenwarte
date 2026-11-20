@@ -62,9 +62,10 @@ if (( ${#APP_SETUP_TOKEN} < 32 )); then
 fi
 export APP_SETUP_TOKEN
 
-if [[ ! -f "$data_directory/falkenwarte.sqlite" ]]; then
-    touch "$data_directory/falkenwarte.sqlite"
-    chmod 0600 "$data_directory/falkenwarte.sqlite"
+database_path="${FALKENWARTE_DB:-$data_directory/falkenwarte.sqlite}"
+if [[ ! -f "$database_path" ]]; then
+    touch "$database_path"
+    chmod 0600 "$database_path"
 fi
 
 run_startup_tasks() {

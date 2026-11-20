@@ -8,10 +8,11 @@ use App\Extensions\Application\PluginAvailability;
 use App\Portfolio\Domain\CustomFieldPolicy;
 use App\Portfolio\Domain\ProjectSlug;
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
 
-final class PortfolioHandler
+final class PortfolioHandler implements OperationHandler
 {
     private const DEFAULT_STATUSES = [
         ['name' => 'Backlog', 'category' => 'backlog', 'color' => '#64748B', 'is_default' => true],

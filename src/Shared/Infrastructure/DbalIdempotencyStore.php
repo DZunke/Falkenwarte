@@ -6,7 +6,9 @@ namespace App\Shared\Infrastructure;
 
 use App\Shared\Application\IdempotencyStore;
 use Doctrine\DBAL\Connection;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+#[AsAlias(IdempotencyStore::class)]
 final readonly class DbalIdempotencyStore implements IdempotencyStore
 {
     public function __construct(private Connection $connection)

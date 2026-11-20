@@ -5,20 +5,49 @@ declare(strict_types=1);
 namespace App\Presentation;
 
 use App\Access\Presentation\Access;
-use App\Extensions\Application\PluginRegistry;
+use App\Extensions\Application\PluginAvailability;
 use App\Shared\Application\Actor;
 use App\Shared\Application\IdempotencyStore;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\CanonicalData;
 use App\Shared\Domain\Problem;
+use Symfony\Component\DependencyInjection\Attribute\AutowireIterator;
 
 final class Gateway
 {
-    public function __construct(private readonly Store $store, private readonly IdempotencyStore $idempotency, private readonly Contract $contract, private readonly iterable $handlers, private readonly PluginRegistry $plugins)
-    {
+    /** @param iterable<OperationHandler> $handlers */
+    public function __construct(
+        private readonly Store $store,
+        private readonly IdempotencyStore $idempotency,
+        private readonly Contract $contract,
+        #[AutowireIterator('app.operation_handler')] private readonly iterable $handlers,
+        private readonly PluginAvailability $plugins,
+    ) {
     }
 
-    private const TARGETS = ['project_id' => 'projects', 'task_id' => 'tasks', 'board_id' => 'boards', 'label_id' => 'labels', 'run_id' => 'runs', 'approval_id' => 'approvals', 'connection_id' => 'connections', 'profile_id' => 'agent_profiles', 'workflow_id' => 'workflows', 'instance_id' => 'workflow_instances', 'trigger_id' => 'triggers', 'plugin_id' => 'plugins', 'token_id' => 'tokens', 'secret_id' => 'secret_references', 'field_id' => 'custom_fields', 'evidence_id' => 'evidence', 'backup_id' => 'backups', 'revision_id' => 'revisions', 'action_id' => 'actions', 'export_id' => 'exports'];
+    private const TARGETS = [
+        'project_id' => 'projects',
+        'task_id' => 'tasks',
+        'board_id' => 'boards',
+        'label_id' => 'labels',
+        'run_id' => 'runs',
+        'approval_id' => 'approvals',
+        'connection_id' => 'connections',
+        'profile_id' => 'agent_profiles',
+        'workflow_id' => 'workflows',
+        'instance_id' => 'workflow_instances',
+        'trigger_id' => 'triggers',
+        'plugin_id' => 'plugins',
+        'token_id' => 'tokens',
+        'secret_id' => 'secret_references',
+        'field_id' => 'custom_fields',
+        'evidence_id' => 'evidence',
+        'backup_id' => 'backups',
+        'revision_id' => 'revisions',
+        'action_id' => 'actions',
+        'export_id' => 'exports',
+    ];
 
     public function invoke(string $name, array $p, array $body, Actor $actor, ?string $key, ?string $etag, bool $failpoint = false): array
     {
@@ -69,7 +98,21 @@ final class Gateway
             $id = $this->store->id();
             $this->store->context($actor, $id);
             $project = $this->project($p);
-            $action = ['id' => $id, 'type' => $name, 'status' => 'accepted', 'actor' => $actor->ref(), 'project_id' => $project, 'correlation_id' => $id, 'causation_id' => null, 'target' => null, 'result' => null, 'error' => null, 'accepted_at' => $this->store->now(), 'started_at' => null, 'finished_at' => null];
+            $action = [
+                'id' => $id,
+                'type' => $name,
+                'status' => 'accepted',
+                'actor' => $actor->ref(),
+                'project_id' => $project,
+                'correlation_id' => $id,
+                'causation_id' => null,
+                'target' => null,
+                'result' => null,
+                'error' => null,
+                'accepted_at' => $this->store->now(),
+                'started_at' => null,
+                'finished_at' => null,
+            ];
             $this->store->save('actions', $action, 'action.accepted');
             $action['started_at'] = $this->store->now();
             $action['status'] = 'started';

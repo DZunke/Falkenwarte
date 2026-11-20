@@ -8,32 +8,30 @@ use App\Extensions\Application\PluginRegistry;
 use App\Shared\Domain\Problem;
 use Opis\JsonSchema\Errors\ErrorFormatter;
 use Opis\JsonSchema\Validator;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\Yaml\Yaml;
+use Symfony\Contracts\Cache\CacheInterface;
 
 /** The same contract selects handlers, validates wire input and projects public response fields. */
 final class Contract
 {
     private array $spec;
-    private array $ops = [];
-    private array $documents = [];
-    private array $schemaCache = [];
-    private Validator $validator;
 
-    public function __construct(private readonly string $root)
-    {
-        $file = $root.'/contracts/openapi.yaml';
-        $cache = $root.'/var/cache/openapi-'.hash_file('xxh128', $file).'.php';
-        if (!is_file($cache)) {
-            $parsed = Yaml::parseFile($file);
-            if (!is_dir(dirname($cache))) {
-                @mkdir(dirname($cache), 0770, true);
-            }
-            $temp = tempnam(dirname($cache), 'spec');
-            file_put_contents($temp, '<?php return '.var_export($parsed, true).';');
-            rename($temp, $cache);
-        }
-        $this->spec = require $cache;
-        $this->validator = new Validator();
+    private array $ops = [];
+
+    private array $documents = [];
+
+    private array $schemaCache = [];
+
+    public function __construct(
+        #[Autowire('%kernel.project_dir%')]
+        private readonly string $root,
+        CacheInterface $cache,
+        private readonly Validator $validator,
+        private readonly ErrorFormatter $errors,
+    ) {
+        $file = $this->openApiFile();
+        $this->spec = $cache->get('openapi.'.hash_file('xxh128', $file), static fn (): array => Yaml::parseFile($file));
         foreach ($this->spec['paths'] as $path => $methods) {
             foreach ($methods as $method => $op) {
                 if (!isset($op['operationId'])) {
@@ -45,6 +43,11 @@ final class Contract
                 $this->ops[$op['operationId']] = $op;
             }
         }
+    }
+
+    public function openApiFile(): string
+    {
+        return $this->root.'/contracts/openapi.yaml';
     }
 
     public function operations(): array
@@ -82,7 +85,7 @@ final class Contract
     public function resolve(array $schema): array
     {
         while (isset($schema['$ref'])) {
-            [$file,$fragment] = array_pad(explode('#', $schema['$ref'], 2), 2, '');
+            [$file, $fragment] = array_pad(explode('#', $schema['$ref'], 2), 2, '');
             $doc = '' === $file ? $this->spec : ($this->documents[$file] ??= json_decode(file_get_contents($this->root.'/contracts/'.$file), true, flags: JSON_THROW_ON_ERROR));
             if ('' !== $fragment) {
                 foreach (explode('/', ltrim($fragment, '/')) as $key) {
@@ -116,7 +119,7 @@ final class Contract
         }
         $result = $this->validator->validate($value, $this->schemaCache[$key]);
         if (!$result->isValid()) {
-            $errors = (new ErrorFormatter())->format($result->error());
+            $errors = $this->errors->format($result->error());
             $key = array_key_first($errors);
             throw new Problem(422, 'validation_failed', mb_substr('Eingabe prüfen ('.$key.'). '.implode(' ', (array) $errors[$key]), 0, 1000));
         }

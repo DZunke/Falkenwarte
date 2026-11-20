@@ -1,0 +1,5 @@
+doctrine_migrations:
+  migrations_paths:
+    DoctrineMigrations: '%kernel.project_dir%/migrations'
+    'Falkenwarte\LinkNotes\Migrations': '%kernel.project_dir%/vendor/falkenwarte/link-notes/src/Migrations'
+  enable_profiler: false

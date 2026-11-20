@@ -6,6 +6,7 @@ namespace App\Extensions\Application;
 
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
+use Symfony\Component\DependencyInjection\Attribute\AutowireIterator;
 
 /** Discovers trusted package manifests and checks their runtime contribution gates. */
 final class PluginRegistry implements PluginManifestReader, PluginAvailability
@@ -20,8 +21,10 @@ final class PluginRegistry implements PluginManifestReader, PluginAvailability
     private array $capabilities = [];
 
     /** @param iterable<PluginDefinition> $definitions */
-    public function __construct(iterable $definitions, private readonly Store $store)
-    {
+    public function __construct(
+        #[AutowireIterator('app.plugin_definition')] iterable $definitions,
+        private readonly Store $store,
+    ) {
         foreach ($definitions as $definition) {
             $manifest = $definition->manifest();
             $id = $manifest['id'] ?? null;

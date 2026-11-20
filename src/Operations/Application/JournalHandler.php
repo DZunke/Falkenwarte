@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace App\Operations\Application;
 
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
 
-final readonly class JournalHandler
+final readonly class JournalHandler implements OperationHandler
 {
-    public function __construct(private Store $store, private OperationsPersistence $persistence)
+    public function __construct(private Store $store, private OperationsPersistence $persistence, private string $databasePath)
     {
     }
 
@@ -112,7 +113,7 @@ final readonly class JournalHandler
             }
         });
         $bytes = 'json' === $export['format'] ? json_encode($result, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT) : implode("\n", array_map(fn ($v) => json_encode($v, JSON_THROW_ON_ERROR), $result))."\n";
-        $dir = dirname(getenv('FALKENWARTE_DB') ?: dirname(__DIR__, 3).'/var/falkenwarte.sqlite').'/exports';
+        $dir = dirname($this->databasePath).'/exports';
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new \RuntimeException('Exportverzeichnis fehlt.');
         }

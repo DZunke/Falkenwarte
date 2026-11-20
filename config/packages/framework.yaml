@@ -1,0 +1,18 @@
+framework:
+  secret: '%env(APP_SECRET)%'
+  trusted_proxies: '127.0.0.1,::1'
+  trusted_headers: [x-forwarded-for, x-forwarded-host, x-forwarded-proto, x-forwarded-port]
+  http_method_override: false
+  handle_all_throwables: true
+  http_client:
+    scoped_clients:
+      t3.client:
+        scope: '^https?://'
+        max_redirects: 0
+      decisions.client:
+        scope: '^https?://'
+        max_redirects: 0
+  serializer: true
+  validation: true
+  router:
+    utf8: true

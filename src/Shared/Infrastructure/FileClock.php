@@ -5,25 +5,30 @@ declare(strict_types=1);
 namespace App\Shared\Infrastructure;
 
 use App\Shared\Application\Clock;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use Symfony\Component\DependencyInjection\Attribute\When;
 
+#[When(env: 'test')]
 final class FileClock implements Clock
 {
-    public function __construct(private readonly SystemClock $systemClock)
-    {
+    public function __construct(
+        private readonly SystemClock $systemClock,
+        #[Autowire('%env(FALKENWARTE_TEST_CLOCK_FILE)%')]
+        private readonly string $clockFile,
+    ) {
     }
 
     public function now(): string
     {
-        $path = getenv('FALKENWARTE_TEST_CLOCK_FILE');
-        if (!is_string($path) || '' === $path) {
+        if ('' === $this->clockFile) {
             return $this->systemClock->now();
         }
 
-        if (!file_exists($path)) {
+        if (!file_exists($this->clockFile)) {
             return $this->systemClock->now();
         }
 
-        $contents = @file_get_contents($path);
+        $contents = @file_get_contents($this->clockFile);
         if (false === $contents) {
             throw new \UnexpectedValueException('The controlled clock file exists but cannot be read.');
         }

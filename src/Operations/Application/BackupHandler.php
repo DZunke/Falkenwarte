@@ -6,13 +6,22 @@ namespace App\Operations\Application;
 
 use App\Extensions\Application\PluginManifestReader;
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
 
-final class BackupHandler
+final class BackupHandler implements OperationHandler
 {
-    public function __construct(public Store $store, private readonly MigrationVersionReader $migrationVersions, private readonly PluginManifestReader $plugins, private readonly string $appVersion)
-    {
+    public function __construct(
+        public Store $store,
+        private readonly MigrationVersionReader $migrationVersions,
+        private readonly PluginManifestReader $plugins,
+        private readonly string $appVersion,
+        private readonly string $dataDirectory,
+        private readonly string $databasePath,
+        private readonly string $backupDirectory,
+        private readonly int $backupMaxBytes,
+    ) {
     }
 
     public function handles(string $op): bool
@@ -396,7 +405,7 @@ final class BackupHandler
             }
 
             $databaseEntry = $zip->statName('database.sqlite');
-            $maxBytes = max(1048576, (int) (getenv('FALKENWARTE_BACKUP_MAX_BYTES') ?: 5368709120));
+            $maxBytes = max(1048576, $this->backupMaxBytes);
             if (!is_array($databaseEntry) || $databaseEntry['size'] <= 0 || (int) $databaseEntry['size'] > $maxBytes) {
                 throw new Problem(413, 'backup_invalid', 'Die gesicherte Datenbank hat eine unzulässige Größe.');
             }
@@ -471,7 +480,7 @@ final class BackupHandler
 
     private function copyDatabase(string $destination): void
     {
-        $databasePath = getenv('FALKENWARTE_DB') ?: '/data/falkenwarte.sqlite';
+        $databasePath = $this->databasePath;
         if (!is_file($databasePath)) {
             throw new Problem(503, 'backup_unavailable', 'Die Falkenwarte-Datenbank wurde nicht gefunden.');
         }
@@ -535,7 +544,7 @@ final class BackupHandler
 
     private function backupDirectory(): string
     {
-        $directory = getenv('FALKENWARTE_BACKUP_DIR') ?: '/data/backups';
+        $directory = $this->backupDirectory;
         if (!str_starts_with($directory, '/')) {
             throw new Problem(503, 'backup_unavailable', 'Das Backupziel muss ein absoluter Pfad sein.');
         }
@@ -562,7 +571,7 @@ final class BackupHandler
 
     private function restoreRequestPath(): string
     {
-        $path = (getenv('FALKENWARTE_DATA_DIR') ?: '/data').'/restore-request.json';
+        $path = rtrim($this->dataDirectory, '/').'/restore-request.json';
         $directory = dirname($path);
         if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) {
             throw new Problem(503, 'restore_unavailable', 'Der Wiederherstellungsordner kann nicht angelegt werden.');

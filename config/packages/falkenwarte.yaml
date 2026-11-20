@@ -1,0 +1,17 @@
+parameters:
+  falkenwarte.default_data_dir: '%kernel.project_dir%/var'
+  falkenwarte.data_dir: '%env(default:falkenwarte.default_data_dir:resolve:FALKENWARTE_DATA_DIR)%'
+  falkenwarte.default_database_path: '%falkenwarte.data_dir%/falkenwarte.sqlite'
+  falkenwarte.database_path: '%env(default:falkenwarte.default_database_path:resolve:FALKENWARTE_DB)%'
+  falkenwarte.default_backup_dir: '%falkenwarte.data_dir%/backups'
+  falkenwarte.backup_dir: '%env(default:falkenwarte.default_backup_dir:resolve:FALKENWARTE_BACKUP_DIR)%'
+  falkenwarte.backup_max_bytes: '%env(int:FALKENWARTE_BACKUP_MAX_BYTES)%'
+  falkenwarte.public_origin: '%env(FALKENWARTE_PUBLIC_ORIGIN)%'
+  falkenwarte.public_url: '%env(default:falkenwarte.public_origin:FALKENWARTE_PUBLIC_URL)%'
+  falkenwarte.mercure_subscriber_ttl: 600
+  falkenwarte.test_mode: false
+
+when@test:
+  parameters:
+    falkenwarte.test_mode: true
+    falkenwarte.mercure_subscriber_ttl: '%env(int:MERCURE_SUBSCRIBER_TTL)%'

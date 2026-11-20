@@ -1,7 +1,6 @@
 .git
 .github
 .notes
-.env
 .env.*
 secrets
 vendor

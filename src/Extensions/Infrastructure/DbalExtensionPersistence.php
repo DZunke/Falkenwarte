@@ -6,7 +6,9 @@ namespace App\Extensions\Infrastructure;
 
 use App\Extensions\Application\ExtensionPersistence;
 use Doctrine\DBAL\Connection;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+#[AsAlias(ExtensionPersistence::class)]
 final readonly class DbalExtensionPersistence implements ExtensionPersistence
 {
     public function __construct(private Connection $connection)

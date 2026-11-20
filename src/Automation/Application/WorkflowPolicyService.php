@@ -6,14 +6,13 @@ namespace App\Automation\Application;
 
 use App\Automation\Domain\WorkflowDefinitionPolicy;
 use App\Automation\Domain\WorkflowDefinitionViolation;
-use App\Automation\Domain\WorkflowTransitionPolicy;
 use App\Shared\Domain\Problem;
 
 final readonly class WorkflowPolicyService implements WorkflowPolicy
 {
     public function __construct(
-        private WorkflowDefinitionPolicy $definitions = new WorkflowDefinitionPolicy(),
-        private WorkflowTransitionPolicy $transitions = new WorkflowTransitionPolicy(),
+        private WorkflowDefinitionPolicy $definitions,
+        private WorkflowTransitionSelector $transitions,
     ) {
     }
 
@@ -27,7 +26,11 @@ final readonly class WorkflowPolicyService implements WorkflowPolicy
         }
     }
 
-    /** @param list<array<string, mixed>> $transitions @return array<string, mixed>|null */
+    /**
+     * @param list<array<string, mixed>> $transitions
+     *
+     * @return array<string, mixed>|null
+     */
     public function selectTransition(array $transitions, string $fromStageId, string $outcome): ?array
     {
         return $this->transitions->select($transitions, $fromStageId, $outcome);
