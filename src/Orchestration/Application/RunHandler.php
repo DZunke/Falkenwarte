@@ -1135,7 +1135,7 @@ final class RunHandler implements OperationHandler
         $payload = $run['_dispatch_request'] ?? null;
         if (!is_array($payload)) {
             $template = $run['_prompt_template'] ?? $this->agentCatalog->profile((string) $run['snapshot']['agent_profile_id'])['prompt_template'] ?? '';
-            $message = $this->dispatchMessage($run['snapshot'], (string) $template, $run);
+            $message = $this->dispatchMessage($run, (string) $task['key'], (string) $template);
             $payload = [
                 'projectId' => (string) $binding['external_project_id'],
                 'title' => 'Falkenwarte '.$task['key'].' · Versuch '.$attempt['attempt_no'],
@@ -2553,43 +2553,44 @@ final class RunHandler implements OperationHandler
         ];
     }
 
-    private function dispatchMessage(array $task, string $template, array $run): string
+    private function dispatchMessage(array $run, string $taskKey, string $template): string
     {
-        $template = strtr($template, ['{{task.title}}' => (string) $task['title'], '{{task.description}}' => (string) $task['description']]);
-        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'], $task['criteria'] ?? []);
-        $workflowVersion = (int) ($run['snapshot']['workflow_version'] ?? 0);
+        $snapshot = $run['snapshot'];
+        $template = strtr($template, ['{{task.title}}' => (string) $snapshot['title'], '{{task.description}}' => (string) $snapshot['description']]);
+        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'], $snapshot['criteria'] ?? []);
+        $workflowVersion = (int) ($snapshot['workflow_version'] ?? 0);
         $workflowVersionLine = $workflowVersion > 0 ? "Workflowversion: {$workflowVersion}\n" : '';
-        $handoffArguments = 'task_id='.(string) $task['id'];
-        if (isset($run['snapshot']['handoff_source_run_id'])) {
-            $handoffArguments .= ', source_run_id='.(string) $run['snapshot']['handoff_source_run_id'];
+        $handoffArguments = 'task_id='.(string) $run['task_id'];
+        if (isset($snapshot['handoff_source_run_id'])) {
+            $handoffArguments .= ', source_run_id='.(string) $snapshot['handoff_source_run_id'];
         }
         $body = "Falkenwarte-Auftrag\n"
-            ."Projekt-ID: {$task['project_id']}\n"
-            ."Ticket-ID: {$task['id']}\n"
-            ."Ticket-Key: {$task['key']}\n"
+            ."Projekt-ID: {$run['project_id']}\n"
+            ."Ticket-ID: {$run['task_id']}\n"
+            ."Ticket-Key: {$taskKey}\n"
             ."Phase-ID: {$run['stage']}\n"
             .$workflowVersionLine
             ."Run-ID: {$run['id']}\n"
             ."Versuch: {$run['attempt_no']}\n"
-            ."Aufgabenrevision: {$run['snapshot']['task_revision']}\n\n"
-            ."Aufgabe: {$task['title']}\n\n"
-            .(string) $task['description'];
+            ."Aufgabenrevision: {$snapshot['task_revision']}\n\n"
+            ."Aufgabe: {$snapshot['title']}\n\n"
+            .(string) $snapshot['description'];
         if ([] !== $criteria) {
             $body .= "\n\nAkzeptanzkriterien:\n".implode("\n", $criteria);
         }
         if ('' !== trim($template)) {
             $body .= "\n\nRollenhinweise:\n".$template;
         }
-        if (isset($run['snapshot']['handoff_snapshot'])) {
-            $handoff = $run['snapshot']['handoff_snapshot'];
-            $body .= "\n\nÜbergabe aus Lauf ".$run['snapshot']['handoff_source_run_id']." (Agentenmeldung)\n";
+        if (isset($snapshot['handoff_snapshot'])) {
+            $handoff = $snapshot['handoff_snapshot'];
+            $body .= "\n\nÜbergabe aus Lauf ".$snapshot['handoff_source_run_id']." (Agentenmeldung)\n";
             $body .= json_encode($handoff, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         }
         $body .= "\n\nArbeitsbeginn:\n"
             .'Nutze den Skill falkenwarte, falls er in deiner T3-Umgebung verfügbar ist; andernfalls arbeite anhand dieses Auftrags weiter.'
             ."\nMit `tasks.read`: `task_handoff_get({$handoffArguments})` und den kuratierten Kontext nutzen."
             .' Mit `runs.read`: `runs_get(run_id='.$run['id'].')` für die aktuelle `expected_version`; mit `runs.report`: `runs_report_result` mit '
-            .'run_id='.$run['id'].', attempt_no='.$run['attempt_no'].', task_revision='.$run['snapshot']['task_revision']
+            .'run_id='.$run['id'].', attempt_no='.$run['attempt_no'].', task_revision='.$snapshot['task_revision']
             .'. Fehlt Freigabe oder Version, frage nach. Falkenwarte prüft keinen Code und lädt keine Links herunter.';
 
         return $body;

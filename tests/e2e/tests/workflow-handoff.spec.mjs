@@ -428,6 +428,7 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     expect(implementationLaunch).toBeTruthy();
     expect(implementationLaunch.payload.message).toContain(`Projekt-ID: ${project.id}`);
     expect(implementationLaunch.payload.message).toContain(`Ticket-ID: ${task.id}`);
+    expect(implementationLaunch.payload.message).toContain(`Ticket-Key: ${task.key}`);
     expect(implementationLaunch.payload.message).toContain(`Phase-ID: ${implementationRun.stage}`);
     expect(implementationLaunch.payload.message).toContain(`Workflowversion: ${implementationRun.snapshot.workflow_version}`);
     expect(implementationLaunch.payload.message).toContain('falkenwarte');
@@ -441,7 +442,7 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     expect(implementationLaunch.payload.message).toContain('runs.read');
     expect(implementationLaunch.payload.message).toContain('runs.report');
     const reviewerLaunch = t3.accepted_launches.find((launch) => launch.payload.message.includes('Übergabe aus Lauf'));
-    expect(reviewerLaunch?.payload.message).toContain(firstRunId);
+    expect(reviewerLaunch?.payload.message).toContain(`task_handoff_get(task_id=${task.id}, source_run_id=${firstRunId})`);
     expect(reviewerLaunch?.payload.message).toContain(implementationResult.reportId);
     expect(reviewerLaunch?.payload.message).toContain(implementationSummary);
     expect(reviewerLaunch?.payload.message).toContain(implementationEvidenceId);

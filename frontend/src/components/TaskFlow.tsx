@@ -398,7 +398,7 @@ export default function TaskFlow({ task, projectId, statuses, flow, loading, err
           <Button size="sm" variant="outline" onClick={onOpenDetails}><FileCheck2 />Details öffnen</Button>
         </div>
         {task.criteria.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Ticket sind keine Erfolgskriterien festgelegt.</p> : <ul className="space-y-2">
-          {task.criteria.map((criterion) => <li key={criterion.id} className="flex min-w-0 flex-wrap items-start justify-between gap-3 rounded-md bg-muted/40 p-3">
+          {task.criteria.map((criterion) => <li key={criterion.id} className="flex min-w-0 flex-col items-start gap-2 rounded-md bg-muted/40 p-3 sm:flex-row sm:justify-between sm:gap-3">
             <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm">{criterion.text}</p>
             <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
               <Badge variant="outline">{criterion.is_required ? 'Erforderlich' : 'Optional'}</Badge>
