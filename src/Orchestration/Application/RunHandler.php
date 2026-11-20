@@ -495,9 +495,7 @@ final class RunHandler implements OperationHandler
         if (!in_array($run['state'], ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'result_reported', 'verifying'], true)) {
             throw new Problem(409, 'run_transition_invalid', 'Dieser Lauf kann aus seinem aktuellen Zustand nicht abgebrochen werden.');
         }
-        $run['state'] = 'cancel_requested';
-        $run['status_reason'] = trim((string) $body['reason']);
-        $run = $this->store->save('runs', $run, 'run.cancel_requested');
+        $run = $this->requestCancellation($run, trim((string) $body['reason']), 'run.cancel_requested');
         $this->store->enqueue('run.cancel', ['run_id' => $id]);
 
         return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
@@ -958,9 +956,7 @@ final class RunHandler implements OperationHandler
             foreach ($instance['run_ids'] as $runId) {
                 $run = $this->store->find('runs', (string) $runId);
                 if (null !== $run && in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
-                    $run['state'] = 'cancel_requested';
-                    $run['status_reason'] = 'Der übergeordnete Workflow wurde abgebrochen.';
-                    $this->store->save('runs', $run, 'run.cancel_requested');
+                    $this->requestCancellation($run, 'Der übergeordnete Workflow wurde abgebrochen.', 'run.cancel_requested');
                     $this->store->enqueue('run.cancel', ['run_id' => $runId]);
                 }
             }
@@ -1393,9 +1389,18 @@ final class RunHandler implements OperationHandler
         if (!in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
             return;
         }
+        $cancelIntent = $run['_cancel_intent'] ?? null;
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
         if (
+            is_array($cancelIntent)
+            && 'requested' === ($cancelIntent['state'] ?? null)
+            && null !== $attempt['external_thread_id']
+        ) {
+            return;
+        }
+        if (
             in_array($run['state'], ['verifying', 'result_reported'], true)
+            && !is_array($cancelIntent)
             && null !== ($attempt['ended_at'] ?? null)
             && in_array(strtolower((string) $attempt['remote_status']), ['completed', 'succeeded', 'success'], true)
         ) {
@@ -1410,6 +1415,18 @@ final class RunHandler implements OperationHandler
             return;
         }
         if (null === $attempt['external_thread_id']) {
+            if (is_array($cancelIntent) && 'requested' === ($cancelIntent['state'] ?? null)) {
+                $run['_cancel_requested_unknown_external'] = true;
+                $run['_cancel_intent']['state'] = 'unknown_external';
+                $run['state'] = 'reconciling';
+                $run['status_reason'] = 'Der externe Startausgang ist ungeklärt. Abbruchwirkung wird vor einer Freigabe des Ausführungsplatzes abgeglichen.';
+                $this->store->save('runs', $run, 'run.cancel_reconciliation_required');
+                $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
+                $this->store->enqueue('run.reconcile', ['run_id' => $runId]);
+                $this->removeObservationSchedule($runId);
+
+                return;
+            }
             if (!empty($run['_cancel_requested_unknown_external'])) {
                 // Replaying a keyed launch could start work the owner already asked to stop.
                 $this->openAttention($run['task_id'], $run['project_id'], 'reconciliation_required', 'owner');
@@ -1459,13 +1476,28 @@ final class RunHandler implements OperationHandler
 
             return;
         }
-        $this->store->atomic(function () use ($runId, $remote): void {
+        $readCancelIntentId = is_array($cancelIntent) ? ($cancelIntent['id'] ?? null) : null;
+        $readCancelIntentState = is_array($cancelIntent) ? ($cancelIntent['state'] ?? null) : null;
+        $readCancelStatus = is_array($cancelIntent) ? ($cancelIntent['interrupt_status'] ?? null) : null;
+        $this->store->atomic(function () use ($runId, $remote, $readCancelIntentId, $readCancelIntentState, $readCancelStatus): void {
             $run = $this->record('runs', $runId);
             if (!in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
                 return;
             }
+            $currentCancelIntent = $run['_cancel_intent'] ?? null;
+            if (
+                (is_array($currentCancelIntent) ? ($currentCancelIntent['id'] ?? null) : null) !== $readCancelIntentId
+                || (is_array($currentCancelIntent) ? ($currentCancelIntent['state'] ?? null) : null) !== $readCancelIntentState
+                || (is_array($currentCancelIntent) ? ($currentCancelIntent['interrupt_status'] ?? null) : null) !== $readCancelStatus
+            ) {
+                // The external read began before a new cancellation request or before its interrupt was sent.
+                return;
+            }
+            $awaitingCancelConfirmation = is_array($currentCancelIntent) && 'awaiting_confirmation' === ($currentCancelIntent['state'] ?? null);
             $attempt = $this->attempt($run, (int) $run['attempt_no']);
-            $attempt['remote_status'] = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
+            $observedStatus = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
+            $interruptConfirmedCancellation = $awaitingCancelConfirmation && in_array($readCancelStatus, ['cancelled', 'canceled', 'interrupted'], true);
+            $attempt['remote_status'] = $interruptConfirmedCancellation ? $readCancelStatus : $observedStatus;
             $attempt['external_observed_run_id'] = isset($remote['runId'])
                 ? (string) $remote['runId']
                 : (isset($remote['run']['id'])
@@ -1478,7 +1510,14 @@ final class RunHandler implements OperationHandler
             $run['last_observed_at'] = $attempt['last_observed_at'];
             $run = $this->store->save('runs', $run, 'run.external_observed');
             $status = strtolower((string) $attempt['remote_status']);
-            if (in_array($status, ['running', 'in_progress', 'streaming'], true)) {
+            $remoteStillActive = in_array($status, [
+                'running', 'in_progress', 'streaming', 'queued', 'pending', 'accepted',
+                'cancel_requested', 'interrupt_requested', 'waiting_input', 'needs_input', 'input_required',
+            ], true);
+            if ($awaitingCancelConfirmation && $remoteStillActive) {
+                $run['state'] = 'cancel_requested';
+                $run['status_reason'] = 'T3 hat den angeforderten Abbruch noch nicht bestätigt.';
+            } elseif (in_array($status, ['running', 'in_progress', 'streaming'], true)) {
                 $run['state'] = 'running';
                 $run['status_reason'] = null;
             } elseif (in_array($status, ['queued', 'pending', 'accepted'], true)) {
@@ -1500,6 +1539,7 @@ final class RunHandler implements OperationHandler
                 }
                 $run['status_reason'] = 'T3 wartet auf eine Eingabe. Berechtigungsanfragen müssen in T3 beantwortet werden.';
             } elseif (in_array($status, ['completed', 'succeeded', 'success'], true)) {
+                unset($run['_cancel_intent']);
                 $run['state'] = 'verifying';
                 $attempt['ended_at'] = $this->store->now();
                 $attempts = $run['attempts'];
@@ -1507,6 +1547,7 @@ final class RunHandler implements OperationHandler
                 $run['attempts'] = $attempts;
                 $run['status_reason'] = 'T3 hat den Lauf beendet. Die passende Agentmeldung und die Phasenregeln werden noch abgeglichen.';
             } elseif (in_array($status, ['failed', 'error'], true)) {
+                unset($run['_cancel_intent']);
                 $run['state'] = 'failed';
                 $run['status_reason'] = 'T3 hat einen Fehler gemeldet.';
                 $attempt['ended_at'] = $this->store->now();
@@ -1514,6 +1555,7 @@ final class RunHandler implements OperationHandler
                 $attempts[$attempt['attempt_no'] - 1] = $attempt;
                 $run['attempts'] = $attempts;
             } elseif (in_array($status, ['cancelled', 'canceled', 'interrupted'], true)) {
+                unset($run['_cancel_intent']);
                 $run['state'] = 'cancelled';
                 $run['status_reason'] = 'T3 hat den Abbruch bestätigt.';
                 $attempt['ended_at'] = $this->store->now();
@@ -1549,9 +1591,21 @@ final class RunHandler implements OperationHandler
     private function performCancel(string $runId): void
     {
         $run = $this->record('runs', $runId);
+        if (!in_array($run['state'], self::ACTIVE_RUN_STATES, true)) {
+            return;
+        }
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
+        $cancelIntent = $run['_cancel_intent'] ?? null;
+        if (!is_array($cancelIntent) || (int) ($cancelIntent['attempt_no'] ?? 0) !== (int) $run['attempt_no']) {
+            $run = $this->requestCancellation($run, (string) ($run['status_reason'] ?? 'T3-Abbruch angefordert.'), 'run.cancel_intent_recorded');
+            $cancelIntent = $run['_cancel_intent'];
+        }
+        if ('awaiting_confirmation' === ($cancelIntent['state'] ?? null)) {
+            return;
+        }
         if (null === $attempt['external_thread_id'] || null === $attempt['external_dispatch_run_id']) {
             $run['_cancel_requested_unknown_external'] = true;
+            $run['_cancel_intent']['state'] = 'unknown_external';
             $run['state'] = 'reconciling';
             $run['status_reason'] = 'Der externe Startausgang ist ungeklärt. Abbruchwirkung wird vor einer Freigabe des Ausführungsplatzes abgeglichen.';
             $this->store->save('runs', $run, 'run.cancel_reconciliation_required');
@@ -1576,7 +1630,7 @@ final class RunHandler implements OperationHandler
         }
         $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
         try {
-            $this->bridge->interrupt($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], (string) $attempt['external_dispatch_run_id']);
+            $interrupt = $this->bridge->interrupt($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], (string) $attempt['external_dispatch_run_id']);
         } catch (T3BridgeException $exception) {
             $this->setRunBridgeFailure($run, $exception);
             if (!$exception->authenticationFailure) {
@@ -1585,7 +1639,59 @@ final class RunHandler implements OperationHandler
 
             return;
         }
-        $this->store->enqueue('run.observe', ['run_id' => $runId]);
+        $interruptStatus = strtolower((string) ($interrupt['status'] ?? ''));
+        $interruptMatchesAttempt = ($interrupt['threadId'] ?? null) === $attempt['external_thread_id']
+            && ($interrupt['runId'] ?? null) === $attempt['external_dispatch_run_id'];
+        $startedIntentState = $cancelIntent['state'] ?? null;
+        $this->store->atomic(function () use ($runId, $attempt, $cancelIntent, $startedIntentState, $interruptStatus, $interruptMatchesAttempt): void {
+            $current = $this->record('runs', $runId);
+            if (!in_array($current['state'], self::ACTIVE_RUN_STATES, true)) {
+                return;
+            }
+            $currentIntent = $current['_cancel_intent'] ?? null;
+            if (!is_array($currentIntent) || ($currentIntent['id'] ?? null) !== ($cancelIntent['id'] ?? null)) {
+                return;
+            }
+            $currentAttempt = $this->attempt($current, (int) $current['attempt_no']);
+            if ($currentAttempt['external_thread_id'] !== $attempt['external_thread_id']
+                || $currentAttempt['external_dispatch_run_id'] !== $attempt['external_dispatch_run_id']) {
+                return;
+            }
+            $replyConfirmsCancellation = $interruptMatchesAttempt && in_array($interruptStatus, ['cancelled', 'canceled', 'interrupted'], true);
+            if ('awaiting_confirmation' === ($currentIntent['state'] ?? null)) {
+                $alreadyConfirmed = in_array($currentIntent['interrupt_status'] ?? null, ['cancelled', 'canceled', 'interrupted'], true);
+                if (!$alreadyConfirmed && $replyConfirmsCancellation) {
+                    $current['_cancel_intent']['interrupt_status'] = $interruptStatus;
+                }
+            } elseif (($currentIntent['state'] ?? null) === $startedIntentState) {
+                $current['_cancel_intent']['state'] = 'awaiting_confirmation';
+                $current['_cancel_intent']['interrupt_status'] = $interruptMatchesAttempt && '' !== $interruptStatus ? $interruptStatus : null;
+                $current['_cancel_intent']['interrupt_sent_at'] = $this->store->now();
+                $current['state'] = 'cancel_requested';
+            } else {
+                return;
+            }
+            $this->store->save('runs', $current, 'run.cancel_awaiting_confirmation');
+            $this->store->enqueue('run.observe', ['run_id' => $runId]);
+        });
+    }
+
+    /** @param array<string, mixed> $run @return array<string, mixed> */
+    private function requestCancellation(array $run, string $reason, string $event): array
+    {
+        $attemptNo = (int) $run['attempt_no'];
+        $intent = $run['_cancel_intent'] ?? null;
+        if (!is_array($intent) || (int) ($intent['attempt_no'] ?? 0) !== $attemptNo) {
+            $run['_cancel_intent'] = [
+                'id' => $this->store->id(),
+                'attempt_no' => $attemptNo,
+                'state' => 'requested',
+            ];
+        }
+        $run['state'] = 'cancel_requested';
+        $run['status_reason'] = $reason;
+
+        return $this->store->save('runs', $run, $event);
     }
 
     /** Request confirmed T3 cancellation for active runs owned by a draining provider. */
@@ -1607,9 +1713,7 @@ final class RunHandler implements OperationHandler
                 }
 
                 $run['_provider_drain_cancel_requested'] = true;
-                $run['state'] = 'cancel_requested';
-                $run['status_reason'] = $reason;
-                $this->store->save('runs', $run, 'run.provider_drain_cancel_requested');
+                $this->requestCancellation($run, $reason, 'run.provider_drain_cancel_requested');
                 $this->store->enqueue('run.cancel', ['run_id' => $run['id']]);
                 ++$requested;
             }
