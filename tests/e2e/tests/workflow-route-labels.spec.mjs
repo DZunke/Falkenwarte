@@ -413,7 +413,8 @@ test('topic labels select one route, while ambiguity or a missing route waits fo
     const defaultTargetRunId = withDefault.run_ids[1];
     const defaultTargetRun = await runningRun(ownerApi, defaultTargetRunId);
     expect(defaultTargetRun).toMatchObject({ stage: 'default', snapshot: { stage_name: 'Redaktionelle Klärung' } });
-    expect(withDefault.selected_transitions.at(-1)).toMatchObject({ route_label_id: null, to_stage_id: 'default' });
+    const defaultFlow = await taskFlow(ownerApi, defaultTask.id, defaultInstance.id);
+    expect(defaultFlow.selected_transitions.at(-1)).toMatchObject({ route_label_id: null, to_stage_id: 'default' });
     await submitReport(ownerApi, reporter.agent, defaultTargetRunId, { summary: 'Die Standardklärung ist abgeschlossen.' });
     await readUntil(ownerApi, `/workflow-instances/${defaultInstance.id}`, (current) => current.state === 'succeeded', 'Die Standardphase muss abschließen.');
 
@@ -436,7 +437,8 @@ test('topic labels select one route, while ambiguity or a missing route waits fo
     const correctedRouteRunId = resumedConflict.run_ids[1];
     const correctedRouteRun = await runningRun(ownerApi, correctedRouteRunId);
     expect(correctedRouteRun).toMatchObject({ stage: 'discovery', snapshot: { agent_profile_id: discovery.id } });
-    expect(resumedConflict.selected_transitions.at(-1)).toMatchObject({ route_label_id: labelA.id, route_label_name: labelA.name, to_stage_id: 'discovery' });
+    const correctedConflictFlow = await taskFlow(ownerApi, conflictTask.id, conflictInstance.id);
+    expect(correctedConflictFlow.selected_transitions.at(-1)).toMatchObject({ route_label_id: labelA.id, route_label_name: labelA.name, to_stage_id: 'discovery' });
     expect((await ownerApi.get(`/tasks/${conflictTask.id}`)).data.status_category).toBe('ready');
     expect(await taskOnBoardColumn(ownerApi, board.id, targets.ready.column_id, conflictTask.id)).toBe(true);
     await submitReport(ownerApi, reporter.agent, correctedRouteRunId, { summary: 'Die nach Korrektur eindeutige Discoveryroute ist abgeschlossen.' });
@@ -462,7 +464,8 @@ test('topic labels select one route, while ambiguity or a missing route waits fo
     const resumedMissing = await resumeWorkflow(ownerApi, pausedMissing);
     const missingTargetRunId = resumedMissing.run_ids[1];
     expect(await runningRun(ownerApi, missingTargetRunId)).toMatchObject({ stage: 'discovery', snapshot: { agent_profile_id: discovery.id } });
-    expect(resumedMissing.selected_transitions.at(-1)).toMatchObject({ route_label_id: labelA.id, route_label_name: labelA.name, to_stage_id: 'discovery' });
+    const correctedMissingFlow = await taskFlow(ownerApi, missingRouteTask.id, missingRouteInstance.id);
+    expect(correctedMissingFlow.selected_transitions.at(-1)).toMatchObject({ route_label_id: labelA.id, route_label_name: labelA.name, to_stage_id: 'discovery' });
     expect((await ownerApi.get(`/tasks/${missingRouteTask.id}`)).data.status_category).toBe('ready');
     await submitReport(ownerApi, reporter.agent, missingTargetRunId, { summary: 'Die nach Eigentümerkorrektur eindeutige Discoveryroute ist abgeschlossen.' });
     await readUntil(ownerApi, `/workflow-instances/${missingRouteInstance.id}`, (current) => current.state === 'succeeded', 'Die korrigierte Route ohne Standardweg muss abschließen.');

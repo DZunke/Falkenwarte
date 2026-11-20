@@ -136,6 +136,12 @@ async function openTaskOnBoard(ownerPage, title) {
   return { sheet, panel: sheet.getByRole('tabpanel', { name: 'Ausführung' }) };
 }
 
+async function readTask(ownerApi, createdTask) {
+  const result = await ownerApi.get(`/tasks/${createdTask.id}`);
+  expect(result.response.status(), JSON.stringify(result.data)).toBe(200);
+  return result.data;
+}
+
 async function closeTaskSheet(sheet) {
   await sheet.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(sheet).toBeHidden();
@@ -200,10 +206,10 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   expect(backlog).toBeTruthy();
   expect(ready).toBeTruthy();
   expect(active).toBeTruthy();
-  const rolelessTask = await ownerApi.createTask(setup.project.id, {
+  const rolelessTask = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, {
     title: `Phase ohne Rolle ${setup.suffix}`,
     status_id: ready.id,
-  });
+  }));
   const rolelessStart = await startWorkflow(ownerApi, rolelessTask, unfinishedWorkflow, setup.board.id);
   expect(rolelessStart.response.status(), JSON.stringify(rolelessStart.data)).toBe(409);
   expect(rolelessStart.data.code).toBe('workflow_profile_required');
@@ -213,7 +219,7 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   expect((await qaMocks.t3Journal()).accepted_launches).toHaveLength(0);
 
   const taskTitle = `Aufgabe mit manuellem Start ${setup.suffix}`;
-  const task = await ownerApi.createTask(setup.project.id, { title: taskTitle, status_id: backlog.id });
+  const task = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, { title: taskTitle, status_id: backlog.id }));
 
   await ownerPage.goto(`/#/project/${setup.project.id}/board`);
   await expect(ownerPage.getByRole('heading', { name: setup.project.name, exact: true })).toBeVisible();
@@ -266,11 +272,11 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   await closeTaskSheet(sheet);
 
   const manualTaskTitle = `Manuelles Ticket mit Route ${setup.suffix}`;
-  const manualTask = await ownerApi.createTask(setup.project.id, {
+  const manualTask = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, {
     title: manualTaskTitle,
     status_id: ready.id,
     label_ids: [manualLabel.id, workflowLabel.id],
-  });
+  }));
   await ownerPage.goto(`/#/project/${setup.project.id}/board`);
   const excluded = await ownerApi.get(`/tasks/${manualTask.id}/flow?board_id=${setup.board.id}`);
   expect(excluded.response.status(), JSON.stringify(excluded.data)).toBe(200);
@@ -343,8 +349,8 @@ test('overlapping board policies require an explicit board context', async ({ ow
   const secondBoard = secondBoardResponse.data;
   const ready = setup.statuses.find((status) => status.category === 'ready');
   expect(ready).toBeTruthy();
-  const firstTask = await ownerApi.createTask(setup.project.id, { title: `Board A ${setup.suffix}`, status_id: ready.id, label_ids: [requiredLabel.id] });
-  const secondTask = await ownerApi.createTask(setup.project.id, { title: `Board B ${setup.suffix}`, status_id: ready.id, label_ids: [requiredLabel.id] });
+  const firstTask = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, { title: `Board A ${setup.suffix}`, status_id: ready.id, label_ids: [requiredLabel.id] }));
+  const secondTask = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, { title: `Board B ${setup.suffix}`, status_id: ready.id, label_ids: [requiredLabel.id] }));
 
   const ambiguous = await ownerApi.get(`/tasks/${firstTask.id}/flow`);
   expect(ambiguous.response.status(), JSON.stringify(ambiguous.data)).toBe(200);
@@ -376,11 +382,11 @@ test('overlapping board policies require an explicit board context', async ({ ow
   const secondInstance = await readUntil(ownerApi, `/workflow-instances/${secondInstanceId}`, (item) => item.id === secondInstanceId, 'Der explizite zweite Boardkontext muss gestartet werden.');
   expect(secondInstance).toMatchObject({ workflow_id: secondWorkflow.id, definition_version: secondWorkflow.definition_version });
 
-  const nonMemberTask = await ownerApi.createTask(setup.project.id, {
+  const nonMemberTask = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, {
     title: `Nur Board A ${setup.suffix}`,
     status_id: ready.id,
     label_ids: [manualLabel.id],
-  });
+  }));
   const nonMemberFlow = await ownerApi.get(`/tasks/${nonMemberTask.id}/flow`);
   expect(nonMemberFlow.response.status(), JSON.stringify(nonMemberFlow.data)).toBe(200);
   expect(nonMemberFlow.data.board_workflow_policy).toMatchObject({
