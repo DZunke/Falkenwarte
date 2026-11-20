@@ -4,17 +4,19 @@ Diese Anleitung baut auf [Von der Einrichtung zur ersten Aufgabe](AGENTS_AND_WOR
 
 Lege zuerst in **Agentrollen** für dein Projekt die benötigten Rollen an oder prüfe vorhandene Rollen auf aktive Projektfreigabe, T3-Verbindung und **Konfiguration bereit**. Jede verwendete Providerinstanz braucht außerdem einen MCP-Zugang zu Falkenwarte, damit ihr Agent Aufgaben lesen und Ergebnisse melden kann. Richte zusätzliche Provider nach deren eigenem MCP-Konfigurationsformat ein und prüfe jeden Zugang mit dem Lesetest aus der Erstanleitung, bevor du die Rolle im Workflow einplanst.
 
+Lade unter **Agents & T3 → Skill herunterladen** den aktuellen Falkenwarte-Skill und installiere ihn im gebundenen Projekt für die verwendeten Provider. Falls dort schon eine ältere Kopie liegt, ersetze deren `SKILL.md`. Die Anleitung erklärt dem Agenten, wie er den Auftrag der eigenen Phase liest, eine Rückfrage an die passende Rolle richtet und den nächsten Agenten über seine Ergebnisse informiert. [Skill im Zielprojekt installieren](AGENT_SKILL.md#im-zielprojekt-installieren)
+
 ## 1. Eine Workflowvorlage anlegen
 
-Öffne in der Hauptnavigation **Workflows** und wähle das Projekt, für das du den Ablauf bauen willst. Gib im Abschnitt **Workflowvorlage anlegen** unter **Workflowname** zum Beispiel `DDD Discovery, Programmierung und Review` ein.
+Öffne in der Hauptnavigation **Workflows** und wähle das Projekt, für das du den Ablauf bauen willst. Gib im Abschnitt **Workflowvorlage anlegen** unter **Workflowname** zum Beispiel `DDD Discovery, Programmierung und Review` ein. Eine neue Vorlage enthält bereits eine **Arbeitsphase**, die du direkt ausfüllen kannst.
 
 ## 2. Drei Phasen mit je einer Rolle einrichten
 
-Klicke zweimal auf **Phase hinzufügen**, sodass drei Phasen in der gewünschten Reihenfolge stehen. Die erste Phase in der Liste beginnt den Ablauf. Eine neue Phase startet als **Arbeitsphase**. Wähle für die letzte Phase **Reviewphase**.
+Für dieses Beispiel klicke zweimal auf **Phase hinzufügen**, sodass drei Phasen in der gewünschten Reihenfolge stehen. Die erste Phase in der Liste beginnt den Ablauf. Jede neu hinzugefügte Phase startet als **Arbeitsphase**. Wähle für die letzte Phase **Reviewphase**.
 
 Fülle in jeder Phase **Name der Phase N**, **Art der Phase**, **Agentrolle für Phase N** und **Auftrag für diese Phase** aus. Eine Rolle muss für das gewählte Projekt und dieselbe aktive T3-Verbindung freigegeben sein. Die Formulierungen in der Tabelle sind Beispiele, die du an deine Arbeitsweise anpasst.
 
-Du kannst eine Vorlage auch mit noch nicht belegten Rollen speichern und später vervollständigen. Einen Ticketlauf kannst du erst starten, wenn jede Phase eine startbereite Agentrolle hat; wenn du vor dem Weitergehen selbst entscheiden sollst, aktiviere zusätzlich **Menschliche Freigabe** für diese Phase.
+Du kannst eine Vorlage auch mit noch nicht belegten Rollen speichern und später vervollständigen. Einen Ticketlauf kannst du erst starten, wenn jede Phase eine startbereite Agentrolle hat. Wenn du vor dem Weitergehen selbst entscheiden sollst, aktiviere zusätzlich **Menschliche Freigabe** für diese Phase.
 
 | Reihenfolge | Art der Phase | Name der Phase N | Agentrolle für Phase N | Auftrag für diese Phase |
 | --- | --- | --- | --- | --- |
@@ -38,6 +40,8 @@ Beim Hinzufügen einer Phase ergänzt Falkenwarte einen Übergang **Angenommen**
 
 Verwende für einen Themenabzweig ausschließlich ein aktives Themenlabel, das zu deinem Projekt gehört. Eine im Phasenbericht ausdrücklich gewählte Route hat Vorrang vor Ticketlabels, auch wenn der Agent die **Standardroute** ausdrücklich wählt. Wenn der Bericht keine Route nennt, wählt Falkenwarte einen eindeutigen passenden Themenabzweig aus den aktiven Ticketlabels. Gibt es keinen passenden Labelabzweig, greift die **Standardroute**, sofern sie für das Ergebnis vorhanden ist.
 
+Ein Themenabzweig wählt das nächste Ziel und fordert für sich allein keine menschliche Freigabe an. Führt er in eine bereits besuchte frühere Phase, zählt dieser Rücksprung zur Reparaturgrenze, unabhängig davon, ob der Übergang gelabelt oder eine Standardroute ist.
+
 Hat ein Ticket mehrere passende Themenlabels mit verschiedenen Zielen, pausiert der Ablauf zur Klärung. Das gilt auch, wenn es für ein Ergebnis nur gelabelte Alternativen gibt und weder Bericht noch Ticketlabel eine davon bestimmen. Öffne dann **Ablauf**, lies den Pausegrund und prüfe die angebotenen Routen im letzten Phasenbericht.
 
 ## 4. Optionale Phasenfreigaben und Überarbeitungsrunden festlegen
@@ -46,13 +50,13 @@ Aktiviere **Menschliche Freigabe** für eine Phase, wenn du ihren Bericht prüfe
 
 Bei einer Phase mit Freigabepflicht fordert der Phasenlauf weiterhin eine Entscheidung an. Öffne dafür im Ticket **Ausführung**, wähle den Phasenlauf, lies den Bericht und klicke auf **Freigabe anfordern**. Entscheide die offene Freigabe anschließend unter **Entscheidungen**. Bereits gespeicherte Eingangsbedingungen bleiben sichtbar und erhalten, lassen sich im Editor aber nicht als freie Ausdrücke neu formulieren.
 
-Lege unter **Automatische Überarbeitungsrunden** einen Wert von `0` bis `20` fest. Er bestimmt, wie oft eine konfigurierte **Änderungen nötig**-Route ohne neue Eigentümerentscheidung zurücklaufen darf. Bei `0` wartet bereits die erste solche Rückkehr auf deine Entscheidung. Wenn das eingestellte Limit erreicht ist, prüfst du den letzten Bericht und kannst eine zusätzliche Runde mit Hinweis freigeben oder den Workflow abbrechen.
+Lege unter **Automatische Überarbeitungsrunden** einen Wert von `0` bis `20` fest. Jedes Ergebnis **Änderungen nötig** und jeder Rücksprung in eine bereits besuchte frühere Phase zählt, auch über eine Standardroute. Bis zum Limit kann Falkenwarte solche Runden automatisch fortsetzen. Bei `0` wartet die erste Runde auf deine Entscheidung. Am Limit prüfst du den letzten Bericht und kannst eine einzelne zusätzliche Runde mit Hinweis freigeben oder den Workflow abbrechen.
 
 ## 5. Vorlage speichern und Version prüfen
 
 Klicke auf **Workflow anlegen**. In **Workflows und laufende Instanzen** siehst du den Namen, die aktive Version und die Phasen. Die Vorlage startet damit keinen Agenten.
 
-Wenn du später Änderungen vornehmen willst, öffne **Workflow bearbeiten** und speichere sie mit **Workflowversion speichern**. Das erzeugt eine neue Version. Bereits gestartete Abläufe verwenden weiterhin ihre gespeicherte Version, bis du sie ausdrücklich pausierst oder abbrichst.
+Wenn du später Änderungen vornehmen willst, öffne **Workflow bearbeiten** und speichere sie mit **Workflowversion speichern**. Das erzeugt eine neue Version. Bereits gestartete Abläufe behalten ihre gespeicherte Version auch beim Pausieren und Fortsetzen. Neue Starts verwenden die aktuelle Version.
 
 ## 6. Eine Vorlage als Boardstandard auswählen
 
@@ -80,9 +84,9 @@ Unter **Ausführungen** siehst du den neuen Ablauf. **Start wird übertragen** z
 
 Öffne den Lauf der empfangenden Phase und klicke auf **Übergabeprotokoll ansehen**. Dort liest du den Bericht, offene Fragen und Links, die diese Rolle zu Beginn erhalten hat. Falkenwarte speichert die Übergabe mit dem Quellbericht und dem beim Übergang gültigen Stand.
 
-Wenn eine Phase pausiert oder blockiert ist, lies den Grund unter **Ablauf**. Eine menschliche Freigabe findest du unter **Entscheidungen**. Bei **Änderungen nötig** geht der Ablauf über die konfigurierte Route zurück und kann eine weitere Überarbeitungsrunde beginnen.
+Wenn eine Phase pausiert oder blockiert ist, lies den Grund unter **Ablauf**. Eine menschliche Freigabe findest du unter **Entscheidungen**. Bei **Änderungen nötig** geht der Ablauf über die konfigurierte Route zurück und zählt als Überarbeitungsrunde.
 
-Wenn das Überarbeitungslimit erreicht ist oder ein Agent eine passende Themenroute vorschlägt, prüfe den letzten Bericht und die angebotenen Übergänge im Ticket. Für eine zusätzliche Runde trägst du unter **Hinweis für die nächste Überarbeitung** ein, was der Agent berücksichtigen soll, und klickst auf **Eine Überarbeitung freigeben**. Dein Hinweis erscheint in der Übergabe der nächsten Phase. Wenn du nicht fortfahren willst, kannst du den Workflow mit einer Begründung **Workflow abbrechen**.
+Wenn das Überarbeitungslimit erreicht ist, prüfe den letzten Bericht und die angebotene Rückroute im Ticket. Für eine zusätzliche Runde trägst du unter **Hinweis für die nächste Überarbeitung** ein, was der Agent berücksichtigen soll, und klickst auf **Eine Überarbeitung freigeben**. Dein Hinweis erscheint in der Übergabe der nächsten Phase. Wenn du nicht fortfahren willst, kannst du den Workflow mit einer Begründung **Workflow abbrechen**.
 
 ## 10. Workflow und Ticket abschließen
 

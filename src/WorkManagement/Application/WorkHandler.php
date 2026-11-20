@@ -29,6 +29,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         public Store $store,
         private readonly TaskIntake $intake,
         private readonly BoardWipPolicy $wipPolicy,
+        private readonly BoardWorkflowPolicyReader $boardWorkflowPolicy,
         private readonly TaskCompletionPolicy $completionPolicy,
         private readonly TaskLinkPolicy $linkPolicy,
         private readonly PluginAvailability $plugins,
@@ -1798,20 +1799,8 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
             || (null !== ($workflow['project_id'] ?? null) && $workflow['project_id'] !== $projectId)) {
             throw new Problem(422, 'validation_failed', 'Die Board-Workflowrichtlinie muss auf einen aktivierten Workflow dieses Projekts verweisen.');
         }
-        $binding = $this->agentCatalog->bindingForProject($projectId);
-        if (null === $binding) {
-            throw new Problem(422, 'board_workflow_roles_unavailable', 'Ein Boardworkflow benötigt eine aktive T3-Projektbindung.');
-        }
-        foreach ($workflow['stages'] as $stage) {
-            $profileId = $stage['agent_profile_id'] ?? null;
-            $profile = is_string($profileId) ? $this->store->find('agent_profiles', $profileId) : null;
-            if (null === $profile
-                || empty($profile['enabled'])
-                || empty($profile['configuration_valid'])
-                || ($profile['connection_id'] ?? null) !== ($binding['connection_id'] ?? null)
-                || !$this->agentCatalog->profileAllowsProject($profile, $projectId)) {
-                throw new Problem(422, 'board_workflow_roles_unavailable', 'Jede Phase eines Boardworkflows benötigt ein startbereites Rollenprofil derselben aktiven T3-Projektbindung.');
-            }
+        if (!$this->boardWorkflowPolicy->isReadyForBoard($workflow, $projectId)) {
+            throw new Problem(422, 'board_workflow_roles_unavailable', 'Jede Phase eines Boardworkflows benötigt ein startbereites Rollenprofil derselben aktiven T3-Projektbindung.');
         }
         $manualLabelId = $workflowPolicy['manual_label_id'] ?? null;
         if (null !== $manualLabelId) {

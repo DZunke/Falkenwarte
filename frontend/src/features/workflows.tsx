@@ -51,13 +51,25 @@ function defaultRunCompletionPolicy(): components['schemas']['RunCompletionPolic
 }
 
 function defaultWorkflowDraft(): WorkflowWriteDraft {
-  const policy = defaultRunCompletionPolicy()
-
   return {
     project_id: null,
     name: '',
-    preset_id: 'two-stage-review',
+    preset_id: 'manual',
     enabled: true,
+    stages: [
+      { id: 'work', kind: 'agent_run', name: 'Bearbeitung', agent_profile_id: null, entry_conditions: [], run_completion_policy: defaultRunCompletionPolicy() },
+    ],
+    transitions: [],
+    limits: { max_repair_rounds: 2, max_depth: 3, max_parallel_runs: 1, max_total_seconds: 86400 },
+  }
+}
+
+function twoStageWorkflowDraft(): WorkflowWriteDraft {
+  const policy = defaultRunCompletionPolicy()
+
+  return {
+    ...defaultWorkflowDraft(),
+    preset_id: 'two-stage-review',
     stages: [
       { id: 'work', kind: 'agent_run', name: 'Bearbeitung', agent_profile_id: null, entry_conditions: [], run_completion_policy: { ...policy } },
       { id: 'review', kind: 'review', name: 'Reviewmeldung', agent_profile_id: null, entry_conditions: [{ type: 'run_succeeded' }], run_completion_policy: { ...policy, require_human_phase_decision: true } },
@@ -66,7 +78,6 @@ function defaultWorkflowDraft(): WorkflowWriteDraft {
       { from_stage_id: 'work', to_stage_id: 'review', on: 'accepted', conditions: [] },
       { from_stage_id: 'review', to_stage_id: 'work', on: 'needs_changes', conditions: [] },
     ],
-    limits: { max_repair_rounds: 2, max_depth: 3, max_parallel_runs: 1, max_total_seconds: 86400 },
   }
 }
 
@@ -237,6 +248,7 @@ export default function WorkflowsView() {
   const [projectId, setProjectId] = useState('')
   const [workflowName, setWorkflowName] = useState('')
   const [createDraft, setCreateDraft] = useState<WorkflowWriteDraft>(defaultWorkflowDraft)
+  const [createDraftTouched, setCreateDraftTouched] = useState(false)
   const [editingWorkflow, setEditingWorkflow] = useState<WorkflowEditorState | null>(null)
   const [loadingWorkflowId, setLoadingWorkflowId] = useState('')
   const [routeLabelId, setRouteLabelId] = useState('')
@@ -333,6 +345,7 @@ export default function WorkflowsView() {
     onSuccess: async () => {
       setWorkflowName('')
       setCreateDraft(defaultWorkflowDraft())
+      setCreateDraftTouched(false)
       await refresh()
       toast.success('Workflow angelegt')
     },
@@ -340,7 +353,14 @@ export default function WorkflowsView() {
   })
 
   const updateCreateDraft = (stages: WorkflowStageEditorStage[], transitions: WorkflowStageEditorTransition[]) => {
+    setCreateDraftTouched(true)
     setCreateDraft((current) => ({ ...current, stages, transitions }))
+  }
+
+  const useTwoStageTemplate = () => {
+    if (createDraftTouched || workflowName.trim()) return
+    setCreateDraft(twoStageWorkflowDraft())
+    setCreateDraftTouched(true)
   }
 
   const selectProject = (nextProjectId: string) => {
@@ -480,8 +500,18 @@ export default function WorkflowsView() {
           <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="size-4 text-muted-foreground" />Workflowvorlage anlegen</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5"><Label htmlFor="workflow-project">Projekt</Label><Select value={selectedProjectId} onValueChange={selectProject}><SelectTrigger id="workflow-project"><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
-            <div className="space-y-1.5"><Label htmlFor="workflow-name">Workflowname</Label><Input id="workflow-name" value={workflowName} onChange={(event) => setWorkflowName(event.target.value)} placeholder="Bearbeitung mit Reviewmeldung" maxLength={120} /></div>
-            <div className="space-y-1.5"><Label htmlFor="workflow-repair-limit">Automatische Überarbeitungsrunden</Label><Input id="workflow-repair-limit" type="number" min={0} max={20} step={1} value={createDraft.limits.max_repair_rounds} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 20) setCreateDraft((current) => ({ ...current, limits: { ...current.limits, max_repair_rounds: value } })) }} /><p className="text-xs text-muted-foreground">0 bedeutet: Eine konfigurierte Rückkehr wegen „Änderungen nötig“ wartet schon vor der ersten automatischen Überarbeitung auf eine Eigentümerentscheidung. Nach Erreichen des Limits kann der Eigentümer mit Begründung eine zusätzliche Runde freigeben.</p></div>
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-name">Workflowname</Label>
+              <Input
+                id="workflow-name"
+                value={workflowName}
+                onChange={(event) => { setWorkflowName(event.target.value); setCreateDraftTouched(true) }}
+                placeholder="Zum Beispiel Discovery, Umsetzung und Review"
+                maxLength={120}
+              />
+            </div>
+            {!createDraftTouched && !workflowName.trim() && <Button type="button" variant="outline" onClick={useTwoStageTemplate}><GitBranch />Zwei-Phasen-Vorlage verwenden</Button>}
+            <div className="space-y-1.5"><Label htmlFor="workflow-repair-limit">Automatische Überarbeitungsrunden</Label><Input id="workflow-repair-limit" type="number" min={0} max={20} step={1} value={createDraft.limits.max_repair_rounds} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 20) { setCreateDraft((current) => ({ ...current, limits: { ...current.limits, max_repair_rounds: value } })); setCreateDraftTouched(true) } }} /><p className="text-xs text-muted-foreground">0 bedeutet: Eine konfigurierte Rückkehr wegen „Änderungen nötig“ wartet schon vor der ersten automatischen Überarbeitung auf eine Eigentümerentscheidung. Nach Erreichen des Limits kann der Eigentümer mit Begründung eine zusätzliche Runde freigeben.</p></div>
             <WorkflowAvailability projectId={selectedProjectId} bindingQuery={createBindingQuery} eligibleProfiles={eligibleCreateProfiles} />
             {createBoardsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektboards konnten nicht geladen werden; neue Boardziele sind nicht verfügbar.</span><Button size="sm" variant="link" onClick={() => void createBoardsQuery.refetch()}>Boards erneut laden</Button></div>}
             {createLabelsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektthemenlabels konnten nicht geladen werden; nur Standardübergänge sind auswählbar.</span><Button size="sm" variant="link" onClick={() => void createLabelsQuery.refetch()}>Labels erneut laden</Button></div>}

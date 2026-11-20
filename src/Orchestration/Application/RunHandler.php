@@ -991,6 +991,11 @@ final class RunHandler implements OperationHandler
         if ([] === $workflow['stages']) {
             throw new Problem(409, 'workflow_definition_invalid', 'Der Workflow enthält keine startbare Phase.');
         }
+        foreach ($workflow['stages'] as $stage) {
+            if ('manual' !== $stage['kind'] && null === $stage['agent_profile_id']) {
+                throw new Problem(409, 'workflow_profile_required', sprintf('Weise der Phase „%s“ eine Agentrolle zu und starte die neue Workflowversion.', $stage['name']));
+            }
+        }
         foreach ($this->store->all('workflow_instances', (string) $task['project_id']) as $instance) {
             if ($instance['task_id'] === $taskId && in_array($instance['state'], ['queued', 'running', 'paused'], true)) {
                 throw new Problem(409, 'workflow_already_active', 'Für diese Aufgabe läuft bereits ein Workflow.');
@@ -2383,10 +2388,13 @@ final class RunHandler implements OperationHandler
             return;
         }
         $stageOrder = array_flip(array_column($workflow['stages'], 'id'));
-        $labelReturnsToEarlierPhase = isset($transition['route_label_id'])
-            && $stageOrder[$transition['to_stage_id']] <= $stageOrder[$transition['from_stage_id']]
+        $targetStagePosition = $stageOrder[$transition['to_stage_id']] ?? null;
+        $sourceStagePosition = $stageOrder[$transition['from_stage_id']] ?? null;
+        $returnsToVisitedEarlierPhase = null !== $targetStagePosition
+            && null !== $sourceStagePosition
+            && $targetStagePosition < $sourceStagePosition
             && in_array($transition['to_stage_id'], array_column($runs, 'stage'), true);
-        $isRepair = 'needs_changes' === $outcome || $labelReturnsToEarlierPhase;
+        $isRepair = 'needs_changes' === $outcome || $returnsToVisitedEarlierPhase;
         $authorizedRepair = $instance['_authorized_repair'] ?? null;
         $repairRoute = array_intersect_key($transition, array_flip(['to_stage_id', 'on', 'route_label_id']));
         $hasOwnerAuthorization = ($authorizedRepair['run_id'] ?? null) === $latest['id'] && $authorizedRepair['route'] === $repairRoute;

@@ -95,7 +95,7 @@ final readonly class StoredBoardWorkflowPolicyReader implements BoardWorkflowPol
         }
 
         $workflow = $this->store->find('workflows', $candidate['workflow_id']);
-        if (null === $workflow || !$this->boardWorkflowReady($workflow, $projectId)) {
+        if (null === $workflow || !$this->isReadyForBoard($workflow, $projectId)) {
             return $this->projection('unavailable', $candidate['board_id'], $candidate['workflow_id'], $candidate['definition_version'], 'Der Board-Workflow benötigt eine aktive Definition mit startbereiten Rollen für alle Phasen.');
         }
 
@@ -133,7 +133,7 @@ final readonly class StoredBoardWorkflowPolicyReader implements BoardWorkflowPol
     }
 
     /** @param array<string, mixed> $workflow */
-    private function boardWorkflowReady(array $workflow, string $projectId): bool
+    public function isReadyForBoard(array $workflow, string $projectId): bool
     {
         if ((null !== ($workflow['project_id'] ?? null) && $workflow['project_id'] !== $projectId)
             || empty($workflow['enabled'])
@@ -191,13 +191,8 @@ final readonly class StoredBoardWorkflowPolicyReader implements BoardWorkflowPol
         if (($board['project_id'] ?? null) !== ($task['project_id'] ?? null) || !is_array($board['config']['filter'] ?? null)) {
             return false;
         }
-        $filter = $board['config']['filter'];
-        $manualLabelId = $board['config']['workflow_policy']['manual_label_id'] ?? null;
-        if (is_string($manualLabelId) && in_array($manualLabelId, $task['label_ids'] ?? [], true)) {
-            unset($filter['label_ids']);
-        }
         foreach ($board['columns'] ?? [] as $column) {
-            if (is_array($column) && in_array($task['status_id'] ?? null, $column['status_ids'] ?? [], true) && $this->boardWipPolicy->matchesFilter($task, $filter)) {
+            if (is_array($column) && in_array($task['status_id'] ?? null, $column['status_ids'] ?? [], true) && $this->boardWipPolicy->matchesFilter($task, $board['config']['filter'])) {
                 return true;
             }
         }
