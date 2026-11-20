@@ -8,26 +8,25 @@ ARG COMPOSER_IMAGE=composer:2.9.8@sha256:b09bccd91a78fe8a9ab4b33d707b862e8fe54fe
 ARG PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
 
 FROM ${NODE_IMAGE} AS frontend
-WORKDIR /workspace
-COPY frontend/package.json frontend/package-lock.json frontend/
-RUN npm --prefix frontend ci --no-audit --no-fund
-COPY frontend/ frontend/
-COPY contracts/ contracts/
-RUN npm --prefix frontend run generate:api && npm --prefix frontend run build
-RUN npm --prefix frontend sbom --sbom-format=cyclonedx --sbom-type=application --omit=dev --package-lock-only > /tmp/falkenwarte-frontend-sbom.cdx.json
+COPY frontend/package.json frontend/package-lock.json /workspace/frontend/
+RUN npm --prefix /workspace/frontend ci --no-audit --no-fund
+COPY frontend/ /workspace/frontend/
+COPY contracts/ /workspace/contracts/
+RUN npm --prefix /workspace/frontend run generate:api && npm --prefix /workspace/frontend run build
+RUN npm --prefix /workspace/frontend sbom --sbom-format=cyclonedx --sbom-type=application --omit=dev --package-lock-only > /tmp/falkenwarte-frontend-sbom.cdx.json
 RUN node --input-type=commonjs -e 'const fs = require("node:fs"); const path = "/tmp/falkenwarte-frontend-sbom.cdx.json"; const bom = JSON.parse(fs.readFileSync(path, "utf8")); if (bom.bomFormat !== "CycloneDX" || !Array.isArray(bom.components)) process.exit(1); fs.writeFileSync(path, JSON.stringify({bomFormat: bom.bomFormat, components: bom.components}) + "\n");'
 
 FROM ${COMPOSER_IMAGE} AS composer
 
 FROM ${FRANKENPHP_IMAGE} AS app
 ARG FRANKENPHP_IMAGE
-ARG SOURCE_DATE_EPOCH
 ARG SQLITE_VERSION=3510300
 ARG SQLITE_SHA256=81f5be397049b0cae1b167f2225af7646fc0f82e4a9b3c48c9ea3a533e21d77a
 
 USER root
 ARG DEBIAN_SNAPSHOT=20261104T212339Z
 RUN set -eux; \
+    export SOURCE_DATE_EPOCH=0; \
     source_file=/etc/apt/sources.list.d/debian.sources; \
     test -f "$source_file"; \
     grep -Fq "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" "$source_file"; \
@@ -46,6 +45,7 @@ RUN setcap -r /usr/local/bin/frankenphp \
     && test -z "$(getcap /usr/local/bin/frankenphp)"
 
 RUN set -eux; \
+    export SOURCE_DATE_EPOCH=0; \
     archive="/tmp/sqlite-autoconf-${SQLITE_VERSION}.tar.gz"; \
     curl -fsSL "https://sqlite.org/2026/sqlite-autoconf-${SQLITE_VERSION}.tar.gz" -o "$archive"; \
     echo "${SQLITE_SHA256}  ${archive}" | sha256sum -c -; \
@@ -73,17 +73,20 @@ ENV APP_ENV=prod \
     MERCURE_PUBLIC_URL=https://localhost:8443/.well-known/mercure \
     MERCURE_INTERNAL_URL=http://127.0.0.1:8080/.well-known/mercure
 
+COPY --from=composer /usr/bin/composer /usr/local/bin/composer
+COPY composer.json composer.lock /app/
+COPY packages/link-notes/ /app/packages/link-notes/
+COPY packages/t3-mcp-bridge/manifest.json /app/packages/t3-mcp-bridge/manifest.json
+RUN composer install --working-dir=/app --no-dev --no-interaction --no-progress --prefer-dist --no-scripts --no-autoloader
+
 WORKDIR /app
 ARG VCS_REF=unknown
 # x-release-please-start-version
 ARG APP_VERSION=0.2.2
 # x-release-please-end
+ARG SOURCE_DATE_EPOCH
 ARG DEBIAN_SNAPSHOT=20261104T212339Z
-COPY --from=composer /usr/bin/composer /usr/local/bin/composer
-COPY composer.json composer.lock version.txt ./
-COPY packages/link-notes/ packages/link-notes/
-COPY packages/t3-mcp-bridge/manifest.json packages/t3-mcp-bridge/manifest.json
-RUN composer install --no-dev --no-interaction --no-progress --prefer-dist --no-scripts --no-autoloader
+COPY version.txt version.txt
 COPY .env .env
 COPY bin/ bin/
 COPY config/ config/
@@ -103,6 +106,7 @@ RUN composer dump-autoload --no-dev --classmap-authoritative --no-scripts \
     && rm -rf var/cache/* \
     && mkdir -p /usr/share/falkenwarte/image-audit \
     && php scripts/build-image-inventory.php --output=/usr/share/falkenwarte/image-audit --revision="$VCS_REF" --app-version="$APP_VERSION" --debian-snapshot="$DEBIAN_SNAPSHOT" --source-date-epoch="$SOURCE_DATE_EPOCH" --frankenphp-image="$FRANKENPHP_IMAGE" \
+    && touch -d "@$SOURCE_DATE_EPOCH" /app/composer.lock /usr/share/falkenwarte/image-audit/runtime-evidence.json \
     && rm -f /tmp/falkenwarte-frontend-sbom.cdx.json \
     && rm -f /usr/local/bin/composer \
     && mkdir -p /data /certs /app/var/cache /app/var/log \

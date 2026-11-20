@@ -17,7 +17,13 @@ Ein Szenario lädt den benötigten Owner-Kontext mit `loadOwnerFixtureContext`. 
 
 Der QA-Stack hält T3 und Decisions als getrennte HTTP-Dienste außerhalb des PHP-Prozesses. Dadurch prüft ein Test die echte Client- und Anwendungslogik, während Antworten und Fehler kontrolliert bleiben. Unerwartete Mockaufrufe werden aufgezeichnet und können nicht durch einen pauschalen Erfolgsstub verdeckt werden.
 
-`scripts/ci-e2e.sh` startet ein eigenes Compose-Projekt und setzt vor jedem Browserfall Testdatenbank, Mercure-Replaydaten und Mockzustand zurück. Ein direkter Playwright-Aufruf lässt den Zustand des bereits laufenden Stacks bestehen. Für einen reproduzierbaren vollständigen Lauf verwende `make e2e`.
+`scripts/ci-e2e.sh` startet ein eigenes Compose-Projekt für die Browsersuite. App-Container und beide HTTP-Mocks laufen über mehrere Fälle. Der Browser-Runner fordert den Reset über den Test-Harness auf dem Host an.
+
+Vor jedem Fall beendet der Harness die Prozessgruppe aus FrankenPHP mit Mercure, Messenger-Worker und Wartungsprozess. Sobald alle Prozesse beendet sind, entfernt er SQLite samt Queue und Journaldateien, lokale Backups und den Mercure-Replayverlauf. Die TLS-CA bleibt erhalten. Der reguläre App-Entrypoint startet die Dienste im selben Container. Anschließend richtet der Test über HTTPS einen neuen Eigentümerzugang ein und leert die Journale der T3- und Decisions-Mocks.
+
+Die Fälle für Datenbeständigkeit und verlorenen Hub-Replayverlauf starten den App-Container ausdrücklich neu. Dabei bleiben SQLite und Backups erhalten, während Mercure mit leerem Verlauf startet. Der Produktions-Smoke-Test und die Plugin-Imagewechsel laufen in eigenen Compose-Projekten.
+
+Ein direkter Playwright-Aufruf ohne Kontrollpfad setzt den Appzustand nicht zurück. Für einen reproduzierbaren vollständigen Lauf verwende `make e2e`.
 
 Die Background-Suite unter `tests/BackgroundFunctional` bleibt von den Playwright-Szenarien getrennt. Sie verwendet den echten Symfony-Kernel und echte DBAL-Persistenz für gezielte Prozessabbrüche, Wiederzustellungen und Hintergrundverarbeitung.
 

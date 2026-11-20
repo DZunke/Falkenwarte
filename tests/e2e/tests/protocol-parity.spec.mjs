@@ -3,15 +3,21 @@ import { request } from '@playwright/test';
 import { createAgentSimulator, expect, OwnerApi, recordEvidence, test } from '../support/fixtures.mjs';
 import { resetStack } from '../support/reset-stack.mjs';
 
-test('A13 identical agent mutations and conflict semantics over JSON and MCP', async ({ baseURL }) => {
+test('A13 identical agent mutations and conflict semantics over JSON and MCP', async ({ baseURL, ownerApi }) => {
   test.setTimeout(135_000);
-  async function exercise(transport) {
+  async function exercise(transport, previousTaskId) {
     const ownerContext = await request.newContext({ baseURL });
     const login = await ownerContext.post('/api/v1/session', {
       data: { password: process.env.FALKENWARTE_QA_OWNER_PASSWORD ?? 'Falkenwarte-Test-Owner-Password-2026!' },
     });
     expect(login.status()).toBe(200);
     const owner = new OwnerApi(ownerContext, (await login.json()).csrf_token);
+    if (previousTaskId) {
+      const projects = await owner.get('/projects');
+      expect(projects.response.status()).toBe(200);
+      expect(projects.data.items).toHaveLength(0);
+      expect((await owner.get('/tasks/' + previousTaskId)).response.status()).toBe(404);
+    }
     const project = await owner.createProject({ name: 'Gemeinsame Fachregeln' });
     const issued = await owner.createTechnicalToken({
       label: 'Prüfender Agent', projectIds: [project.id], capabilities: ['tasks.read', 'tasks.write'],
@@ -47,8 +53,9 @@ test('A13 identical agent mutations and conflict semantics over JSON and MCP', a
       const revisions = history.data.items.filter((revision) => revision.actor.kind === 'agent');
       expect(revisions).toHaveLength(1);
       const titleChange = revisions[0].changes.find((item) => item.path === '/title');
-      return { title: updated.data.title, version: updated.data.version - before.version,
+      const outcome = { title: updated.data.title, version: updated.data.version - before.version,
         status: updated.data.status_category, titleChange, conflict: stale.data.code, actor: revisions[0].actor.kind };
+      return { taskId: task.id, outcome };
     } finally {
       await mcp.close();
       await http.dispose();
@@ -56,9 +63,16 @@ test('A13 identical agent mutations and conflict semantics over JSON and MCP', a
     }
   }
   const json = await exercise('http');
-  if (process.env.FALKENWARTE_STACK_CONTROL) await resetStack(process.env.FALKENWARTE_STACK_CONTROL);
-  const mcp = await exercise('mcp');
-  expect(mcp).toEqual(json);
-  expect(mcp.version).toBe(1);
+  const control = process.env.FALKENWARTE_STACK_CONTROL;
+  if (control) {
+    expect((await ownerApi.get('/session')).data.authenticated).toBe(true);
+    await resetStack(control);
+    const previousSession = await ownerApi.get('/session');
+    expect(previousSession.response.status()).toBe(200);
+    expect(previousSession.data.authenticated).toBe(false);
+  }
+  const mcp = await exercise('mcp', control ? json.taskId : undefined);
+  expect(mcp.outcome).toEqual(json.outcome);
+  expect(mcp.outcome.version).toBe(1);
   recordEvidence('Die gleiche Agentänderung erzeugt über beide Protokolle eine Revision und die gleiche Konfliktrückmeldung.', 'Ticketinhalt, Versionszuwachs, Status, Eigentümer-Historie mit Agent-Akteur, idempotentes Replay und veraltete Schreibversuche stimmten über JSON und MCP überein.');
 });

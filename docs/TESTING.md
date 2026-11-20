@@ -33,7 +33,7 @@ Starte die Anwendung mit `make app-up`, verfolge ihre Logs mit `make app-logs` u
 
 ## Browser-QA
 
-`make e2e` baut das produktionsnahe App-Image und startet den isolierten Docker-Compose-Testlauf mit Chromium sowie zustandsbehafteten T3- und Decisions-HTTP-Mocks. Die Tests verwenden die echte Anwendung und ihre Browser-, JSON- und MCP-Schnittstellen. Die Testdienste übernehmen die externen Aufrufe.
+`make e2e` baut das produktionsnahe App-Image, startet App und zustandsbehaftete T3- und Decisions-Mocks einmal pro Playwright-Suite und prüft die öffentlichen Browser-, JSON- und MCP-Schnittstellen mit Chromium und Playwright. Der [Fixture-Reset](QA_FIXTURES.md) gibt jedem Fall einen frischen Zustand im laufenden App-Container.
 
 `make plugin-upgrade` prüft den Plugin-Lebenszyklus über die Test- und Produktionsimages und erstellt Berichte für `plans`, `prepare`, `verify`, `readback` und `verify-after-readback`.
 

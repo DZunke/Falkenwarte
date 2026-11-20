@@ -34,7 +34,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with: {node-version: '24'}
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: qa/delivery/package-lock.json
       - run: npm ci --prefix qa/delivery --ignore-scripts --no-audit
       - name: Check commit identity and Conventional Commit title
         env:
@@ -58,8 +61,23 @@ jobs:
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
         with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
+      - &composer-cache-directory-step
+        name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+      - &composer-download-cache-step
+        name: Cache Composer downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with: {node-version: '24'}
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: make php-deps frontend-deps
       - run: make static
 
@@ -70,6 +88,8 @@ jobs:
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
         with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
+      - *composer-cache-directory-step
+      - *composer-download-cache-step
       - run: make php-deps
       - run: make docs
 
@@ -80,6 +100,8 @@ jobs:
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
         with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
+      - *composer-cache-directory-step
+      - *composer-download-cache-step
       - run: make php-deps
       - run: make background
 
@@ -107,14 +129,36 @@ jobs:
           grep -Eq 'Driver:[[:space:]]+docker-container' buildx-inspect.txt
           grep -Eq 'BuildKit version:[[:space:]]+v0\.35\.0([[:space:]]|$)' buildx-inspect.txt
           grep -F 'moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb' buildx-inspect.txt
-      - name: Build the Linux release image
+      - name: Prepare the canonical build context
+        id: source
         run: |
           set -euo pipefail
-          source_date_epoch="$(git log -1 --format=%ct)"
-          git -c tar.umask=0022 archive --format=tar "$FALKENWARTE_TEST_COMMIT" | \
-            docker buildx build --builder falkenwarte-release --file docker/Dockerfile --target app --provenance=false \
-            --build-arg VCS_REF="$FALKENWARTE_TEST_COMMIT" --build-arg SOURCE_DATE_EPOCH="$source_date_epoch" \
-            --build-arg APP_VERSION="$(cat version.txt)" --output "type=docker,name=$FALKENWARTE_IMAGE,dest=app-image.tar,rewrite-timestamp=true" -
+          mkdir app-build-context
+          git -c tar.umask=0022 archive --format=tar "$FALKENWARTE_TEST_COMMIT" | tar -x -C app-build-context
+          echo "epoch=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
+          echo "version=$(cat version.txt)" >> "$GITHUB_OUTPUT"
+      - name: Build the Linux release image
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          builder: falkenwarte-release
+          source: .
+          files: compose.yaml
+          targets: app
+          provenance: false
+          set: |
+            app.context=./app-build-context
+            app.args.SOURCE_DATE_EPOCH=${{ steps.source.outputs.epoch }}
+            app.args.APP_VERSION=${{ steps.source.outputs.version }}
+            app.cache-from=type=gha,scope=falkenwarte-app-amd64
+            app.cache-to=type=gha,scope=falkenwarte-app-amd64,mode=max,ignore-error=true
+            app.output=type=docker,name=${{ env.FALKENWARTE_IMAGE }},dest=app-image.tar,rewrite-timestamp=true
+      - name: Verify the image and export its inventory
+        env:
+          source_date_epoch: ${{ steps.source.outputs.epoch }}
+        run: |
+          set -euo pipefail
           docker load --input app-image.tar
           docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}' | tee image.id
           docker run --rm --entrypoint php "$FALKENWARTE_IMAGE" -r '
@@ -160,6 +204,8 @@ jobs:
     if: inputs.probe != 'skip-e2e'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    env:
+      FALKENWARTE_QA_IMAGES_PREBUILT: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
@@ -168,6 +214,33 @@ jobs:
       - name: Exercise failed E2E job
         if: inputs.probe == 'fail-e2e'
         run: exit 1
+      - name: Set up the browser image builder
+        id: browser-builder
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        with:
+          version: v0.39.0
+          use: false
+          driver: docker-container
+          driver-opts: image=moby/buildkit:v0.35.0@sha256:aa632b921ef07411d2cb77292cd34213d4f7b384001d6fceef1e1f25bf9752bb
+      - name: Build the browser runner and the shared mock image
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          builder: ${{ steps.browser-builder.outputs.name }}
+          source: .
+          files: |
+            compose.yaml
+            compose.test.yaml
+          targets: |
+            e2e
+            t3-mock
+          load: true
+          set: |
+            e2e.cache-from=type=gha,scope=falkenwarte-browser-amd64
+            e2e.cache-to=type=gha,scope=falkenwarte-browser-amd64,mode=max,ignore-error=true
+            t3-mock.cache-from=type=gha,scope=falkenwarte-mocks-amd64
+            t3-mock.cache-to=type=gha,scope=falkenwarte-mocks-amd64,mode=max,ignore-error=true
       - name: Test the downloaded image over its public interfaces
         run: |
           docker load -i app-image.tar.gz

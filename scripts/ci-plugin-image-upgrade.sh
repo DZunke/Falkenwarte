@@ -118,7 +118,9 @@ docker build --file docker/Dockerfile.plugin-upgrade \
     --tag "$qa_image" .
 export FALKENWARTE_IMAGE="$qa_image"
 export FALKENWARTE_IMAGE_REF="$(image_id "$qa_image")"
-"${compose_test[@]}" build e2e decisions-mock t3-mock
+if [[ ${FALKENWARTE_QA_IMAGES_PREBUILT:-0} != 1 ]]; then
+    "${compose_test[@]}" build t3-mock e2e
+fi
 "${compose_test[@]}" up --detach --no-build --wait --wait-timeout 240 app decisions-mock t3-mock
 "${compose_test[@]}" exec -T app sh -ec 'test "$APP_ENV" = test; test -s /app/tests/Fixtures/Plugins/manifest.json'
 run_phase plans test standard tests/e2e/tests/plugin-install-plans.spec.mjs
