@@ -134,11 +134,40 @@ test('A12 MCP rejects a wrong attempt and deduplicates the same result report', 
     expect(finalRun.report_ids).toEqual([reportId]);
     expect(finalRun.evidence_ids).toHaveLength(1);
 
+    const taskFlowPage = await ownerApi.get(`/tasks/${task.id}/flow?limit=1`);
+    expect(taskFlowPage.response.status(), JSON.stringify(taskFlowPage.data)).toBe(200);
+    expect(taskFlowPage.data).toMatchObject({
+      task_id: task.id,
+      has_more: false,
+      next_cursor: null,
+    });
+    expect(taskFlowPage.data.items).toHaveLength(1);
+    const flowItem = taskFlowPage.data.items[0];
+    expect(flowItem.kind).toBe('run');
+    expect(flowItem).not.toHaveProperty('id');
+    expect(flowItem.run).toMatchObject({
+      id: runId,
+      state: finalRun.state,
+      attempt_no: finalRun.attempt_no,
+    });
+    expect(flowItem.run.attempts).toEqual([
+      expect.objectContaining({ attempt_no: finalRun.attempt_no }),
+    ]);
+    expect(flowItem.run.reports).toHaveLength(1);
+    expect(flowItem.run.reports[0]).toMatchObject({
+      id: reportId,
+      attempt_no: finalRun.attempt_no,
+      task_revision: task.version,
+      accepted_for_reconciliation: true,
+    });
+    expect(flowItem.run).not.toHaveProperty('workflow_id');
+    expect(flowItem.run).not.toHaveProperty('phases');
+
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);
     recordEvidence(
       'A12: Falscher Attempt wird an der MCP-Grenze abgewiesen; eine wiederholte Report-ID legt keinen zweiten Bericht oder Evidenzeintrag an.',
-      `Der Agentbericht für Attempt ${run.attempt_no + 1} wurde mit JSON-RPC HTTP 200 und isError:true abgewiesen, ohne Report anzulegen oder Run ${runId} zu verändern. Der gültige Bericht ${reportId} wurde mit einer neuen MCP-Anfrage-ID erneut gesendet; Falkenwarte lieferte denselben Bericht mit genau einem Evidence-Eintrag und report_ids blieb ein Element.`,
+      `Der Agentbericht für Attempt ${run.attempt_no + 1} wurde mit JSON-RPC HTTP 200 und isError:true abgewiesen, ohne Report anzulegen oder Run ${runId} zu verändern. Der gültige Bericht ${reportId} wurde mit einer neuen MCP-Anfrage-ID erneut gesendet; Falkenwarte lieferte denselben Bericht mit genau einem Evidence-Eintrag und report_ids blieb ein Element. Die Ticketablaufseite lieferte genau einen Einzellauf (${runId}) mit Zustand ${finalRun.state}, Versuch ${finalRun.attempt_no} und genau diesem Bericht, ohne Workflowphase.`,
       { t3 },
     );
   } finally {

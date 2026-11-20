@@ -29,13 +29,15 @@ Ein archiviertes Projekt bleibt lesbar, nimmt aber keine neuen Tickets an. Öffn
 
 ## Ticketdetails, Nachweise und Verlauf
 
-Öffne eine Karte, um die Tabs **Details**, **Entscheidungen**, **Ausführung** und **Verlauf** zu sehen. In **Details** bearbeitest du Tickettext, Status und Erfolgskriterien und verwaltest Projektfelder sowie Link-Sammlungen.
+Öffne eine Karte, um das Ticket zu lesen. In **Details** bearbeitest du Tickettext, Status und Erfolgskriterien und verwaltest Projektfelder sowie Link-Sammlungen.
 
 Über **Meldung hinzufügen** hängst du einen Nachweis an ein Erfolgskriterium. Die Meldung hält fest, was ein Mensch oder Agent berichtet hat. Sie ist keine automatische Code- oder CI-Prüfung.
 
 Wenn ein passender Nachweis vorliegt, wählst du **Bestätigen** und gibst eine Begründung ein.
 
 Für externe Referenzen wählst du **Link hinzufügen**, benennst Sammlung und Link und registrierst die URL. Falkenwarte speichert diese Referenz, ruft aber den Inhalt und Status der externen Seite nicht selbst ab.
+
+Unter **Ablauf** siehst du, welche Phasen ein gestarteter Workflow bereits durchlaufen hat, wo er steht und welche Übergabe die nächste Rolle erhalten hat. [Den Ablauf eines Tickets lesen](AGENTS_AND_WORKFLOWS.md#den-ablauf-eines-tickets-lesen)
 
 Im Tab **Verlauf** siehst du frühere Revisionen. **Wiederherstellen** verlangt einen Grund und erzeugt eine neue Revision. Bereits bei T3 gestartete Arbeit wird dadurch nicht zurückgenommen.
 

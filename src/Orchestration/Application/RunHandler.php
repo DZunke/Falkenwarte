@@ -902,6 +902,7 @@ final class RunHandler implements OperationHandler
             'project_id' => $task['project_id'], 'task_id' => $taskId, 'workflow_id' => $workflow['id'],
             'definition_version' => $workflow['definition_version'], 'definition_snapshot' => $workflow,
             'state' => 'running', 'current_stage_id' => $firstStage['id'], 'run_ids' => [],
+            'selected_transitions' => [], 'transition_history_status' => 'complete',
             'repair_round' => 0, 'pause_reason' => null, 'started_at' => $this->store->now(), 'deadline_at' => $this->deadline((int) $workflow['limits']['max_total_seconds']),
         ], 'workflow.started');
         if (null !== $firstStage['agent_profile_id']) {
@@ -1947,6 +1948,24 @@ final class RunHandler implements OperationHandler
         if ('needs_changes' === $outcome) {
             ++$instance['repair_round'];
         }
+        $historyStatus = $instance['transition_history_status'] ?? null;
+        $selectedTransitions = $instance['selected_transitions'] ?? null;
+        if (!is_array($selectedTransitions)) {
+            $selectedTransitions = [];
+        }
+        if (!in_array($historyStatus, ['complete', 'partial'], true)) {
+            $historyStatus = 'partial';
+        }
+        $selectedTransitions[] = [
+            'from_stage_id' => (string) $instance['current_stage_id'],
+            'to_stage_id' => (string) $transition['to_stage_id'],
+            'outcome' => $outcome,
+            'source_run_id' => (string) $latest['id'],
+            'report_id' => is_string($report['id'] ?? null) ? $report['id'] : null,
+            'selected_at' => $this->store->now(),
+        ];
+        $instance['selected_transitions'] = $selectedTransitions;
+        $instance['transition_history_status'] = $historyStatus;
         $instance['_stage_source_run_id'] = $latest['id'];
         $instance['current_stage_id'] = $nextStage['id'];
         $instance['pause_reason'] = null;
@@ -2538,7 +2557,23 @@ final class RunHandler implements OperationHandler
     {
         $template = strtr($template, ['{{task.title}}' => (string) $task['title'], '{{task.description}}' => (string) $task['description']]);
         $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'], $task['criteria'] ?? []);
-        $body = "Falkenwarte-Auftrag\nRun-ID: {$run['id']}\nVersuch: {$run['attempt_no']}\nAufgabenrevision: {$run['snapshot']['task_revision']}\n\nAufgabe: {$task['title']}\n\n{$task['description']}";
+        $workflowVersion = (int) ($run['snapshot']['workflow_version'] ?? 0);
+        $workflowVersionLine = $workflowVersion > 0 ? "Workflowversion: {$workflowVersion}\n" : '';
+        $handoffArguments = 'task_id='.(string) $task['id'];
+        if (isset($run['snapshot']['handoff_source_run_id'])) {
+            $handoffArguments .= ', source_run_id='.(string) $run['snapshot']['handoff_source_run_id'];
+        }
+        $body = "Falkenwarte-Auftrag\n"
+            ."Projekt-ID: {$task['project_id']}\n"
+            ."Ticket-ID: {$task['id']}\n"
+            ."Ticket-Key: {$task['key']}\n"
+            ."Phase-ID: {$run['stage']}\n"
+            .$workflowVersionLine
+            ."Run-ID: {$run['id']}\n"
+            ."Versuch: {$run['attempt_no']}\n"
+            ."Aufgabenrevision: {$run['snapshot']['task_revision']}\n\n"
+            ."Aufgabe: {$task['title']}\n\n"
+            .(string) $task['description'];
         if ([] !== $criteria) {
             $body .= "\n\nAkzeptanzkriterien:\n".implode("\n", $criteria);
         }
@@ -2550,7 +2585,12 @@ final class RunHandler implements OperationHandler
             $body .= "\n\nÜbergabe aus Lauf ".$run['snapshot']['handoff_source_run_id']." (Agentenmeldung)\n";
             $body .= json_encode($handoff, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         }
-        $body .= "\n\nNutze die freigegebenen Falkenwarte-MCP-Werkzeuge für Rückfragen, Ergebnislinks und Ergebnisberichte. Berichte Beobachtungen als Agentmeldung. Falkenwarte prüft keinen Code und lädt keine Links herunter.";
+        $body .= "\n\nArbeitsbeginn:\n"
+            .'Nutze den Skill falkenwarte, falls er in deiner T3-Umgebung verfügbar ist; andernfalls arbeite anhand dieses Auftrags weiter.'
+            ."\nMit `tasks.read`: `task_handoff_get({$handoffArguments})` und den kuratierten Kontext nutzen."
+            .' Mit `runs.read`: `runs_get(run_id='.$run['id'].')` für die aktuelle `expected_version`; mit `runs.report`: `runs_report_result` mit '
+            .'run_id='.$run['id'].', attempt_no='.$run['attempt_no'].', task_revision='.$run['snapshot']['task_revision']
+            .'. Fehlt Freigabe oder Version, frage nach. Falkenwarte prüft keinen Code und lädt keine Links herunter.';
 
         return $body;
     }

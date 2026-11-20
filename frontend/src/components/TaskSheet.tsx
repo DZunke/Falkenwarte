@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, History, Link2, Pencil, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ExternalLink, GitBranch, History, Link2, Pencil, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request, type Project, type Task, type TaskStatus } from '@/lib/api'
 import { useProjectCustomFields, useProjectLabels, useTask, useTaskLinks } from '@/lib/queries'
 import TaskExecution from '@/components/TaskExecution'
 import TaskDecisions from '@/components/TaskDecisions'
+import TaskFlow from '@/components/TaskFlow'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -50,6 +51,15 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const [activeTab, setActiveTab] = useState('details')
   const [restoreActionId, setRestoreActionId] = useState<string>()
   const taskQuery = useTask(taskId)
+  const taskFlowQuery = useInfiniteQuery({
+    queryKey: ['task-flow', taskId],
+    enabled: Boolean(taskId && activeTab === 'flow'),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => request(api.GET('/tasks/{task_id}/flow', {
+      params: { path: { task_id: taskId! }, query: { limit: 10, ...(pageParam ? { cursor: pageParam } : {}) } },
+    })),
+    getNextPageParam: (page) => page.has_more ? page.next_cursor ?? undefined : undefined,
+  })
   const linksQuery = useTaskLinks(taskId)
   const labelsQuery = useProjectLabels(project.id)
   const customFieldsQuery = useProjectCustomFields(project.id)
@@ -105,6 +115,14 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const [restoreRevision, setRestoreRevision] = useState<string>()
   const [restoreReason, setRestoreReason] = useState('')
   const missingCustomFields = missingRequiredCustomFields(customFields, customFieldDraftValues)
+  const taskFlowPages = taskFlowQuery.data?.pages ?? []
+  const lastTaskFlowPage = taskFlowPages.at(-1)
+  const taskFlow = taskFlowPages.length > 0 ? {
+    ...taskFlowPages[0],
+    items: taskFlowPages.flatMap((page) => page.items),
+    next_cursor: lastTaskFlowPage?.next_cursor ?? null,
+    has_more: lastTaskFlowPage?.has_more ?? false,
+  } : undefined
 
   useEffect(() => setActiveTab('details'), [taskId])
 
@@ -121,6 +139,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['task', taskId] }),
+      queryClient.invalidateQueries({ queryKey: ['task-flow', taskId] }),
       queryClient.invalidateQueries({ queryKey: ['task-links', taskId] }),
       queryClient.invalidateQueries({ queryKey: ['task-evidence', taskId] }),
       queryClient.invalidateQueries({ queryKey: ['history', taskId] }),
@@ -319,7 +338,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                 </div>
               </SheetHeader>
               <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 min-w-0 flex-1 flex-col">
-                <TabsList className="falkenwarte-scrollbar mx-4 mt-4 w-auto min-w-0 self-stretch justify-start overflow-x-auto overflow-y-hidden sm:mx-6"><TabsTrigger value="details">Details</TabsTrigger><TabsTrigger value="decisions"><ShieldCheck />Entscheidungen</TabsTrigger><TabsTrigger value="execution"><Play />Ausführung</TabsTrigger><TabsTrigger value="history"><History />Verlauf</TabsTrigger>{linkNotesContribution && <TabsTrigger value="link-notes"><Link2 />{linkNotesContribution.label}</TabsTrigger>}</TabsList>
+                <TabsList className="falkenwarte-scrollbar mx-4 mt-4 w-auto min-w-0 self-stretch justify-start overflow-x-auto overflow-y-hidden sm:mx-6"><TabsTrigger value="details">Details</TabsTrigger><TabsTrigger value="flow"><GitBranch />Ablauf</TabsTrigger><TabsTrigger value="decisions"><ShieldCheck />Entscheidungen</TabsTrigger><TabsTrigger value="execution"><Play />Ausführung</TabsTrigger><TabsTrigger value="history"><History />Verlauf</TabsTrigger>{linkNotesContribution && <TabsTrigger value="link-notes"><Link2 />{linkNotesContribution.label}</TabsTrigger>}</TabsList>
                 <TabsContent value="details" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 space-y-6 overflow-y-auto px-6 pb-8 pt-5">
                   <section className="space-y-2"><h3 className="text-sm font-semibold">Beschreibung</h3><p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{task.description || 'Keine Beschreibung hinterlegt.'}</p></section>
                   {(Object.keys(task.custom_fields).length > 0 || customFields.length > 0) && <section className="space-y-3"><h3 className="text-sm font-semibold">Projektfelder</h3>{customFieldsQuery.isError && <p role="alert" className="text-xs text-destructive">Feldnamen konnten nicht geladen werden: {formatError(customFieldsQuery.error)}</p>}<CustomFieldValues fields={customFields} values={task.custom_fields} />{Object.keys(task.custom_fields).length === 0 && <p className="text-sm text-muted-foreground">Für dieses Ticket sind keine Projektfeldwerte hinterlegt.</p>}</section>}
@@ -342,6 +361,22 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                     <p className="text-xs text-muted-foreground">Links sind registrierte Referenzen. Falkenwarte liest keine Inhalte oder Statuswerte von externen Seiten.</p>
                   </section>
                   <section className="space-y-3"><h3 className="text-sm font-semibold">Gemeldete Nachweise</h3>{evidenceQuery.isPending ? <p className="text-sm text-muted-foreground">Meldungen werden geladen…</p> : (evidenceQuery.data?.items ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Meldungen. Ein Nachweis bleibt als menschliche oder Agentenmeldung gekennzeichnet.</p> : <div className="space-y-2">{evidenceQuery.data?.items.map((item) => <div key={item.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{item.label}</p><Badge variant="outline">{item.review_status === 'human_confirmed' ? 'Menschlich bestätigt' : item.review_status === 'rejected' ? 'Zurückgewiesen' : 'Gemeldet'}</Badge></div>{item.text && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{item.text}</p>}</div>)}</div>}</section>
+                </TabsContent>
+                <TabsContent value="flow" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
+                  <TaskFlow
+                    task={task}
+                    projectId={project.id}
+                    statuses={statuses}
+                    flow={taskFlow}
+                    loading={taskFlowQuery.isPending}
+                    error={taskFlowQuery.isError && !taskFlow ? formatError(taskFlowQuery.error) : undefined}
+                    loadingMore={taskFlowQuery.isFetchingNextPage}
+                    hasMore={taskFlow?.has_more ?? false}
+                    onOpenDetails={() => setActiveTab('details')}
+                    onOpenExecution={() => setActiveTab('execution')}
+                    onRetry={() => { void taskFlowQuery.refetch() }}
+                    onLoadMore={() => { void taskFlowQuery.fetchNextPage() }}
+                  />
                 </TabsContent>
                 <TabsContent value="decisions" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   <TaskDecisions task={task} project={project} onChanged={invalidate} />

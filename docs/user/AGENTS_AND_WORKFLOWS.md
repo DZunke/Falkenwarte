@@ -2,6 +2,8 @@
 
 Falkenwarte verwaltet T3-Verbindungen, Projektfreigaben, Rollen und den Status der Aufträge. Modelle, Provider, Arbeitsverzeichnisse und Toolberechtigungen bleiben in T3. Falkenwarte zeigt Meldungen und beobachtete Zustände, führt aber keine eigene externe Agentenumgebung aus.
 
+Richte den Skill im Arbeitsprojekt oder für den von T3 verwendeten Agenten ein. Er erklärt, wie der Agent den Ticketkontext liest und sein Ergebnis für die nächste Phase meldet. [Agent-Skill installieren](AGENT_SKILL.md)
+
 ## T3-Verbindung einrichten
 
 1. Öffne **Agents & T3** und gib unter **Verbindung hinzufügen** einen Namen und die kanonische HTTPS-Adresse des T3-MCP-Endpunkts ein.
@@ -41,6 +43,16 @@ Eine T3-Berechtigungsanfrage musst du direkt in T3 freigeben. Eine Nachricht in 
 Unter **Workflowlabels zuordnen** verbindest du ein Workflowlabel mit einem aktiven Workflow. Die Route fixiert eine Workflowversion für neue Starts. Sie erteilt keine Startfreigabe. Eine fehlende oder mehrdeutige Route erfordert eine menschliche Entscheidung.
 
 Ein **Manueller Trigger** richtet einen ausdrücklich angeforderten Start ein. Er führt keinen Code aus und startet keine Aufträge im Hintergrund.
+
+## Den Ablauf eines Tickets lesen
+
+Öffne das Ticket auf dem Board und wähle **Ablauf**. Unter **Ticketstand** siehst du den aktuellen Status, den Grund für eine Blockade und welche Erfolgskriterien noch offen sind. Das funktioniert auch bei rein manuellen Tickets. Über **Details öffnen** kannst du die Kriterien bearbeiten.
+
+Bei einem gestarteten Workflow siehst du die Phasen seiner beim Start gespeicherten Version. Welche Phase als Nächstes beginnt, hängt vom Ergebnis der laufenden Phase und den Bedingungen des Übergangs ab. Wenn das Review Änderungen verlangt, kannst du die erneute Bearbeitung von der ersten Runde unterscheiden.
+
+Öffne den Lauf der empfangenden Phase und wähle **Übergabeprotokoll ansehen**. Du siehst, welchen Bericht, welche Fragen und welche registrierten Links diese Rolle beim Start erhalten hat. Versuch und Ticketrevision geben an, auf welchen Stand sich die Übergabe bezieht. Im selben Lauf kannst du anschließend die eigene Meldung der Rolle und eine spätere menschliche Entscheidung nachlesen.
+
+Um einen Auftrag zu starten oder auf eine Frage im laufenden Auftrag zu antworten, wechsle zu **Ausführung**.
 
 ## Ergebnisse richtig einordnen
 

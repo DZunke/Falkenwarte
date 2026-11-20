@@ -1185,6 +1185,31 @@ paths:
       x-domain-invariants:
       - project_membership
       - all_affected_active_board_hard_wip
+  /tasks/{task_id}/flow:
+    parameters:
+    - name: task_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    get:
+      operationId: task_flow_get
+      tags:
+      - tasks
+      summary: Ticketablauf lesen
+      description: Owner-only Projektion aus gespeicherten Workflowdefinitionen, Runs, Meldungen, Freigaben und eingefrorenen Übergaben. Instanzen und Einzelläufe werden gemeinsam paginiert.
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/TaskFlowPage'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: task_flow_get
+      x-required-capabilities:
+      - tasks.read
+      x-owner-only: true
   /tasks/{task_id}/handoff:
     parameters:
     - name: task_id
@@ -4979,6 +5004,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/TaskHandoff'
+    TaskFlowPage:
+      description: Owner-only TaskFlowPage-Darstellung.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TaskFlowPage'
     BoardView:
       description: BoardView-Darstellung.
       content:
@@ -9000,6 +9031,443 @@ components:
       - enabled
       description: Nur registrierte Schrittarten und typisierte Bedingungen, kein ausführbarer Ausdruck. Änderung erzeugt eine neue
         definition_version. Graphprüfung weist Future-Stage-Abhängigkeiten zurück. Task-Done-Policy ist kein allgemeines Run-Exit-Gate.
+    TaskFlowPage:
+      type: object
+      additionalProperties: false
+      properties:
+        task_id:
+          $ref: '#/components/schemas/Id'
+        project_id:
+          $ref: '#/components/schemas/Id'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskFlowItem'
+          maxItems: 100
+        next_cursor:
+          type:
+          - string
+          - 'null'
+        has_more:
+          type: boolean
+      required:
+      - task_id
+      - project_id
+      - items
+      - next_cursor
+      - has_more
+    TaskFlowItem:
+      oneOf:
+      - $ref: '#/components/schemas/TaskFlowWorkflowInstance'
+      - $ref: '#/components/schemas/TaskFlowRunItem'
+    TaskFlowRunItem:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          const: run
+        run:
+          $ref: '#/components/schemas/TaskFlowRun'
+      required: [kind, run]
+    TaskFlowWorkflowInstance:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          const: workflow_instance
+        id:
+          $ref: '#/components/schemas/Id'
+        workflow_id:
+          $ref: '#/components/schemas/Id'
+        workflow_name:
+          type:
+          - string
+          - 'null'
+        definition_version:
+          type: integer
+          minimum: 1
+        definition_available:
+          type: boolean
+        state:
+          type: string
+          enum: [queued, running, paused, succeeded, failed, cancelled]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        ended_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        current_stage_id:
+          type:
+          - string
+          - 'null'
+        repair_round:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        pause_reason:
+          type:
+          - string
+          - 'null'
+        branch_history_status:
+          type: string
+          enum: [complete, partial, not_recorded]
+        phases:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskFlowPhase'
+          maxItems: 30
+        candidate_transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskFlowCandidateTransition'
+          maxItems: 100
+        selected_transitions:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/TaskFlowSelectedTransition'
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskFlowRun'
+      required:
+      - kind
+      - id
+      - workflow_id
+      - workflow_name
+      - definition_version
+      - definition_available
+      - state
+      - created_at
+      - updated_at
+      - started_at
+      - ended_at
+      - current_stage_id
+      - repair_round
+      - pause_reason
+      - branch_history_status
+      - phases
+      - candidate_transitions
+      - selected_transitions
+      - runs
+    TaskFlowPhase:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          maxLength: 80
+        position:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+          maxLength: 120
+        kind:
+          type: string
+          maxLength: 100
+        agent_profile_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        entry_conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowCondition'
+          maxItems: 30
+        run_completion_policy:
+          $ref: '#/components/schemas/RunCompletionPolicy'
+        status:
+          type: string
+          enum: [completed, current, open, blocked, skipped, unknown]
+        blocker_reason:
+          type:
+          - string
+          - 'null'
+      required: [id, position, name, kind, agent_profile_id, entry_conditions, run_completion_policy, status, blocker_reason]
+    TaskFlowCandidateTransition:
+      type: object
+      additionalProperties: false
+      properties:
+        from_stage_id:
+          type: string
+          maxLength: 80
+        to_stage_id:
+          type: string
+          maxLength: 80
+        'on':
+          type: string
+          enum: [accepted, needs_changes, blocked, failed]
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowCondition'
+          maxItems: 30
+        selection_status:
+          type: string
+          enum: [selected, possible, not_selected, unknown]
+      required: [from_stage_id, to_stage_id, 'on', conditions, selection_status]
+    TaskFlowSelectedTransition:
+      type: object
+      additionalProperties: false
+      properties:
+        from_stage_id:
+          type: string
+          maxLength: 80
+        to_stage_id:
+          type: string
+          maxLength: 80
+        outcome:
+          type: string
+          enum: [accepted, needs_changes, blocked, failed]
+        source_run_id:
+          $ref: '#/components/schemas/Id'
+        report_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        selected_at:
+          type: string
+          format: date-time
+      required: [from_stage_id, to_stage_id, outcome, source_run_id, report_id, selected_at]
+    TaskFlowRun:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        stage:
+          type: string
+          maxLength: 100
+        state:
+          $ref: '#/components/schemas/RunState'
+        task_revision:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        attempt_no:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskFlowAttempt'
+        reports:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskFlowReport'
+        approvals:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskFlowApproval'
+        handoff:
+          anyOf:
+          - $ref: '#/components/schemas/TaskFlowHandoff'
+          - type: 'null'
+        status_reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 4000
+      required: [id, stage, state, task_revision, created_at, updated_at, attempt_no, attempts, reports, approvals, handoff, status_reason]
+    TaskFlowAttempt:
+      type: object
+      additionalProperties: false
+      properties:
+        attempt_no:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        external_thread_id:
+          type:
+          - string
+          - 'null'
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        ended_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        last_observed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        remote_status:
+          type:
+          - string
+          - 'null'
+          maxLength: 200
+      required: [attempt_no, external_thread_id, started_at, ended_at, last_observed_at, remote_status]
+    TaskFlowReport:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        attempt_no:
+          type: integer
+          minimum: 1
+        task_revision:
+          type: integer
+          minimum: 1
+        outcome:
+          type: string
+          enum: [reported_success, needs_changes, blocked, failed]
+        summary:
+          type: string
+          maxLength: 30000
+        evidence_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          maxItems: 100
+        open_questions:
+          type: array
+          items:
+            type: string
+            maxLength: 2000
+          maxItems: 50
+        received_at:
+          type: string
+          format: date-time
+        rejection_reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+        accepted_for_reconciliation:
+          type: boolean
+      required: [id, attempt_no, task_revision, outcome, summary, evidence_ids, open_questions, received_at, rejection_reason, accepted_for_reconciliation]
+    TaskFlowApproval:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        attempt_no:
+          type: integer
+          minimum: 1
+        task_revision:
+          type: integer
+          minimum: 1
+        kind:
+          type: string
+          enum: [completion, review]
+        status:
+          type: string
+          enum: [pending, approved, rejected, invalidated]
+        requested_at:
+          type: string
+          format: date-time
+        decided_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        decided_by:
+          anyOf:
+          - $ref: '#/components/schemas/ActorRef'
+          - type: 'null'
+        reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 2000
+      required: [id, attempt_no, task_revision, kind, status, requested_at, decided_at, decided_by, reason]
+    TaskFlowHandoff:
+      type: object
+      additionalProperties: false
+      properties:
+        source_run_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        source_report_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        source_attempt_no:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        task_revision:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        external_thread_id:
+          type:
+          - string
+          - 'null'
+        summary:
+          type:
+          - string
+          - 'null'
+          maxLength: 30000
+        outcome:
+          type:
+          - string
+          - 'null'
+          maxLength: 100
+        context_summary:
+          type:
+          - string
+          - 'null'
+          maxLength: 20000
+        open_questions:
+          type: array
+          items:
+            type: string
+            maxLength: 2000
+          maxItems: 50
+        reported_evidence_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          maxItems: 100
+        link_collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskLinkCollection'
+          maxItems: 30
+        source_agent_profile_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        target_agent_profile_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      required: [source_run_id, source_report_id, source_attempt_no, task_revision, external_thread_id, summary, outcome, context_summary, open_questions, reported_evidence_ids, link_collections, source_agent_profile_id, target_agent_profile_id]
     WorkflowStart:
       type: object
       additionalProperties: false
