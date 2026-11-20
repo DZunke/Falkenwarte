@@ -312,7 +312,7 @@ final class RunHandler implements OperationHandler
             if (!is_string($providerId) || '' === $providerId || !$this->agentCatalog->providerEnabled($providerId)) {
                 throw new Problem(409, 'capability_unavailable', 'Der registrierte Ausführungsprovider nimmt keine neuen T3-Aufträge an.');
             }
-            if (!in_array($projectId, $profile['allowed_project_ids'], true)) {
+            if (!$this->agentCatalog->profileAllowsProject($profile, $projectId)) {
                 throw new Problem(403, 'forbidden', 'Dieses Agentprofil ist für das Projekt nicht freigegeben.');
             }
             $binding = $this->agentCatalog->bindingForProject($projectId);

@@ -3219,7 +3219,7 @@ paths:
       operationId: tokens_create
       tags:
       - access
-      summary: Projektgebundenes technisches Token einmalig ausgeben
+      summary: Technisches Token mit Projektfreigabe einmalig ausgeben
       description: Erstausgabe enthält Token. Replays identifizieren denselben Datensatz, liefern token:null; bei verlorener Erstausgabe
         widerrufen und mit neuem Key neu ausstellen.
       parameters:
@@ -6031,6 +6031,10 @@ components:
             type: string
             maxLength: 100
           maxItems: 200
+        project_scope:
+          anyOf:
+          - $ref: '#/components/schemas/ProjectScope'
+          - type: 'null'
       required:
       - authenticated
       - actor
@@ -6038,6 +6042,22 @@ components:
       - csrf_token
       - expires_at
       - capabilities
+      - project_scope
+      description: 'Projektumfang des aktuellen Akteurs. Owner und global freigegebene technische Principals erhalten all_projects true und eine leere Projekt-ID-Liste; anonyme Sessions erhalten null.'
+    ProjectScope:
+      type: object
+      additionalProperties: false
+      properties:
+        all_projects:
+          type: boolean
+        project_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          maxItems: 200
+      required:
+      - all_projects
+      - project_ids
     UiConfig:
       type: object
       additionalProperties: false
@@ -8875,6 +8895,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Bei `all_projects: true` wird dieses Feld leer zurückgegeben; sonst ist es die explizite Freigabeliste, wobei eine leere Liste keinen Projektzugriff erlaubt.'
+        all_projects:
+          type: boolean
+          description: Erlaubt alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten.
         max_parallel_runs:
           type: integer
           const: 1
@@ -8916,6 +8940,7 @@ components:
       - connection_id
       - bridge_plugin_id
       - allowed_project_ids
+      - all_projects
       - max_parallel_runs
       - prompt_template
       - prompt_template_version
@@ -8948,6 +8973,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Bei `all_projects: true` werden übermittelte IDs ignoriert und serverseitig auf eine leere Liste normalisiert; sonst ist dies die explizite Freigabeliste, wobei leer keinen Projektzugriff erlaubt.'
+        all_projects:
+          type: boolean
+          description: 'Erlaubt alle aktuellen und zukünftigen Projekte. Beim Anlegen gilt standardmäßig false. Beim Ersetzen bleibt ohne dieses Feld die gespeicherte Freigabe erhalten; bei Legacy-Profilen ohne Feld gilt false.'
         max_parallel_runs:
           type: integer
           const: 1
@@ -10765,6 +10794,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Bei all_projects true leer; sonst explizite Projektfreigaben. Bei fehlendem all_projects in gespeicherten älteren Tokens gilt die Liste.'
+        all_projects:
+          type: boolean
+          description: 'Gilt für alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten.'
         capabilities:
           type: array
           items:
@@ -10795,6 +10828,7 @@ components:
       - label
       - principal_id
       - project_ids
+      - all_projects
       - capabilities
       - created_at
       - expires_at
@@ -10814,6 +10848,10 @@ components:
           items:
             $ref: '#/components/schemas/Id'
           maxItems: 200
+          description: 'Explizite Projektfreigaben. Bei all_projects true ignoriert der Server die Liste und speichert sie leer; ohne all_projects true gewährt auch eine leere Liste keinen Projektzugriff.'
+        all_projects:
+          type: boolean
+          description: 'Optionales Owner-only Opt-in für alle aktuellen und zukünftigen Projekte. Fehlt das Feld, bleibt das Token projektbeschränkt.'
         capabilities:
           type: array
           items:

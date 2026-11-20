@@ -1575,7 +1575,7 @@ export interface paths {
         get: operations["tokens_list"];
         put?: never;
         /**
-         * Projektgebundenes technisches Token einmalig ausgeben
+         * Technisches Token mit Projektfreigabe einmalig ausgeben
          * @description Erstausgabe enthält Token. Replays identifizieren denselben Datensatz, liefern token:null; bei verlorener Erstausgabe widerrufen und mit neuem Key neu ausstellen.
          */
         post: operations["tokens_create"];
@@ -2448,6 +2448,7 @@ export interface components {
             current_password: string;
             new_password: string;
         };
+        /** @description Projektumfang des aktuellen Akteurs. Owner und global freigegebene technische Principals erhalten all_projects true und eine leere Projekt-ID-Liste; anonyme Sessions erhalten null. */
         Session: {
             authenticated: boolean;
             actor: components["schemas"]["actor"] | null;
@@ -2456,6 +2457,11 @@ export interface components {
             /** Format: date-time */
             expires_at: string | null;
             capabilities: string[];
+            project_scope: components["schemas"]["ProjectScope"] | null;
+        };
+        ProjectScope: {
+            all_projects: boolean;
+            project_ids: components["schemas"]["Id"][];
         };
         UiConfig: {
             icons: {
@@ -3298,7 +3304,10 @@ export interface components {
             role: string;
             connection_id: components["schemas"]["Id"];
             bridge_plugin_id: string;
+            /** @description Bei `all_projects: true` wird dieses Feld leer zurückgegeben; sonst ist es die explizite Freigabeliste, wobei eine leere Liste keinen Projektzugriff erlaubt. */
             allowed_project_ids: components["schemas"]["Id"][];
+            /** @description Erlaubt alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten. */
+            all_projects: boolean;
             /**
              * @description MVP: zusätzlich maximal ein aktiver Run pro T3-ProjectBinding; kein lokaler Worktree-Verwalter.
              * @default 1
@@ -3328,7 +3337,10 @@ export interface components {
             icon_key: string;
             role: string;
             connection_id: components["schemas"]["Id"];
+            /** @description Bei `all_projects: true` werden übermittelte IDs ignoriert und serverseitig auf eine leere Liste normalisiert; sonst ist dies die explizite Freigabeliste, wobei leer keinen Projektzugriff erlaubt. */
             allowed_project_ids: components["schemas"]["Id"][];
+            /** @description Erlaubt alle aktuellen und zukünftigen Projekte. Beim Anlegen gilt standardmäßig false. Beim Ersetzen bleibt ohne dieses Feld die gespeicherte Freigabe erhalten; bei Legacy-Profilen ohne Feld gilt false. */
+            all_projects?: boolean;
             /**
              * @description MVP: zusätzlich maximal ein aktiver Run pro T3-ProjectBinding; kein lokaler Worktree-Verwalter.
              * @default 1
@@ -3896,7 +3908,10 @@ export interface components {
             version: number;
             label: string;
             principal_id: components["schemas"]["Id"];
+            /** @description Bei all_projects true leer; sonst explizite Projektfreigaben. Bei fehlendem all_projects in gespeicherten älteren Tokens gilt die Liste. */
             project_ids: components["schemas"]["Id"][];
+            /** @description Gilt für alle aktuellen und zukünftigen Projekte. Dieses Feld ist immer in der Read-Antwort enthalten. */
+            all_projects: boolean;
             capabilities: string[];
             /** Format: date-time */
             created_at: string;
@@ -3910,7 +3925,10 @@ export interface components {
         /** @description Keine menschlichen Approval-/Secret-/Plugin-Adminrechte im Standardprofil; Owner-only-Operationen bleiben auch mit einem Capabilitynamen gesperrt. */
         TokenCreate: {
             label: string;
+            /** @description Explizite Projektfreigaben. Bei all_projects true ignoriert der Server die Liste und speichert sie leer; ohne all_projects true gewährt auch eine leere Liste keinen Projektzugriff. */
             project_ids: components["schemas"]["Id"][];
+            /** @description Optionales Owner-only Opt-in für alle aktuellen und zukünftigen Projekte. Fehlt das Feld, bleibt das Token projektbeschränkt. */
+            all_projects?: boolean;
             capabilities: string[];
             /** Format: date-time */
             expires_at: string;

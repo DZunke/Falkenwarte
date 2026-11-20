@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\WorkManagement\Application;
 
+use App\AgentCatalog\Application\AgentCatalogReader;
 use App\Extensions\Application\PluginAvailability;
 use App\Shared\Application\Actor;
 use App\Shared\Application\OperationHandler;
@@ -31,6 +32,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         private readonly TaskCompletionPolicy $completionPolicy,
         private readonly TaskLinkPolicy $linkPolicy,
         private readonly PluginAvailability $plugins,
+        private readonly AgentCatalogReader $agentCatalog,
     ) {
     }
 
@@ -470,7 +472,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         $profileId = $body['agent_profile_id'] ?? null;
         if (null !== $profileId) {
             $profile = $this->store->find('agent_profiles', (string) $profileId);
-            if (null === $profile || !in_array($task['project_id'], $profile['allowed_project_ids'] ?? [], true) || empty($profile['enabled'])) {
+            if (null === $profile || !$this->agentCatalog->profileAllowsProject($profile, (string) $task['project_id']) || empty($profile['enabled'])) {
                 throw new Problem(409, 'invalid_assignment', 'Das Rollenprofil ist für dieses Projekt nicht freigegeben.');
             }
         }
@@ -1563,7 +1565,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         }
         foreach ($filter['agent_profile_ids'] ?? [] as $profileId) {
             $profile = $this->store->find('agent_profiles', (string) $profileId);
-            if (null === $profile || !in_array($projectId, $profile['allowed_project_ids'] ?? [], true)) {
+            if (null === $profile || !$this->agentCatalog->profileAllowsProject($profile, $projectId)) {
                 throw new Problem(422, 'validation_failed', 'Ein Rollenfilter verweist nicht auf ein für dieses Projekt zugelassenes Profil.');
             }
         }

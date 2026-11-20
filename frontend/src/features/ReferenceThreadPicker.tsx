@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import type { components } from '@/generated/api'
 import { api, formatError, request, type Project } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -23,19 +23,44 @@ function threadOptionLabel(thread: components['schemas']['T3Thread']) {
 export function ReferenceThreadPicker({ connectionId, projects, value, onChange }: Selection & { projects: Project[] }) {
   const projectSelectId = `thread-project-${useId()}`
   const [chosenProject, setChosenProject] = useState('')
-  const projectId = projects.length === 1 ? projects[0].id : chosenProject
-  if (!connectionId || !projects.length) {
+  const projectBindings = useQueries({
+    queries: projects.map((project) => ({
+      queryKey: ['project-binding', project.id],
+      enabled: Boolean(connectionId),
+      queryFn: async () => {
+        const response = await api.GET('/projects/{project_id}/binding', { params: { path: { project_id: project.id } } })
+        if (response.response.status === 404) return null
+        return request(Promise.resolve(response))
+      },
+    })),
+  })
+  const matchingProjects = projects.filter((project, index) => !project.archived && projectBindings[index]?.data?.active && projectBindings[index].data?.connection_id === connectionId)
+  const projectId = matchingProjects.length === 1 ? matchingProjects[0].id : matchingProjects.some((project) => project.id === chosenProject) ? chosenProject : ''
+  const bindingError = projectBindings.find((query) => query.isError)
+  if (!connectionId) {
+    return <p className="text-sm text-muted-foreground">Wähle eine T3-Verbindung, um passende Referenzthreads zu laden.</p>
+  }
+  if (!projects.length) {
     return <p className="text-sm text-muted-foreground">Wähle eine Verbindung und ein erlaubtes Projekt, um einen Referenzthread aus T3 zu verwenden.</p>
+  }
+  if (bindingError) {
+    return <div role="alert" className="space-y-1 text-sm"><p>Projektbindungen konnten nicht geprüft werden. {formatError(bindingError.error)}</p><Button variant="link" onClick={() => { void Promise.all(projectBindings.map((query) => query.refetch())) }}>Erneut laden</Button></div>
+  }
+  if (projectBindings.some((query) => query.isPending)) {
+    return <p role="status" className="text-sm text-muted-foreground">Projektbindungen zur gewählten T3-Verbindung werden geprüft…</p>
+  }
+  if (!matchingProjects.length) {
+    return <p className="text-sm text-muted-foreground">Keines der erlaubten Projekte ist aktiv mit dieser T3-Verbindung verbunden. Binde ein passendes Projekt unter <a className="underline" href="#/agents">Agents &amp; T3</a>.</p>
   }
 
   return (
     <div className="space-y-3">
-      {projects.length > 1 && (
+      {matchingProjects.length > 1 && (
         <div className="space-y-1.5">
           <Label htmlFor={projectSelectId}>Projekt für die Threadliste</Label>
           <Select value={chosenProject} onValueChange={(id) => { setChosenProject(id); onChange('') }}>
             <SelectTrigger id={projectSelectId}><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
-            <SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent>
+            <SelectContent>{matchingProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent>
           </Select>
         </div>
       )}

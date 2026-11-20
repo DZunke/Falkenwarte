@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\AgentCatalog\Application;
 
-/** Internal cross-context read port for immutable run context and T3 references. */
+/** Internal cross-context read port for profile scope, immutable run context, and T3 references. */
 interface AgentCatalogReader
 {
     /** @return array<string, mixed> */
@@ -12,6 +12,9 @@ interface AgentCatalogReader
 
     /** @return array<string, mixed> */
     public function profile(string $id): array;
+
+    /** @param array<string, mixed> $profile */
+    public function profileAllowsProject(array $profile, string $projectId): bool;
 
     /** @return array<string, mixed> */
     public function binding(string $id): array;

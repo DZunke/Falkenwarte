@@ -400,11 +400,21 @@ final class AgentCatalogHandler implements OperationHandler
         $executionTarget = $body['execution_target'];
         $this->profileRules->assertExecutionTarget($executionTarget);
         $this->profileRules->assertSingleRun((int) ($body['max_parallel_runs'] ?? 1));
-        foreach (($body['allowed_project_ids'] ?? []) as $projectId) {
+        $existing = null === $id ? null : $this->catalog->profile($id);
+        $allProjects = $this->profileRules->allProjectsEnabled($body, $existing);
+        $allowedProjectIds = $body['allowed_project_ids'] ?? ($existing['allowed_project_ids'] ?? []);
+        if (!is_array($allowedProjectIds)) {
+            throw new Problem(422, 'validation_failed', 'Die Projektfreigaben müssen als Liste angegeben werden.');
+        }
+        if ($allProjects) {
+            $allowedProjectIds = [];
+        }
+        foreach ($allowedProjectIds as $projectId) {
             $project = $this->record('projects', (string) $projectId);
             $this->profileRules->assertProjectAssignable(!empty($project['archived']));
         }
-        $existing = null === $id ? null : $this->catalog->profile($id);
+        $body['all_projects'] = $allProjects;
+        $body['allowed_project_ids'] = array_values($allowedProjectIds);
         $profile = array_replace($existing ?? [], $body);
         $profile['bridge_plugin_id'] = $connection['bridge_plugin_id'] ?? $this->catalog->providerForBridge((string) $connection['bridge_id']);
         if (!is_string($profile['bridge_plugin_id'])) {
@@ -562,6 +572,12 @@ final class AgentCatalogHandler implements OperationHandler
 
     private function publicRecord(array $record): array
     {
+        if (array_key_exists('execution_target', $record)) {
+            $record['all_projects'] = true === ($record['all_projects'] ?? false);
+            $record['allowed_project_ids'] = $record['all_projects']
+                ? []
+                : (is_array($record['allowed_project_ids'] ?? null) ? array_values($record['allowed_project_ids']) : []);
+        }
         if (isset($record['bridge_id']) && !isset($record['bridge_plugin_id'])) {
             $record['bridge_plugin_id'] = $this->catalog->providerForBridge((string) $record['bridge_id']);
         }

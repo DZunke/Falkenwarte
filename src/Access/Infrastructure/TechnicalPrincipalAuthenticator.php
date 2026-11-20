@@ -31,6 +31,7 @@ final readonly class TechnicalPrincipalAuthenticator
             $token['capabilities'],
             $token['label'],
             $transport,
+            true === ($token['all_projects'] ?? false),
         );
     }
 }
