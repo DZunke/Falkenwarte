@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/DZunke/Falkenwarte/compare/v0.2.1...v0.2.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* wire Falkenwarte through Symfony and enforce PHP coding standards ([#10](https://github.com/DZunke/Falkenwarte/issues/10)) ([456b308](https://github.com/DZunke/Falkenwarte/commit/456b308830ce37a1389f638551bc2cb16be0d71b))
+
 ## [0.2.1](https://github.com/DZunke/Falkenwarte/compare/v0.2.0...v0.2.1) (2026-11-20)
 
 
