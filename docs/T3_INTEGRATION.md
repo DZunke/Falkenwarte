@@ -9,7 +9,7 @@ Falkenwarte steuert eine vorhandene T3-Instanz über deren MCP-Endpunkt. Falkenw
 | Kanonische T3-Adresse | Wird je Verbindung in Falkenwarte gespeichert. Produktiv nur HTTPS ohne Zugangsdaten, Query oder Fragment |
 | Testadresse | Ausschließlich im Test-Environment ist `http://t3-mock` erlaubt |
 | OAuth-Callback | Standard `FALKENWARTE_PUBLIC_URL/auth/t3/callback`. `FALKENWARTE_PUBLIC_URL` fällt auf `FALKENWARTE_PUBLIC_ORIGIN` zurück |
-| HTTP-Clients | `t3.client` ist ein Symfony Scoped Client mit Redirects ausgeschaltet. `psr18.t3.client` transportiert MCP |
+| HTTP-Clients | `t3.client` ist ein Symfony Scoped Client für OAuth mit Redirects ausgeschaltet. `psr18.t3.client` und `mcp.psr17_factory` transportieren MCP |
 | OAuth-Zeitlimits | Discovery und Clientregistrierung 10 s, Codeaustausch 15 s |
 | MCP-Zeitlimits | Initialisierung und Aufruf je 15 s. Client-Retries sind ausgeschaltet |
 
@@ -19,7 +19,9 @@ Die URL-Regel schützt vor Zugangsdaten, Query und Fragment in der konfigurierte
 
 ## OAuth-Verbindung
 
-Ein Eigentümer startet `POST /api/v1/connections/{connection_id}/oauth/start`. Der Browser folgt der zurückgegebenen Authorization-URL und kehrt über `GET /api/v1/auth/t3/callback` zurück.
+Ein Eigentümer startet `POST /api/v1/connections/{connection_id}/oauth/start`. Der Browser folgt der zurückgegebenen Authorization-URL und kehrt über `GET /auth/t3/callback` zurück.
+
+Die OpenAPI-Operation überschreibt für den Callback den globalen Serverpfad `/api/v1` mit `/`.
 
 1. Falkenwarte liest `/.well-known/oauth-protected-resource/mcp` und bei Bedarf `/.well-known/oauth-authorization-server`.
 2. Es registriert einen öffentlichen OAuth-Client ohne Client-Secret und fordert den Scope `orchestration:operate` an.
@@ -34,6 +36,8 @@ Die Verbindungsprüfung ist ein dauerhafter Auftrag. Sie prüft Netzwerk, Anmeld
 Code: [T3ConnectionRules](../src/AgentCatalog/Domain/T3ConnectionRules.php), [AgentCatalogHandler](../src/AgentCatalog/Application/AgentCatalogHandler.php), [T3OAuthAuthenticator](../src/Orchestration/Infrastructure/T3OAuthAuthenticator.php).
 
 ## MCP-Profil und tatsächlich genutzte Werkzeuge
+
+`T3McpSessionFactory` erstellt pro Verbindung mit der gespeicherten kanonischen URL und dem Zugriffstoken eine `ServerConnection` aus Symfony MCP Bundle.
 
 Der Client handelt ausschließlich MCP `2025-06-18` aus und deaktiviert Protokoll-Fallback. Eine abweichende ausgehandelte Version wird abgewiesen. Das im Pluginmanifest benannte Adapterprofil lautet `t3.mcp.v0_1_10`.
 
@@ -79,6 +83,7 @@ Ein beobachteter Lauf erhält dieselbe gespeicherte Thread-/Runreferenz. Ein neu
 Wie du den Falkenwarte-Skill im Zielprojekt installierst und den MCP-Zugang für deinen Agenten einrichtest, erklärt [Agent-Skill installieren](user/AGENT_SKILL.md).
 
 - [OpenAPI-Vertrag](../contracts/openapi.yaml): Verbindungen, OAuth-Callback, Projektbindungen und Run-/Recovery-Operationen.
-- [T3-MCP-Bridge](../src/Orchestration/Infrastructure/T3McpBridge.php), [RunHandler](../src/Orchestration/Application/RunHandler.php) und [Bridge-Manifest](../packages/t3-mcp-bridge/manifest.json).
+- [T3-MCP-Bridge](../src/Orchestration/Infrastructure/T3McpBridge.php), [Session-Factory](../src/Orchestration/Infrastructure/T3McpSessionFactory.php), [RunHandler](../src/Orchestration/Application/RunHandler.php) und [Bridge-Manifest](../packages/t3-mcp-bridge/manifest.json).
+- [Symfony MCP Bundle](https://symfony.com/doc/current/ai/bundles/mcp-bundle.html) liefert MCP-Transport- und Sitzungsbausteine. OAuth bleibt in Falkenwartes eigenem [T3OAuthAuthenticator](../src/Orchestration/Infrastructure/T3OAuthAuthenticator.php).
 - [T3-MCP-Verträge, v0.1.10](https://github.com/pingdotgg/t3code/blob/v0.1.10/packages/contracts/src/orchestratorMcp.ts) und [T3-OAuth-Implementierung, v0.1.10](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/auth/McpOAuth.ts).
 - [MCP-Protokollprofil 2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18).

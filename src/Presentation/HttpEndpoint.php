@@ -29,7 +29,6 @@ final readonly class HttpEndpoint
         private Gateway $gateway,
         private Contract $contract,
         private Live $live,
-        private McpEndpoint $mcp,
         private JournalHandler $journal,
         private DecoderInterface $serializer,
         #[Autowire('%kernel.environment%')]
@@ -64,9 +63,6 @@ final readonly class HttpEndpoint
             $origin = $request->headers->get('Origin');
             if (null !== $origin && $origin !== $request->getSchemeAndHttpHost()) {
                 throw new Problem(403, 'origin_forbidden', 'Die Anfrage stammt von einem anderen Ursprung.');
-            }
-            if ('/mcp' === $request->getPathInfo()) {
-                return $this->mcp->handle($request);
             }
             $name = $request->attributes->get('_route');
             $op = $this->contract->op($name);

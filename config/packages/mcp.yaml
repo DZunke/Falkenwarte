@@ -1,0 +1,25 @@
+mcp:
+  servers:
+    falkenwarte:
+      name: Falkenwarte
+      version: '%falkenwarte.app_version%'
+      description: Ticket operations for Falkenwarte projects
+      transports:
+        http: true
+        stdio: false
+      protocol_versions:
+        - '2025-06-18'
+      http:
+        path: /mcp
+        # Caddy forwards Host as 127.0.0.1; direct deployments use the public origin host.
+        allowed_hosts:
+          - '%env(key:host:url:FALKENWARTE_PUBLIC_ORIGIN)%'
+          - localhost
+          - 127.0.0.1
+          - '[::1]'
+      session:
+        store: file
+        lock:
+          enabled: true
+      registry:
+        tools: ['*']

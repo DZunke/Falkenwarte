@@ -5,60 +5,61 @@ declare(strict_types=1);
 namespace App\Classification\Infrastructure;
 
 use App\Classification\Application\DecisionProviderException;
+use App\Shared\Application\Store;
 use Symfony\AI\Platform\Model;
-use Symfony\AI\Platform\ModelCatalog\ModelCatalogInterface;
-use Symfony\AI\Platform\PlatformInterface;
-use Symfony\AI\Platform\Result\DeferredResult;
-use Symfony\AI\Platform\Result\InMemoryRawResult;
-use Symfony\Component\DependencyInjection\Attribute\AsAlias;
-use Symfony\Component\DependencyInjection\Attribute\AutoconfigureTag;
+use Symfony\AI\Platform\ModelClientInterface;
+use Symfony\AI\Platform\Result\RawHttpResult;
+use Symfony\AI\Platform\Result\RawResultInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
-/**
- * Compatibility bridge for the released Symfony AI Platform contract.
- * It calls the native OpenAI Decisions endpoint and is the only component that knows its wire format.
- */
-#[AsAlias(PlatformInterface::class)]
-#[AutoconfigureTag('ai.platform', ['name' => 'openai.decisions'])]
-final readonly class OpenAiDecisionsPlatform implements PlatformInterface
+/** The narrow Symfony AI model client for OpenAI's Decisions API, which has no locked official bridge. */
+final readonly class OpenAiDecisionsModelClient implements ModelClientInterface
 {
     private const string ENDPOINT = 'https://api.openai.com/v1/decisions';
 
     public function __construct(
         #[Autowire(service: 'decisions.client')]
         private HttpClientInterface $httpClient,
+        private Store $store,
         #[Autowire('%kernel.environment%')]
         private string $appEnv,
         #[Autowire('%env(DECISIONS_TEST_ENDPOINT)%')]
         private string $decisionsTestEndpoint,
-        #[Autowire(service: OpenAiDecisionsModelCatalog::class)]
-        private ModelCatalogInterface $modelCatalog,
-        private DecisionResultConverter $resultConverter,
     ) {
     }
 
-    public function invoke(string|Model $model, array|string|object $input, array $options = []): DeferredResult
+    public function supports(Model $model): bool
     {
-        $modelName = $model instanceof Model ? $model->getName() : $model;
-        if ('gpt-6-luna' !== $modelName) {
+        return 'gpt-6-luna' === $model->getName();
+    }
+
+    public function request(Model $model, array|string $payload, array $options = []): RawResultInterface
+    {
+        if (!$this->supports($model)) {
             throw new DecisionProviderException('Für die Klassifikation ist ausschließlich gpt-6-luna zugelassen.', retryable: false);
         }
 
-        $apiKey = $options['api_key'] ?? null;
+        $secretReferenceId = $options['secret_reference_id'] ?? null;
         $questions = $options['questions'] ?? null;
         $timeoutMs = $options['timeout_ms'] ?? 10000;
-        if (!is_string($apiKey) || '' === trim($apiKey) || !is_array($questions) || !is_int($timeoutMs)) {
+        if (!is_string($secretReferenceId) || '' === trim($secretReferenceId) || !is_array($questions) || !is_int($timeoutMs)) {
             throw new DecisionProviderException('Die Decisions-Verbindung ist nicht vollständig konfiguriert.', retryable: false);
         }
 
         $endpoint = $this->endpoint();
+        // Resolve the current credential only at the transport boundary so it never enters AI options, events, or results.
+        $apiKey = $this->store->secret($secretReferenceId);
+        if ('' === trim($apiKey)) {
+            throw new DecisionProviderException('Die Decisions-Verbindung ist nicht vollständig konfiguriert.', retryable: false);
+        }
+
         $nativeInput = [[
             'type' => 'message',
             'role' => 'user',
             'content' => [[
                 'type' => 'input_json',
-                'data' => $input,
+                'data' => $payload,
             ]],
         ]];
 
@@ -69,15 +70,13 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
                     'Content-Type' => 'application/json',
                 ],
                 'json' => [
-                    'model' => $modelName,
+                    'model' => $model->getName(),
                     'input' => $nativeInput,
                     'questions' => $this->normalizeQuestions($questions),
                 ],
                 'timeout' => max(0.5, $timeoutMs / 1000),
             ]);
             $status = $response->getStatusCode();
-            $body = $response->toArray(false);
-            $headers = $response->getHeaders(false);
         } catch (\Throwable $exception) {
             throw new DecisionProviderException('OpenAI Decisions ist vorübergehend nicht erreichbar.', retryable: true, previous: $exception);
         }
@@ -86,27 +85,8 @@ final readonly class OpenAiDecisionsPlatform implements PlatformInterface
             $retryable = 429 === $status || $status >= 500;
             throw new DecisionProviderException($retryable ? 'OpenAI Decisions ist vorübergehend nicht verfügbar.' : 'OpenAI Decisions hat die Anfrage abgewiesen.', retryable: $retryable);
         }
-        if (!isset($body['answers']) || !is_array($body['answers'])) {
-            throw new DecisionProviderException('OpenAI Decisions lieferte kein gültiges Antwortformat.', retryable: false);
-        }
 
-        $requestId = $headers['x-request-id'][0] ?? null;
-        $providerModel = $body['model'] ?? null;
-        $usage = $body['usage']['input_tokens'] ?? null;
-        $raw = new InMemoryRawResult($body);
-        $deferred = new DeferredResult($this->resultConverter, $raw);
-        $deferred->getMetadata()->set([
-            'request_id' => is_string($requestId) ? $requestId : null,
-            'model' => is_string($providerModel) ? $providerModel : null,
-            'input_tokens' => is_int($usage) ? $usage : null,
-        ]);
-
-        return $deferred;
-    }
-
-    public function getModelCatalog(): ModelCatalogInterface
-    {
-        return $this->modelCatalog;
+        return new RawHttpResult($response);
     }
 
     /** @param array<mixed> $questions @return list<array<string, mixed>> */

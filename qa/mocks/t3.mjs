@@ -82,8 +82,10 @@ function oauthResponse(response, status, body) {
 
 async function oauthRequest(request, response, pathname) {
   const origin = originOf(request);
-  if (pathname === '/.well-known/oauth-protected-resource/mcp' && request.method === 'GET') {
-    return oauthResponse(response, 200, { resource: `${origin}/mcp`, issuer: origin, authorization_servers: [origin] });
+  const protectedResourceSuffix = '/.well-known/oauth-protected-resource/mcp';
+  if (pathname.endsWith(protectedResourceSuffix) && request.method === 'GET') {
+    const prefix = pathname.slice(0, -protectedResourceSuffix.length);
+    return oauthResponse(response, 200, { resource: `${origin}${prefix}/mcp`, issuer: origin, authorization_servers: [origin] });
   }
   if (pathname === '/.well-known/oauth-authorization-server' && request.method === 'GET') {
     return oauthResponse(response, 200, {
@@ -370,7 +372,8 @@ function externalActivity(body) {
 async function mcpRequest(request, response) {
   noStore(response);
   const pathname = pathOf(request);
-  if (pathname === '/mcp' && request.method === 'DELETE') {
+  const allowedEndpoints = ['/mcp', '/alternate/mcp'];
+  if (allowedEndpoints.includes(pathname) && request.method === 'DELETE') {
     const namespace = namespaceFor(request.headers.authorization);
     const sessionId = request.headers['mcp-session-id'];
     const version = request.headers['mcp-protocol-version'];
@@ -399,7 +402,7 @@ async function mcpRequest(request, response) {
     response.end();
     return;
   }
-  if (pathname === '/mcp' && request.method === 'GET') {
+  if (allowedEndpoints.includes(pathname) && request.method === 'GET') {
     response.writeHead(405, { Allow: 'POST, DELETE' });
     response.end();
     return;
@@ -409,6 +412,7 @@ async function mcpRequest(request, response) {
   const sessionId = request.headers['mcp-session-id'];
   const version = request.headers['mcp-protocol-version'];
   const entry = {
+    path: pathname,
     method: body?.method ?? null,
     request_id: body?.id ?? null,
     tool: body?.params?.name ?? null,
@@ -418,7 +422,7 @@ async function mcpRequest(request, response) {
     arguments_hash: body?.params?.arguments ? hash(body.params.arguments) : null,
   };
 
-  if (request.method !== 'POST' || pathname !== '/mcp') {
+  if (request.method !== 'POST' || !allowedEndpoints.includes(pathname)) {
     recordUnexpected({ ...entry, http_method: request.method, path: pathOf(request) });
     return sendJson(response, 404, { error: { message: 'Unknown MCP endpoint.' } });
   }
@@ -579,11 +583,11 @@ startServer(port, async (request, response) => {
   if (pathname === '/__qa/journal' && request.method === 'GET') {
     return sendJson(response, 200, { scenario: state.scenario, journal: state.journal, unexpected: state.unexpected, accepted_launches: Object.values(state.acceptedLaunches).map(({ namespace, clientRequestId, payloadHash, payload, response: launchResponse, replays }) => ({ namespace, clientRequestId, payloadHash, payload, response: launchResponse, replays })) });
   }
-  if (pathname.startsWith('/.well-known/') || ['/register', '/authorize', '/token'].includes(pathname)) {
+  if (pathname.startsWith('/.well-known/') || pathname.endsWith('/.well-known/oauth-protected-resource/mcp') || ['/register', '/authorize', '/token'].includes(pathname)) {
     const handled = await oauthRequest(request, response, pathname);
     if (handled !== false) return handled;
   }
-  if (pathname === '/mcp') return mcpRequest(request, response);
+  if (['/mcp', '/alternate/mcp'].includes(pathname)) return mcpRequest(request, response);
   recordUnexpected({ http_method: request.method, path: pathname });
   return sendJson(response, 404, { error: { message: 'Unknown mock path.' } });
 });

@@ -659,7 +659,7 @@ final class IntakeHandler implements OperationHandler, TaskIntake
             throw new DecisionProviderException('Die OpenAI-Secret-Referenz ist nicht eingerichtet.', retryable: false);
         }
 
-        $apiKey = $this->store->secret($configuration['secret_reference_id']);
+        $secretReferenceId = $configuration['secret_reference_id'];
         $request = $this->classificationRequest($task, $intake, $policy, $routing, $taxonomy);
         $requests = [$request];
         $requestFingerprint = $this->fingerprint($requests);
@@ -667,7 +667,7 @@ final class IntakeHandler implements OperationHandler, TaskIntake
         $attemptNo = 0;
         $response = null;
         $failure = null;
-        $response = $this->requestDecisions($request, $apiKey, $configuration, $attemptNo, $failure);
+        $response = $this->requestDecisions($request, $secretReferenceId, $configuration, $attemptNo, $failure);
 
         if (null !== $failure || null === $response) {
             $this->saveFailedClassification($task, $intake, $taxonomy, $policy, $routing, $inputFingerprint, $requestFingerprint, $attemptNo, $failure);
@@ -689,7 +689,7 @@ final class IntakeHandler implements OperationHandler, TaskIntake
             $followUp = $this->classificationRequest($task, $intake, $policy, $routing, $taxonomy, $workflowAnswer['choice'], missingOnly: true);
             if ([] !== $followUp['questions']) {
                 $requests[] = $followUp;
-                $followUpResponse = $this->requestDecisions($followUp, $apiKey, $configuration, $attemptNo, $failure);
+                $followUpResponse = $this->requestDecisions($followUp, $secretReferenceId, $configuration, $attemptNo, $failure);
                 $requestFingerprint = $this->fingerprint($requests);
                 if (null !== $failure || null === $followUpResponse) {
                     $this->saveFailedClassification($task, $intake, $taxonomy, $policy, $routing, $inputFingerprint, $requestFingerprint, $attemptNo, $failure);
@@ -1165,7 +1165,7 @@ final class IntakeHandler implements OperationHandler, TaskIntake
     }
 
     /** @param array<string, mixed> $request @param array<string, mixed> $configuration @param int $attempts @param DecisionProviderException|null $failure @return array<string, mixed>|null */
-    private function requestDecisions(array $request, string $apiKey, array $configuration, int &$attempts, ?DecisionProviderException &$failure): ?array
+    private function requestDecisions(array $request, string $secretReferenceId, array $configuration, int &$attempts, ?DecisionProviderException &$failure): ?array
     {
         $response = null;
         $failure = null;
@@ -1175,7 +1175,7 @@ final class IntakeHandler implements OperationHandler, TaskIntake
             ++$attempts;
             try {
                 $this->assertRequestBudget((int) $configuration['max_requests_per_hour']);
-                $response = $this->decisionGateway->decide($request, $apiKey, $configuration['timeout_ms']);
+                $response = $this->decisionGateway->decide($request, $secretReferenceId, $configuration['timeout_ms']);
                 $failure = null;
                 break;
             } catch (DecisionProviderException $exception) {
