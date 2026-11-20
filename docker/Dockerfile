@@ -82,7 +82,7 @@ RUN composer install --working-dir=/app --no-dev --no-interaction --no-progress 
 WORKDIR /app
 ARG VCS_REF=unknown
 # x-release-please-start-version
-ARG APP_VERSION=0.2.2
+ARG APP_VERSION=0.3.0
 # x-release-please-end
 ARG SOURCE_DATE_EPOCH
 ARG DEBIAN_SNAPSHOT=20261104T212339Z

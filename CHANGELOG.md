@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/DZunke/Falkenwarte/compare/v0.2.2...v0.3.0) (2026-11-20)
+
+
+### Features
+
+* guide T3 onboarding and link agent reports to ticket criteria ([#21](https://github.com/DZunke/Falkenwarte/issues/21)) ([4353a02](https://github.com/DZunke/Falkenwarte/commit/4353a0213a7626713fb6fb3df3a37bd3646b9507))
+* show task flows and provide a skill for dispatched agents ([#16](https://github.com/DZunke/Falkenwarte/issues/16)) ([a2c0324](https://github.com/DZunke/Falkenwarte/commit/a2c0324deced41035e6a2d0d38fa2a236256c518))
+
+
+### Bug Fixes
+
+* keep handbook anchors and wide tables readable on mobile ([#17](https://github.com/DZunke/Falkenwarte/issues/17)) ([636e37d](https://github.com/DZunke/Falkenwarte/commit/636e37dd32a68c26fccbe8920bb065029b40e70c))
+* load T3 projects and check results for the displayed connection ([#19](https://github.com/DZunke/Falkenwarte/issues/19)) ([f14a590](https://github.com/DZunke/Falkenwarte/commit/f14a590bfd150be827b201ddf602917aec8a8bda))
+
+
+### Performance Improvements
+
+* **ci:** reuse the E2E stack and cache builds and dependencies ([#14](https://github.com/DZunke/Falkenwarte/issues/14)) ([a8ce8bb](https://github.com/DZunke/Falkenwarte/commit/a8ce8bb4cd76e3ff2e083cec56d30306f01b0717))
+
 ## [0.2.2](https://github.com/DZunke/Falkenwarte/compare/v0.2.1...v0.2.2) (2026-11-20)
 
 
