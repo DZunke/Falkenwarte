@@ -266,6 +266,7 @@ test('an owner links an existing run report to both criteria, confirms them, and
   const reportId = randomUUID();
   const evidenceLabel = 'Agentenbericht Installation und Tests';
   const staleEvidenceLabel = 'Unzugeordneter älterer Prüfbericht';
+  let reportEvidenceIds = [];
   try {
     const report = await reporter.agent.call('runs_report_result', {
       run_id: run.id,
@@ -284,6 +285,8 @@ test('an owner links an existing run report to both criteria, confirms them, and
     expect(report.isError, JSON.stringify(report.structuredContent)).toBe(false);
     const storedReport = await readUntil(ownerApi, `/runs/${runId}/result-reports/${reportId}`, (item) => item.id === reportId, 'Der echte Ergebnisbericht muss lesbar sein.');
     expect(storedReport.evidence_ids).toHaveLength(2);
+    expect(storedReport.task_revision).toBe(current.data.version);
+    reportEvidenceIds = storedReport.evidence_ids;
   } finally {
     await reporter.close();
   }
@@ -302,7 +305,7 @@ test('an owner links an existing run report to both criteria, confirms them, and
   await dialog.getByRole('button', { name: 'Zuordnung speichern', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect.poll(async () => (await ownerApi.get(taskPath)).data.criteria.map((item) => [item.state, item.evidence_ids]))
-    .toEqual(criteria.map(() => ['reported', [evidence.data.id]]));
+    .toEqual(criteria.map(() => ['reported', [reportEvidenceIds[0]]]));
 
   for (const criterion of criteria) {
     await details.getByRole('button', { name: 'Bestätigen', exact: true }).first().click();
@@ -318,7 +321,7 @@ test('an owner links an existing run report to both criteria, confirms them, and
   expect(evidenceList.data.items).toHaveLength(2);
   const assignedEvidence = evidenceList.data.items.find((item) => item.label === evidenceLabel);
   const unassignedEvidence = evidenceList.data.items.find((item) => item.label === staleEvidenceLabel);
-  expect(assignedEvidence).toMatchObject({ run_id: runId, review_status: 'reported', task_revision: current.data.version });
+  expect(assignedEvidence).toMatchObject({ run_id: runId, review_status: 'reported' });
   expect(unassignedEvidence).toMatchObject({ run_id: runId, review_status: 'reported', task_revision: current.data.version });
   const completedTask = (await ownerApi.get(taskPath)).data;
   expect(completedTask.status_category).toBe('done');
@@ -328,6 +331,7 @@ test('an owner links an existing run report to both criteria, confirms them, and
     evidence_ids: [assignedEvidence.id],
   })));
   expect(assignedEvidence.task_revision).not.toBe(completedTask.version);
+  expect(assignedEvidence.task_revision).toBeLessThan(completedTask.version);
   expect(unassignedEvidence.task_revision).not.toBe(completedTask.version);
 
   await ownerPage.keyboard.press('Escape');
@@ -336,7 +340,7 @@ test('an owner links an existing run report to both criteria, confirms them, and
   const reopenedDetails = ownerPage.getByRole('tabpanel', { name: 'Details' });
   const assignedCard = reopenedDetails.locator('div.rounded-lg.border.p-3').filter({ hasText: evidenceLabel });
   await expect(assignedCard).toContainText('Bereits zugeordnet: Abhängigkeiten installiert · Tests erfolgreich');
-  await expect(assignedCard).toContainText(`Nachweis aus Ticketversion ${current.data.version}.`);
+  await expect(assignedCard).toContainText(`Nachweis aus Ticketversion ${assignedEvidence.task_revision}.`);
   await expect(assignedCard.getByText('Gemeldet', { exact: true })).toBeVisible();
   await expect(assignedCard.getByText('Veraltet', { exact: true })).toHaveCount(0);
   await expect(assignedCard.getByText(/Dieser Nachweis bezieht sich auf Ticketversion/)).toHaveCount(0);
@@ -347,6 +351,6 @@ test('an owner links an existing run report to both criteria, confirms them, and
   await expect(actuallyStaleCard.getByRole('button', { name: 'Kriterien zuordnen', exact: true })).toHaveCount(0);
   recordEvidence(
     'Ein gemeldeter Run-Nachweis bleibt nach manueller Zuordnung zu zwei bestätigten Kriterien verwendbar und erhält bei abweichender Ticketrevision nur einen Herkunftshinweis; ein nicht zugeordneter Nachweis derselben älteren Version bleibt sichtbar veraltet.',
-    `Der Browserlauf erzeugte einen echten T3-Run und Ergebnisbericht mit zwei Nachweisen der Ticketrevision ${current.data.version}. Einer wurde manuell beiden Kriterien zugeordnet und beide wurden fachlich bestätigt. Nach dem Statuswechsel Bereit→Erledigt und erneutem Öffnen standen beide Kriterien auf human_confirmed. Die zugeordnete Run-Evidenz blieb ohne Badge „Veraltet“ und ohne veraltete Zuordnungswarnung sichtbar, zeigte aber „Nachweis aus Ticketversion ${current.data.version}.“; eine Neuzuordnung war nicht angeboten. Der zweite, unzugeordnete Nachweis derselben älteren Version wurde weiterhin mit „Veraltet“ und dem Hinweis, dass er sich nicht zuordnen lässt, angezeigt.`,
+    `Der Browserlauf erzeugte einen echten T3-Run und Ergebnisbericht mit der eingefrorenen Ticketrevision ${current.data.version}. Einer seiner Nachweise wurde manuell beiden Kriterien zugeordnet und beide wurden fachlich bestätigt. Nach dem Statuswechsel Bereit→Erledigt und erneutem Öffnen standen beide Kriterien auf human_confirmed. Die zugeordnete Run-Evidenz blieb ohne Badge „Veraltet“ und ohne veraltete Zuordnungswarnung sichtbar, zeigte aber „Nachweis aus Ticketversion ${assignedEvidence.task_revision}.“; diese Herkunftsversion lag unter der abgeschlossenen Ticketrevision ${completedTask.version}, und eine Neuzuordnung war nicht angeboten. Der zweite, unzugeordnete Nachweis derselben älteren Version wurde weiterhin mit „Veraltet“ und dem Hinweis, dass er sich nicht zuordnen lässt, angezeigt.`,
   );
 });
