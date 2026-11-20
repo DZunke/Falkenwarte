@@ -169,9 +169,11 @@ test('ältere T3-Server behalten Projektstandard und bekannte manuelle Referenz-
   expect(manualProfile.execution_target).toEqual({ mode: 't3_reference_thread', reference_thread_id: knownThreadId });
 
   const t3 = await qaMocks.t3Journal();
-  const advertisedTools = t3.journal.find((entry) => entry.method === 'tools/list' && entry.tool_names);
+  const legacyRequests = t3.journal.filter((entry) => entry.scenario === 'without_thread_list');
+  const advertisedTools = legacyRequests.find((entry) => entry.method === 'tools/list' && entry.tool_names);
+  expect(advertisedTools, 'Der Mock muss die tatsächlich angefragte Legacy-Werkzeugliste belegen.').toBeTruthy();
   expect(advertisedTools.tool_names).not.toContain('t3_thread_list');
-  expect(t3.journal.some((entry) => entry.tool === 't3_thread_list')).toBe(false);
+  expect(legacyRequests.some((entry) => entry.tool === 't3_thread_list')).toBe(false);
   expect(t3.unexpected).toEqual([]);
   recordEvidence(
     'Bei älteren T3-Servern bleibt der Projektstandard ohne Threadlistenaufruf verfügbar; eine bekannte Referenzthread-ID lässt sich weiterhin manuell hinterlegen.',

@@ -420,12 +420,14 @@ function externalActivity(body) {
 
 async function mcpRequest(request, response) {
   noStore(response);
+  const scenario = state.scenario;
   const pathname = pathOf(request);
   if (pathname === '/mcp' && request.method === 'DELETE') {
     const namespace = namespaceFor(request.headers.authorization);
     const sessionId = request.headers['mcp-session-id'];
     const version = request.headers['mcp-protocol-version'];
     const entry = {
+      scenario,
       method: 'session_terminate',
       request_id: null,
       tool: null,
@@ -460,6 +462,7 @@ async function mcpRequest(request, response) {
   const sessionId = request.headers['mcp-session-id'];
   const version = request.headers['mcp-protocol-version'];
   const entry = {
+    scenario,
     path: pathname,
     mock_origin: originOf(request),
     method: body?.method ?? null,
@@ -479,13 +482,13 @@ async function mcpRequest(request, response) {
     appendJournal({ ...entry, outcome: 'unauthorized' });
     return sendJson(response, 401, { error: { message: 'Fixture OAuth bearer required.' } });
   }
-  if (state.scenario === 'http_401' && body?.method !== 'initialize') {
+  if (scenario === 'http_401' && body?.method !== 'initialize') {
     appendJournal({ ...entry, outcome: 'unauthorized' });
     return sendJson(response, 401, { error: { message: 'Fixture authorization expired.' } });
   }
   if (body?.method === 'initialize') {
     const requested = body.params?.protocolVersion;
-    if (state.scenario === 'unsupported_protocol' || requested !== transcript.protocol_version) {
+    if (scenario === 'unsupported_protocol' || requested !== transcript.protocol_version) {
       appendJournal({ ...entry, outcome: 'unsupported_protocol' });
       return sendJson(response, 400, { jsonrpc: '2.0', id: body.id, error: { code: -32602, message: 'Unsupported MCP protocol version.' } });
     }
@@ -505,7 +508,7 @@ async function mcpRequest(request, response) {
     appendJournal({ ...entry, outcome: 'invalid_session' });
     return sendJson(response, 404, { jsonrpc: '2.0', id: body?.id, error: { code: -32001, message: 'Unknown or expired MCP session.' } });
   }
-  if (state.scenario === 'session_expired' && body?.method !== 'notifications/initialized') {
+  if (scenario === 'session_expired' && body?.method !== 'notifications/initialized') {
     delete state.sessions[sessionId];
       state.scenario = 'default';
     appendJournal({ ...entry, outcome: 'session_expired' });
@@ -526,7 +529,7 @@ async function mcpRequest(request, response) {
   }
   if (body?.method === 'tools/list') {
     const tools = allTools();
-    const compatibleTools = state.scenario === 'without_thread_list'
+    const compatibleTools = scenario === 'without_thread_list'
       ? tools.filter((tool) => tool.name !== 't3_thread_list')
       : tools;
     appendJournal({ ...entry, outcome: 'success', tool_names: compatibleTools.map((tool) => tool.name) });
@@ -535,11 +538,11 @@ async function mcpRequest(request, response) {
   if (body?.method === 'tools/call') {
     const name = body.params?.name;
     const args = body.params?.arguments ?? {};
-    if (state.scenario === 'protocol_error') {
+    if (scenario === 'protocol_error') {
       appendJournal({ ...entry, outcome: 'jsonrpc_error' });
       return sendJson(response, 200, { jsonrpc: '2.0', id: body.id, error: { code: -32603, message: 'Fixture protocol error.' } });
     }
-    const fault = state.scenario;
+    const fault = scenario;
     const outcome = callTool(namespace, name, args, fault);
     const threadListResult = name === 't3_thread_list' ? outcome.result.structuredContent : null;
     appendJournal({

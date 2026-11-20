@@ -417,6 +417,7 @@ function sanitizeMockJournal(name, journal) {
       unexpected: journal.unexpected.map((entry) => ({ method: entry.method, path: entry.path, tool: entry.tool, outcome: entry.outcome })),
       requests: journal.journal.map((entry) => ({
         sequence: entry.sequence,
+        scenario: entry.scenario ?? null,
         path: entry.path ?? null,
         mock_origin: entry.mock_origin ?? null,
         method: entry.method,
