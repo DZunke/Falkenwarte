@@ -490,7 +490,7 @@ export function WorkflowStagesEditor({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h4 className="font-medium">Übergänge und Ergebnisrouten</h4>
-            <p className="mt-1 text-xs text-muted-foreground">Pro Phasenergebnis gibt es höchstens eine Standardroute und je aktivem Themenlabel eine eigene Alternative. Ein passendes Themenlabel aus dem Agentenbericht wählt seine Route; ohne Label gilt die Standardroute. „Änderungen nötig“ zählt zur festgelegten Reparaturgrenze. Gespeicherte Übergangsbedingungen bleiben bei Änderungen erhalten.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Für jedes Ergebnis kannst du eine Standardroute und Alternativen mit Themenlabels festlegen. Wählt der Agent keine Route, gilt das passende Themenlabel am Ticket. Bei mehreren Treffern wartet der Workflow auf Klärung. Ohne Treffer nutzt er die Standardroute, falls eine eingerichtet ist.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={addTransition} disabled={disabled || transitions.length >= 100 || !nextEdge}>
