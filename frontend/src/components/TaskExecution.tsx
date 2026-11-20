@@ -60,9 +60,14 @@ function runIsActive(run: Run): boolean {
 }
 
 function runSource(target: Run['snapshot']['execution_target']): string {
-  return target.mode === 't3_reference_thread'
-    ? `T3-Referenzthread ${target.reference_thread_id}`
-    : 'T3-Projektstandard'
+  switch (target.mode) {
+    case 't3_provider_instance':
+      return `T3-Providerinstanz ${target.provider_instance_id} · ${target.model}`
+    case 't3_reference_thread':
+      return `T3-Referenzthread ${target.reference_thread_id}`
+    case 't3_project_default':
+      return 'T3-Projektstandard'
+  }
 }
 
 function attemptReference(label: string, value: string | null) {

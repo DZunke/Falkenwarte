@@ -34,7 +34,7 @@ final class AgentCatalogHandler implements OperationHandler
         return in_array($op, [
             'project_binding_get', 'project_binding_set', 'project_t3_threads_list',
             'connections_list', 'connections_create', 'connections_get', 'connections_update', 'connections_check', 'connection_check_get',
-            'connection_capabilities_get', 'connection_projects_list', 'connection_oauth_start', 'connection_oauth_callback', 'connection_credentials_remove',
+            'connection_capabilities_get', 'connection_providers_list', 'connection_projects_list', 'connection_oauth_start', 'connection_oauth_callback', 'connection_credentials_remove',
             'agent_profiles_list', 'agent_profiles_create', 'agent_profiles_get', 'agent_profiles_replace',
         ], true);
     }
@@ -53,6 +53,7 @@ final class AgentCatalogHandler implements OperationHandler
             'connections_check' => $this->checkConnection($this->pathId($p, 'connection_id'), $actor),
             'connection_check_get' => $this->getConnectionCheck($this->pathId($p, 'connection_id'), $actor),
             'connection_capabilities_get' => $this->getCapabilities($this->pathId($p, 'connection_id'), $actor),
+            'connection_providers_list' => $this->listRemoteProviders($this->pathId($p, 'connection_id'), $p['search'] ?? null, $actor),
             'connection_projects_list' => $this->listRemoteProjects($this->pathId($p, 'connection_id'), $p, $actor),
             'connection_oauth_start' => $this->startOAuth($this->pathId($p, 'connection_id'), $body, $actor),
             'connection_oauth_callback' => $this->finishOAuth($p),
@@ -198,6 +199,20 @@ final class AgentCatalogHandler implements OperationHandler
             ?? throw new Problem(404, 'resource_not_found', 'Der angeforderte Eintrag wurde nicht gefunden.');
     }
 
+    /** @return array<string, mixed> */
+    private function listRemoteProviders(string $id, ?string $search, Actor $actor): array
+    {
+        $actor->requireOwner();
+        $connection = $this->catalog->connection($id);
+        try {
+            $capabilities = $this->bridge->capabilities($connection, $this->connectionToken($id), $search);
+        } catch (T3ConnectionFailure $exception) {
+            throw new Problem(502, 't3_unavailable', $exception->getMessage());
+        }
+
+        return ['providers' => $capabilities['providers']];
+    }
+
     /** @param array<string, mixed> $p @return array<string, mixed> */
     private function listRemoteProjects(string $id, array $p, Actor $actor): array
     {
@@ -218,7 +233,7 @@ final class AgentCatalogHandler implements OperationHandler
         ];
     }
 
-    /** @param array<string, mixed> $p @return array{items: list<array{id: string, title: string}>, next_cursor: ?string, has_more: bool} */
+    /** @param array<string, mixed> $p @return array{items: list<array{id: string, title: string, provider_instance_id?: string, model?: string}>, next_cursor: ?string, has_more: bool} */
     private function listProjectThreads(string $projectId, array $p, Actor $actor): array
     {
         $actor->requireOwner();

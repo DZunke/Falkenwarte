@@ -25,8 +25,15 @@ final readonly class DispatchRequest
 
         if (isset($payload['modelSelection'])) {
             $selection = $payload['modelSelection'];
-            if (!is_array($selection) || !is_string($selection['instanceId'] ?? null) || !is_string($selection['model'] ?? null)) {
-                throw new \InvalidArgumentException('A reference-thread dispatch needs its resolved T3 routing values.');
+            if (!is_array($selection)
+                || !is_string($selection['instanceId'] ?? null)
+                || '' === trim($selection['instanceId'])
+                || 1 !== preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D', $selection['instanceId'])
+                || !is_string($selection['model'] ?? null)
+                || '' === trim($selection['model'])
+                || $selection['model'] !== trim($selection['model'])
+                || mb_strlen($selection['model']) > 256) {
+                throw new \InvalidArgumentException('An explicit T3 model selection needs an instance ID and model.');
             }
         }
 

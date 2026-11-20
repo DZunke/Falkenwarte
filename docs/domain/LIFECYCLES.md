@@ -42,7 +42,9 @@ Der [Ticket-Receipt-Vertrag v1](../../contracts/schemas/ticket-receipt.schema.js
 
 ## Runs und Workflows
 
-Ein Run benötigt eine aktuelle Aufgabenrevision, eine startbereite Agentenkonfiguration, Projekt- und Verbindungsbindung, aktivierten Ausführungsprovider sowie eine erlaubte Workflowphase. Neue Runs werden mit Snapshot im Zustand `queued` gespeichert und über `run.dispatch` an den Hintergrundworker gestellt.
+Ein Run benötigt eine aktuelle Aufgabenrevision, eine startbereite Agentenkonfiguration, Projekt- und Verbindungsbindung, aktivierten Ausführungsprovider sowie eine erlaubte Workflowphase. Das Agentprofil legt fest, ob T3 seinen Projektstandard, ein validiertes Referenzthreadziel oder eine ausdrücklich gewählte Providerinstanz samt Modell erhält. Neue Runs werden mit diesem Ziel im Snapshot im Zustand `queued` gespeichert und über `run.dispatch` an den Hintergrundworker gestellt.
+
+Beim direkten Providerziel stammen Instanz-ID und Modell-ID aus der aktuellen T3-Auswahl und werden gemeinsam im Dispatch-Snapshot eingefroren. Beim Projektstandard wird `modelSelection` ausgelassen, damit T3 seinen Standard bei Annahme auflöst. Ein Referenzthread liefert nur belegte Routingwerte, die Falkenwarte für den Start eines neuen T3-Threads verwendet; der Verlauf des Referenzthreads wird nicht als Kontext übernommen.
 
 | Runzustand | Bedeutung |
 |---|---|

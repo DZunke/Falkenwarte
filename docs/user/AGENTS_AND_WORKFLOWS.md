@@ -26,13 +26,27 @@ Nach der Zuordnung kannst du über **Agentrolle einrichten** direkt eine Rolle f
 
 ## Agentrollen verwalten
 
-Öffne **Agentrollen** in der Hauptnavigation und lege dort eine Rolle mit Name, Aufgabenrolle, T3-Verbindung und mindestens einem erlaubten Falkenwarte-Projekt an. **Agentrolle einrichten** aus einer Projektzeile übernimmt das Projekt und die T3-Verbindung. Das Ausführungsziel **T3-Projektstandard** verwendet beim Start die Agentkonfiguration des gebundenen T3-Projekts einschließlich der dort gewählten Provider und Modelle.
+Öffne **Agentrollen** in der Hauptnavigation und lege dort eine Rolle mit Name, Aufgabenrolle, T3-Verbindung und mindestens einem erlaubten Falkenwarte-Projekt an. **Agentrolle einrichten** aus einer Projektzeile übernimmt das Projekt und die T3-Verbindung. Das Ausführungsziel **T3-Projektstandard** überlässt T3 die Auswahl anhand der im gebundenen T3-Projekt eingerichteten Standardkonfiguration.
 
-Für einen konkreten vorhandenen T3-Thread wähle als Ausführungsziel **Vorhandener Referenzthread**. Danach kannst du unter **Referenzthread aus T3** einen angebotenen Thread wählen oder mit **ID manuell eingeben** selbst eine Thread-ID angeben.
+| Ausführungsziel | Wann es passt |
+| --- | --- |
+| **T3-Projektstandard** | T3 soll die im gebundenen Projekt eingerichtete Standardkonfiguration verwenden. |
+| **T3-Providerinstanz** | Du willst eine bestimmte von T3 gemeldete Providerinstanz und ein Modell auswählen; dafür ist kein Referenzthread nötig. |
+| **Vorhandener Referenzthread** | Du willst Routingwerte eines bestehenden Threads aus dem gebundenen T3-Projekt als Vorlage verwenden. |
 
-Die Projektbindung ordnet das Falkenwarte-Projekt einem T3-Projekt zu. Das Ausführungsziel der Rolle bestimmt, ob T3 seinen Projektstandard oder den ausgewählten Referenzthread für einen Auftrag verwendet. Beide Einstellungen werden in Falkenwarte gespeichert.
+Für **T3-Providerinstanz** fragt Falkenwarte die von der T3-Verbindung gemeldeten verfügbaren Instanzen und Modelle ab. Unter **Providerinstanz aus T3** wird der eindeutige Instanz-Slug neben dem Anzeigenamen gezeigt; unter **Modell aus T3** wählst du eine Modell-ID dieser Instanz. Ist genau ein Modell verfügbar und die Liste vollständig, wird es vorausgewählt. Bei mehreren Modellen wählst du selbst. Wenn T3 eine gekürzte Liste meldet, kannst du **Modellsuche in T3** und **Modelle suchen** verwenden; Falkenwarte trifft dann keine automatische Vorauswahl. Mit **Provider neu laden** kannst du die Instanzen erneut aus T3 abrufen.
 
-Die Projektbindung und das Ausführungsziel benötigen keinen eingerichteten MCP-Zugang des Agents. Stelle den technischen MCP-Zugang separat einmalig für Agents aus, die Ticketkontext lesen oder Ergebnisse an Falkenwarte melden sollen. [Agent-Skill und MCP-Zugang einrichten](AGENT_SKILL.md)
+Providerzugang, Zugangsdaten, Providerparameter wie Argumente und Umgebungswerte sowie Arbeitsverzeichnisse und Berechtigungen bleiben in T3. Falkenwarte speichert bei **T3-Providerinstanz** nur den eindeutigen Slug der gewählten Instanz und die Modell-ID als Ausführungsziel. Nach Änderungen an T3-Einstellungen kannst du die Auswahl in Falkenwarte erneut laden; ein zusätzlicher Verbindungstest ist dafür nicht erforderlich. Eine Rollenbezeichnung oder ein Freitext im Auftrag ersetzt diese explizite Zielauswahl nicht.
+
+Wenn eine gespeicherte Providerinstanz nicht mehr angeboten wird, kannst du die vorhandene Rolle über **Ausführungsziel ändern** auf ein anderes T3-Ziel umstellen. Die Änderung gilt für spätere Starts; bereits gespeicherte Runs behalten ihren eingefrorenen Ziel-Snapshot.
+
+Wenn du ein bestehendes T3-Threadziel weiterverwenden möchtest, wähle **Vorhandener Referenzthread**. Unter **Referenzthread aus T3** kannst du einen angebotenen Thread wählen oder mit **ID manuell eingeben** eine bekannte Thread-ID eintragen. T3 muss für diesen Thread die Provider- und Modellreferenz liefern, und der Thread muss zum gebundenen T3-Projekt gehören.
+
+Für zwei aufeinanderfolgende Rollen wie **Bearbeitung** und **Review** kannst du in T3 im gebundenen Projekt je einen Referenzthread mit passendem Provider und Modell auswählen und speichern. Benenne die Threads so, dass ihre Aufgabe erkennbar ist, und weise jeder Falkenwarte-Rolle im Modus **Vorhandener Referenzthread** den entsprechenden Thread zu. Alternativ wählst du bei jeder Rolle direkt **T3-Providerinstanz**; dafür ist kein Referenzthread nötig. Ein Referenzthread überträgt nur die von T3 gelieferten Routingwerte. Jeder neue Auftrag startet einen neuen T3-Thread und übernimmt weder den Gesprächsverlauf noch Skills oder Berechtigungen des Referenzthreads. Läufe für dasselbe gebundene T3-Projekt werden nacheinander ausgeführt.
+
+Die Projektbindung ordnet das Falkenwarte-Projekt einem T3-Projekt zu. Das Ausführungsziel der Rolle legt fest, ob T3 seinen Projektstandard, das Provider-/Modellziel aus einem Referenzthread oder eine ausdrücklich gewählte Providerinstanz mit Modell erhält. Falkenwarte speichert diese Auswahl mit der Rolle und friert sie für einen Start ein.
+
+Die Projektbindung und das Ausführungsziel benötigen weder einen lokalen Provider in Falkenwarte noch einen MCP-Zugang des Agents. Richte Provider und Instanzoptionen in T3 ein. Stelle den technischen MCP-Zugang separat für Agents bereit, die Ticketkontext lesen oder Ergebnisse an Falkenwarte melden sollen. [Agent-Skill und MCP-Zugang einrichten](AGENT_SKILL.md)
 
 Eine Rolle lässt sich nur starten, wenn sie aktiviert, korrekt konfiguriert und für das aktuelle Projekt freigegeben ist. Pro Rolle ist höchstens ein gleichzeitiger Auftrag vorgesehen.
 

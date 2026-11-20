@@ -985,6 +985,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Aktuelle T3-Providerinstanzen und Modelle lesen
+         * @description Fragt die autorisierte T3-Verbindung live ab. Die Liste ist keine lokal gepflegte Providerkonfiguration und wird nicht aus einem möglicherweise veralteten Capability-Snapshot abgeleitet.
+         */
+        get: operations["connection_providers_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/projects": {
         parameters: {
             query?: never;
@@ -3139,11 +3161,31 @@ export interface components {
         RestoreRequest: {
             reason: string;
         };
-        /** @description Lesende Information aus T3; keine Provider- oder Modellkonfiguration in Falkenwarte. */
+        /** @description Lesende Information aus T3; Modelle sind in älteren Capability-Snapshots möglicherweise nicht enthalten. */
         ProviderCapability: {
-            provider_instance_id: string;
+            provider_instance_id: components["schemas"]["T3ProviderInstanceId"];
             display_name: string | null;
             available: boolean;
+            models?: components["schemas"]["ProviderModel"][];
+            omitted_models?: number;
+        };
+        ProviderModel: {
+            id: string;
+            label?: string | null;
+        };
+        /** @description T3-Instanz-Slug. Groß- und Kleinschreibung sind unterscheidbar. */
+        T3ProviderInstanceId: string;
+        /** @description Frisch von T3 gelesene Providerinstanzen mit Modellen; keine Provider- oder Modellkonfiguration in Falkenwarte. */
+        ProviderInventory: {
+            providers: components["schemas"]["ProviderInstance"][];
+        };
+        /** @description Aktuell von T3 gelieferte Providerinstanz. Die ID identifiziert eine Instanz innerhalb einer Verbindung; Modelle sind T3-Modell-IDs. `omitted_models` gibt bei gekürzten Katalogen die ausgelassenen Modelltreffer an. */
+        ProviderInstance: {
+            provider_instance_id: components["schemas"]["T3ProviderInstanceId"];
+            display_name: string | null;
+            available: boolean;
+            models: components["schemas"]["ProviderModel"][];
+            omitted_models?: number;
         };
         CapabilitySnapshot: {
             connection_id: components["schemas"]["Id"];
@@ -4203,6 +4245,10 @@ export interface components {
         T3Thread: {
             id: string;
             title: string;
+            /** @description Von T3 gelieferte Providerinstanz für den Thread, falls der Server Routing-Metadaten bereitstellt. */
+            provider_instance_id?: components["schemas"]["T3ProviderInstanceId"] | null;
+            /** @description Von T3 geliefertes Modell für den Thread, falls der Server Routing-Metadaten bereitstellt. */
+            model?: string | null;
         };
         /** @description T3-Offsetseite des gebundenen Projekts; archived Threads sind in T3 v0.1.11 nicht Teil von t3_thread_list. */
         T3ThreadPage: {
@@ -4265,7 +4311,7 @@ export interface components {
             require_human_phase_decision: boolean;
             require_human_confirmed_evidence: boolean;
         };
-        /** @description Referenz auf Konfiguration in T3. Keine Modell-/Providerdefinition. Referenzthread liefert nur lesbare Routingfelder; kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet beim Replay den gespeicherten T3-Wert. */
+        /** @description T3-Projektstandard, Referenz auf vorhandene Konfiguration in T3 oder explizite T3-Providerinstanz samt Modell. Referenzthread liefert nur lesbare Routingfelder; kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet beim Replay den gespeicherten T3-Wert. Bei einer expliziten Providerinstanz friert Falkenwarte Instanz-ID und Modell ein und sendet sie als modelSelection an T3. */
         T3ExecutionTarget: {
             /** @constant */
             mode: "t3_project_default";
@@ -4273,6 +4319,13 @@ export interface components {
             /** @constant */
             mode: "t3_reference_thread";
             reference_thread_id: string;
+        } | {
+            /** @constant */
+            mode: "t3_provider_instance";
+            /** @description Exakte Instanz-ID aus dem Live-Inventar der zugehörigen T3-Verbindung. */
+            provider_instance_id: components["schemas"]["T3ProviderInstanceId"];
+            /** @description Exakte Modell-ID aus dem Inventar dieser Providerinstanz. */
+            model: string;
         };
         /** @description Nur Eigentümer. Bestätigt die bewertete Meldung und ihre unveränderte Revision. */
         EvidenceReview: {
@@ -4924,6 +4977,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["CapabilitySnapshot"];
+            };
+        };
+        /** @description Aktuelle Providerinstanzen und Modelle aus der autorisierten T3-Verbindung. */
+        ProviderInventory: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ProviderInventory"];
             };
         };
         /** @description Connection-Darstellung. */
@@ -6905,6 +6967,24 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["CapabilitySnapshot"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    connection_providers_list: {
+        parameters: {
+            query?: {
+                /** @description Sucht gezielt in gekürzten T3-Modellkatalogen. Der Suchbegriff wird an T3 weitergereicht. */
+                search?: string;
+            };
+            header?: never;
+            path: {
+                connection_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ProviderInventory"];
             default: components["responses"]["Problem"];
         };
     };

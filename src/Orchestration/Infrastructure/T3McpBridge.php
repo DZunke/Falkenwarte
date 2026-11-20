@@ -24,12 +24,13 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     }
 
     /** @param array<string, mixed> $connection @return array<string, mixed> */
-    public function capabilities(array $connection, string $token): array
+    public function capabilities(array $connection, string $token, ?string $search = null): array
     {
-        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools): array {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($search): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['orchestrator_capabilities', 't3_project_list', 't3_thread_launch', 't3_thread_read']);
-            $result = $this->tool($client, 'orchestrator_capabilities', []);
+            $arguments = null === $search ? [] : ['search' => $search];
+            $result = $this->tool($client, 'orchestrator_capabilities', $arguments);
 
             return [
                 'tools' => $names,
@@ -92,7 +93,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         });
     }
 
-    /** @param array<string, mixed> $connection @return array{items: list<array{id: string, title: string}>, next_cursor: ?string, has_more: bool} */
+    /** @param array<string, mixed> $connection @return array{items: list<array{id: string, title: string, provider_instance_id?: string, model?: string}>, next_cursor: ?string, has_more: bool} */
     public function threads(array $connection, string $token, string $projectId, ?string $cursor = null, int $limit = 50): array
     {
         return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($projectId, $cursor, $limit): array {
@@ -128,7 +129,16 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
                 if (!is_string($id) || '' === $id || mb_strlen($id) > 256 || !is_string($title) || mb_strlen($title) > 1000) {
                     throw new T3BridgeException('T3 lieferte einen ungültigen Thread für das gebundene Projekt.');
                 }
-                $items[] = ['id' => $id, 'title' => $title];
+                $item = ['id' => $id, 'title' => $title];
+                $providerInstanceId = $thread['providerInstanceId'] ?? null;
+                if (is_string($providerInstanceId) && 1 === preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D', $providerInstanceId)) {
+                    $item['provider_instance_id'] = $providerInstanceId;
+                }
+                $model = $thread['model'] ?? null;
+                if (is_string($model) && '' !== $model && mb_strlen($model) <= 256) {
+                    $item['model'] = $model;
+                }
+                $items[] = $item;
             }
 
             if (!array_key_exists('nextCursor', $result)) {
@@ -154,7 +164,41 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_thread_read']);
             $result = $this->tool($client, 't3_thread_read', ['threadId' => $threadId, 'afterPosition' => 0, 'limit' => 100, 'runLimit' => 50, 'maxCharsPerItem' => 20000]);
-            $runs = $result['runs'] ?? [];
+            $thread = $result['thread'] ?? null;
+            $nativeRead = is_array($thread);
+            if (null !== $runId) {
+                unset($result['status'], $result['runId'], $result['run'], $result['pendingInput']);
+            }
+            if ($nativeRead) {
+                $nativeThreadId = $thread['threadId'] ?? null;
+                $nativeProjectId = $thread['projectId'] ?? null;
+                if (!is_string($nativeThreadId) || '' === trim($nativeThreadId) || $nativeThreadId !== $threadId
+                    || !is_string($nativeProjectId) || '' === trim($nativeProjectId)) {
+                    throw new T3BridgeException('T3 lieferte eine ungültige Thread- oder Projektzugehörigkeit.');
+                }
+                $result['threadId'] = $nativeThreadId;
+                $result['projectId'] = $nativeProjectId;
+                unset($result['modelSelection']);
+                $providerInstanceId = $thread['providerInstanceId'] ?? null;
+                $model = $thread['model'] ?? null;
+                if (is_string($providerInstanceId) && 1 === preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D', $providerInstanceId)) {
+                    $result['providerInstanceId'] = $providerInstanceId;
+                } else {
+                    unset($result['providerInstanceId']);
+                }
+                if (is_string($model) && '' !== trim($model) && $model === trim($model) && mb_strlen($model) <= 256) {
+                    $result['model'] = $model;
+                } else {
+                    unset($result['model']);
+                }
+                // The nested thread status is not a run status. A requested run must be selected below.
+                unset($result['status'], $result['runId'], $result['run'], $result['pendingInput']);
+                if (isset($result['providerInstanceId'], $result['model'])) {
+                    $result['modelSelection'] = ['instanceId' => $result['providerInstanceId'], 'model' => $result['model']];
+                }
+            }
+
+            $runs = $result['recentRuns'] ?? $result['runs'] ?? [];
             if (is_array($runs) && [] !== $runs) {
                 $selected = null;
                 if (null !== $runId) {
@@ -164,16 +208,32 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
                             break;
                         }
                     }
-                }
-                if (null === $selected) {
+                } elseif ($nativeRead && is_string($thread['latestRunId'] ?? null)) {
+                    foreach ($runs as $candidate) {
+                        if (is_array($candidate) && (string) ($candidate['runId'] ?? $candidate['id'] ?? '') === $thread['latestRunId']) {
+                            $selected = $candidate;
+                            break;
+                        }
+                    }
+                } elseif (!$nativeRead) {
                     $selected = $runs[array_key_last($runs)];
                 }
                 if (is_array($selected)) {
+                    $selectedRunId = $selected['runId'] ?? $selected['id'] ?? null;
+                    if (is_string($selectedRunId) && '' !== $selectedRunId) {
+                        $selected['id'] ??= $selectedRunId;
+                        $selected['runId'] ??= $selectedRunId;
+                    }
                     $result['run'] = $selected;
-                    $result['runId'] ??= $selected['runId'] ?? $selected['id'] ?? null;
-                    $result['status'] ??= $selected['status'] ?? null;
+                    $result['runId'] = $selectedRunId;
+                    $result['status'] = $selected['status'] ?? 'unknown';
                     $result['pendingInput'] ??= $selected['pendingInput'] ?? $selected['pending_input'] ?? null;
+                } elseif (null !== $runId) {
+                    // Never observe a different recent run as if it were the exact dispatch.
+                    $result['status'] = 'unknown';
                 }
+            } elseif (null !== $runId) {
+                $result['status'] = 'unknown';
             }
             if (!isset($result['modelSelection'])) {
                 $instanceId = $result['providerInstanceId'] ?? $result['provider_instance_id'] ?? null;
@@ -305,7 +365,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         return [];
     }
 
-    /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool}> */
+    /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool, models: list<array{id: string, label?: string}>, omitted_models?: int}> */
     private function providers(mixed $providers): array
     {
         if (!is_array($providers)) {
@@ -318,14 +378,46 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
                 continue;
             }
             $id = $provider['providerInstanceId'] ?? $provider['instanceId'] ?? null;
-            if (!is_string($id) || '' === $id) {
+            if (!is_string($id) || '' === trim($id) || mb_strlen($id) > 64 || 1 !== preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/D', $id)) {
                 continue;
             }
-            $result[] = [
+            $displayName = $provider['displayName'] ?? null;
+            if (!is_string($displayName) || mb_strlen($displayName) > 200) {
+                $displayName = null;
+            }
+            $models = [];
+            $providerModels = $provider['models'] ?? [];
+            foreach (is_array($providerModels) ? $providerModels : [] as $model) {
+                if (count($models) >= 500) {
+                    break;
+                }
+                if (!is_array($model)) {
+                    continue;
+                }
+                $modelId = $model['id'] ?? null;
+                if (!is_string($modelId) || '' === $modelId || mb_strlen($modelId) > 256) {
+                    continue;
+                }
+                $normalizedModel = ['id' => $modelId];
+                $label = $model['label'] ?? null;
+                if (is_string($label) && mb_strlen($label) <= 200) {
+                    $normalizedModel['label'] = $label;
+                }
+                $models[] = $normalizedModel;
+            }
+            $normalized = [
                 'provider_instance_id' => $id,
-                'display_name' => isset($provider['displayName']) ? (string) $provider['displayName'] : null,
-                'available' => (bool) ($provider['available'] ?? true),
+                'display_name' => $displayName,
+                // The T3 capabilities constraints describe child-task support. Only a legacy
+                // explicit field can report launch availability; listed instances default true.
+                'available' => is_bool($provider['available'] ?? null) ? $provider['available'] : true,
+                'models' => $models,
             ];
+            $omittedModels = $provider['omittedModels'] ?? $provider['omitted_models'] ?? null;
+            if (is_int($omittedModels) && $omittedModels >= 0) {
+                $normalized['omitted_models'] = $omittedModels;
+            }
+            $result[] = $normalized;
         }
 
         return $result;

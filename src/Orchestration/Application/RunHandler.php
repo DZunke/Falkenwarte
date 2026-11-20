@@ -1160,7 +1160,12 @@ final class RunHandler implements OperationHandler
                     return;
                 }
                 $modelSelection = $reference['modelSelection'] ?? null;
-                if (!is_array($modelSelection) || !is_string($modelSelection['instanceId'] ?? null) || !is_string($modelSelection['model'] ?? null)) {
+                if (!is_array($modelSelection)
+                    || !is_string($modelSelection['instanceId'] ?? null)
+                    || '' === trim($modelSelection['instanceId'])
+                    || !is_string($modelSelection['model'] ?? null)
+                    || '' === trim($modelSelection['model'])
+                    || $modelSelection['model'] !== trim($modelSelection['model'])) {
                     $run['state'] = 'auth_blocked';
                     $run['status_reason'] = 'T3 liefert für den Referenzthread keine belegten Provider- und Modellreferenzen.';
                     $this->store->save('runs', $run, 'run.reference_target_invalid');
@@ -1169,6 +1174,74 @@ final class RunHandler implements OperationHandler
                     return;
                 }
                 $payload['modelSelection'] = ['instanceId' => $modelSelection['instanceId'], 'model' => $modelSelection['model']];
+            } elseif (($target['mode'] ?? null) === 't3_provider_instance') {
+                $instanceId = $target['provider_instance_id'] ?? null;
+                $modelId = $target['model'] ?? null;
+                $expectedRunVersion = (int) $run['version'];
+                $expectedAttemptNo = (int) $attempt['attempt_no'];
+                $expectedDispatchId = (string) $attempt['dispatch_id'];
+                if (!is_string($instanceId) || '' === $instanceId || !is_string($modelId) || '' === $modelId) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                    );
+
+                    return;
+                }
+
+                try {
+                    $token = $this->connectionToken($connection);
+                    $capabilities = $this->bridge->capabilities($connection, $token);
+                    $providers = $capabilities['providers'] ?? [];
+                    $selection = $this->providerSelectionStatus($instanceId, $modelId, $providers);
+                    if (!$selection['model_available'] && $selection['may_search']) {
+                        $capabilities = $this->bridge->capabilities($connection, $token, mb_substr($modelId, 0, 200));
+                        $providers = $capabilities['providers'] ?? [];
+                        $selection = $this->providerSelectionStatus($instanceId, $modelId, $providers);
+                    }
+                } catch (T3BridgeException $exception) {
+                    $currentRun = $this->currentProviderDispatchRun(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                    );
+                    if (null === $currentRun) {
+                        return;
+                    }
+                    $this->setRunBridgeFailure($currentRun, $exception);
+                    if (!$exception->authenticationFailure) {
+                        throw $exception;
+                    }
+
+                    return;
+                }
+
+                $currentRun = $this->currentProviderDispatchRun(
+                    $runId,
+                    $expectedRunVersion,
+                    $expectedAttemptNo,
+                    $expectedDispatchId,
+                );
+                if (null === $currentRun) {
+                    return;
+                }
+                if (!$selection['model_available']) {
+                    $this->failUnstartedProviderSelection(
+                        $runId,
+                        $expectedRunVersion,
+                        $expectedAttemptNo,
+                        $expectedDispatchId,
+                    );
+
+                    return;
+                }
+
+                $run = $currentRun;
+                $attempt = $this->attempt($run, $expectedAttemptNo);
+                $payload['modelSelection'] = ['instanceId' => $instanceId, 'model' => $modelId];
             }
             $dispatchRequest = DispatchRequest::fromPayload($payload);
             $payload = $dispatchRequest->payload;
@@ -1232,6 +1305,86 @@ final class RunHandler implements OperationHandler
         $this->resolveAttention($run['task_id'], 'auth_required');
         $this->scheduleObservation($runId);
         $this->store->enqueue('run.observe', ['run_id' => $runId]);
+    }
+
+    /** @param list<array<string, mixed>> $providers @return array{model_available: bool, may_search: bool} */
+    private function providerSelectionStatus(string $instanceId, string $modelId, array $providers): array
+    {
+        foreach ($providers as $provider) {
+            if (($provider['provider_instance_id'] ?? null) !== $instanceId) {
+                continue;
+            }
+
+            $available = true === ($provider['available'] ?? false);
+            $modelAvailable = false;
+            foreach (($provider['models'] ?? []) as $model) {
+                if (is_array($model) && ($model['id'] ?? null) === $modelId) {
+                    $modelAvailable = true;
+                    break;
+                }
+            }
+            $omittedModels = $provider['omitted_models'] ?? null;
+
+            return [
+                'model_available' => $available && $modelAvailable,
+                // T3 omits the field when its complete catalog contains no more models.
+                'may_search' => $available && is_int($omittedModels) && $omittedModels > 0,
+            ];
+        }
+
+        return ['model_available' => false, 'may_search' => false];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function currentProviderDispatchRun(
+        string $runId,
+        int $expectedRunVersion,
+        int $expectedAttemptNo,
+        string $expectedDispatchId,
+    ): ?array {
+        $run = $this->store->find('runs', $runId);
+        if (null === $run
+            || (int) $run['version'] !== $expectedRunVersion
+            || (int) $run['attempt_no'] !== $expectedAttemptNo
+            || !in_array($run['state'], ['queued', 'dispatching', 'reconciling', 'result_reported'], true)
+            || is_array($run['_dispatch_request'] ?? null)) {
+            return null;
+        }
+
+        $attempt = $this->attempt($run, $expectedAttemptNo);
+        if (($attempt['dispatch_id'] ?? null) !== $expectedDispatchId || null !== ($attempt['external_thread_id'] ?? null)) {
+            return null;
+        }
+
+        return $run;
+    }
+
+    private function failUnstartedProviderSelection(
+        string $runId,
+        int $expectedRunVersion,
+        int $expectedAttemptNo,
+        string $expectedDispatchId,
+    ): void {
+        $this->store->atomic(function () use ($runId, $expectedRunVersion, $expectedAttemptNo, $expectedDispatchId): void {
+            $run = $this->currentProviderDispatchRun($runId, $expectedRunVersion, $expectedAttemptNo, $expectedDispatchId);
+            if (null === $run) {
+                return;
+            }
+
+            $run['state'] = 'failed';
+            $run['status_reason'] = 'Die gewählte T3-Providerinstanz oder das Modell ist in der gebundenen Verbindung nicht mehr verfügbar. Passe die Agentrolle an und starte einen neuen Auftrag.';
+            $attempt = $this->attempt($run, $expectedAttemptNo);
+            $attempt['ended_at'] ??= $this->store->now();
+            $attempts = $run['attempts'];
+            $attempts[$attempt['attempt_no'] - 1] = $attempt;
+            $run['attempts'] = $attempts;
+            $run = $this->store->save('runs', $run, 'run.dispatch_rejected_provider_selection');
+            $this->openAttention($run['task_id'], $run['project_id'], 'run_failed', 'owner');
+            $this->removeObservationSchedule((string) $run['id']);
+            if (null !== $run['workflow_instance_id']) {
+                $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
+            }
+        });
     }
 
     private function observe(string $runId): void

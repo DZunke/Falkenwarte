@@ -169,11 +169,36 @@ function toolDefinitions() {
 }
 
 function allTools() {
-  const base = toolDefinitions();
+  const base = toolDefinitions().map((tool) => tool.name === 't3_thread_launch'
+    ? {
+        ...tool,
+        inputSchema: {
+          ...tool.inputSchema,
+          properties: {
+            ...tool.inputSchema.properties,
+            modelSelection: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                instanceId: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$' },
+                model: { type: 'string', minLength: 1 },
+                options: {
+                  anyOf: [
+                    { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, value: { anyOf: [{ type: 'string' }, { type: 'boolean' }] } }, required: ['id', 'value'], additionalProperties: false } },
+                    { type: 'object', additionalProperties: { anyOf: [{ type: 'string' }, { type: 'boolean' }] } },
+                  ],
+                },
+              },
+              required: ['instanceId', 'model'],
+            },
+          },
+        },
+      }
+    : tool);
   const schemas = {
     orchestrator_capabilities: {
       type: 'object', additionalProperties: false,
-      properties: {}, required: [],
+      properties: { search: { type: 'string', minLength: 1, maxLength: 200 } }, required: [],
     },
     t3_project_list: {
       type: 'object', additionalProperties: false,
@@ -192,8 +217,9 @@ function allTools() {
     t3_thread_read: {
       type: 'object', additionalProperties: false,
       properties: {
-        threadId: { type: 'string' }, afterPosition: { type: 'integer' }, limit: { type: 'integer' },
-        runLimit: { type: 'integer' }, maxCharsPerItem: { type: 'integer' }, itemId: { type: 'string' }, textOffset: { type: 'integer' },
+        threadId: { type: 'string' }, afterPosition: { type: 'integer', minimum: -1 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
+        runLimit: { type: 'integer', minimum: 1, maximum: 50 }, maxCharsPerItem: { type: 'integer', minimum: 1, maximum: 20000 },
+        itemId: { type: 'string' }, textOffset: { type: 'integer', minimum: 0 }, view: { type: 'string', enum: ['messages', 'activity'] },
       },
       required: ['threadId'],
     },
@@ -215,12 +241,60 @@ function allTools() {
   }))];
 }
 
+function providerInventory(scenario, search) {
+  const providers = [
+    {
+      providerInstanceId: 'codex_general',
+      driverKind: 'codex',
+      displayName: 'Codex Allgemein',
+      allModels: [
+        { id: 'qa-general-model', label: 'QA General Model' },
+        { id: 'qa-general-fast', label: 'QA General Fast' },
+      ],
+      canRunChildTask: true,
+      canRunCrossProviderChildTask: true,
+      constraints: [],
+    },
+    {
+      providerInstanceId: 'codex_review',
+      driverKind: 'codex',
+      displayName: 'Codex Review',
+      allModels: [
+        { id: 'qa-review-featured', label: 'QA Review Featured' },
+        { id: 'qa-review-model', label: 'QA Review Model' },
+      ],
+      canRunChildTask: true,
+      canRunCrossProviderChildTask: true,
+      constraints: [],
+    },
+  ];
+  return providers
+    .filter((provider) => scenario !== 'provider_missing' || provider.providerInstanceId !== 'codex_review')
+    .map(({ allModels, ...provider }) => {
+      const visibleModels = typeof search === 'string'
+        ? allModels.filter((model) => `${model.id} ${model.label}`.toLowerCase().includes(search.toLowerCase()))
+        : scenario === 'models_omitted' && provider.providerInstanceId === 'codex_review'
+          ? allModels.slice(0, 1)
+          : allModels;
+      const omittedModels = typeof search === 'string'
+        ? 0
+        : scenario === 'models_omitted' && provider.providerInstanceId === 'codex_review'
+          ? allModels.length - visibleModels.length
+          : undefined;
+      return { ...provider, models: visibleModels, ...(undefined === omittedModels ? {} : { omittedModels }) };
+    });
+}
+
 function launch(namespace, args, scenario) {
   if (typeof args.title !== 'string' || args.title.trim() === '' || typeof args.message !== 'string') {
     return { result: toolError('validation_failed', 'Launch requires a title and initial message.') };
   }
   if (typeof args.clientRequestId !== 'string' || args.clientRequestId.trim() === '') {
     return { result: toolError('validation_failed', 'Launch requires a stable clientRequestId.') };
+  }
+  const modelSelection = args.modelSelection ?? { instanceId: 'codex_general', model: 'qa-general-model' };
+  if (typeof modelSelection.instanceId !== 'string' || typeof modelSelection.model !== 'string' || modelSelection.model.trim() === '') {
+    return { result: toolError('validation_failed', 'A model selection requires an instanceId and model.') };
   }
   const key = `${namespace}:${args.clientRequestId}`;
   const payloadHash = hash(args);
@@ -235,6 +309,12 @@ function launch(namespace, args, scenario) {
     return { result: toolResult(existing.response) };
   }
 
+  const provider = providerInventory(scenario, modelSelection.model).find((candidate) => candidate.providerInstanceId === modelSelection.instanceId);
+  if (!provider) return { result: toolError('provider_unavailable', `Provider instance ${modelSelection.instanceId} is unavailable.`) };
+  if (!provider.models.some((candidate) => candidate.id === modelSelection.model)) {
+    return { result: toolError('model_unavailable', `Model ${modelSelection.model} is unavailable on ${modelSelection.instanceId}.`) };
+  }
+
   const number = Object.keys(state.acceptedLaunches).length + 1;
   const threadId = `qa-t3-thread-${number}`;
   const runId = `qa-t3-run-${number}`;
@@ -242,7 +322,7 @@ function launch(namespace, args, scenario) {
   const value = {
     threadId,
     projectId: args.projectId ?? 'qa-t3-project-1',
-    modelSelection: { instanceId: 'qa-inherited-provider', model: 'qa-inherited-model' },
+    modelSelection,
     runId,
     status: scenario === 'run_pending' ? 'running' : 'queued',
   };
@@ -252,9 +332,18 @@ function launch(namespace, args, scenario) {
     payloadHash,
     payload: args,
     response: value,
+    createdAt: new Date().toISOString(),
     replays: 0,
   };
-  state.runs[runId] = { threadId, status: runStatus, result: runStatus === 'completed' ? 'reported_success' : null, namespace };
+  state.runs[runId] = {
+    threadId,
+    status: runStatus,
+    result: runStatus === 'completed' ? 'reported_success' : null,
+    namespace,
+    providerInstanceId: modelSelection.instanceId,
+    model: modelSelection.model,
+    requestedAt: new Date().toISOString(),
+  };
   persist();
   return { result: toolResult(value), accepted: true };
 }
@@ -263,9 +352,24 @@ function callTool(namespace, name, args, scenario) {
   if (scenario === 'tool_error') return { result: toolError('capability_unavailable', 'The configured T3 capability is unavailable.') };
   if (scenario === 'unknown_capability') return { result: toolError('capability_unavailable', 'T3 no longer advertises the requested capability.') };
   if (name === 'orchestrator_capabilities') {
+    const providers = providerInventory(scenario, args.search);
     return { result: toolResult({
-      serverVersion: '0.1.10',
-      providers: [{ providerInstanceId: 'qa-inherited-provider', displayName: 'QA Provider', available: true }],
+      parentThreadId: null,
+      inheritedProviderInstanceId: 'codex_general',
+      inheritedModel: 'qa-general-model',
+      runtimeMode: 'full-access',
+      interactionMode: 'default',
+      providers,
+      features: {
+        appOwnedSubagents: true,
+        asyncPolling: true,
+        cancellation: true,
+        batchThreadCreation: true,
+        threadManagement: true,
+        incrementalThreadRead: true,
+        scheduledTasks: true,
+        maxBatchThreads: 20,
+      },
     }) };
   }
   if (name === 't3_project_list') {
@@ -301,8 +405,8 @@ function callTool(namespace, name, args, scenario) {
         title: activity.title,
         status: 'running',
         latestRunId: activity.runId,
-        providerInstanceId: 'qa-inherited-provider',
-        model: 'qa-inherited-model',
+        providerInstanceId: 'codex_general',
+        model: 'qa-general-model',
       }));
     const cursor = args.cursor ?? 0;
     const limit = Math.min(args.limit ?? 50, 100);
@@ -329,19 +433,58 @@ function callTool(namespace, name, args, scenario) {
     const launchEntry = Object.values(state.acceptedLaunches).find((entry) => entry.response.threadId === args.threadId);
     const externalActivity = Object.values(state.externalActivities).find((entry) => entry.threadId === args.threadId);
     if (!launchEntry && !externalActivity) return { result: toolError('resource_not_found', 'T3 thread was not found.') };
-    const runs = Object.entries(state.runs)
+    const recentRuns = Object.entries(state.runs)
       .filter(([, run]) => run.threadId === args.threadId)
-      .map(([runId, run]) => ({ runId, status: scenario === 'unknown_run_state' ? 'future_unknown_state' : run.status, ...(run.pendingInput ? { pendingInput: run.pendingInput } : {}) }));
+      .map(([runId, run], index) => ({
+        runId,
+        ordinal: index + 1,
+        status: scenario === 'unknown_run_state' ? 'future_unknown_state' : run.status,
+        providerInstanceId: run.providerInstanceId ?? launchEntry?.response.modelSelection.instanceId ?? 'codex_general',
+        model: run.model ?? launchEntry?.response.modelSelection.model ?? 'qa-general-model',
+        requestedAt: run.requestedAt ?? new Date().toISOString(),
+        startedAt: run.status === 'queued' ? null : run.startedAt ?? new Date().toISOString(),
+        completedAt: ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status) ? run.completedAt ?? new Date().toISOString() : null,
+      }));
+    const modelSelection = launchEntry?.response.modelSelection ?? { instanceId: 'codex_general', model: 'qa-general-model' };
+    const latestRun = recentRuns.at(-1);
     const thread = {
       threadId: args.threadId,
       projectId: launchEntry?.response.projectId ?? externalActivity.externalProjectId,
-      runs,
+      title: launchEntry?.payload.title ?? externalActivity.title,
+      createdBy: 'user',
+      creationSource: launchEntry ? 'mcp' : 'web',
+      status: latestRun?.status ?? 'idle',
+      latestRunId: latestRun?.runId ?? null,
+      activeRunId: latestRun && ['queued', 'running'].includes(latestRun.status) ? latestRun.runId : null,
+      providerInstanceId: modelSelection.instanceId,
+      model: scenario === 'reference_missing_model' ? '' : modelSelection.model,
+      runtimeMode: 'full-access',
+      interactionMode: 'default',
+      linkedPullRequest: null,
+      titleRegeneration: null,
+      branch: null,
+      worktreePath: null,
+      parentThreadId: null,
+      relationshipToParent: null,
+      runCount: recentRuns.length,
+      itemCount: 0,
+      pendingRequestCount: 0,
+      archived: false,
+      settled: Boolean(latestRun && !['queued', 'running'].includes(latestRun.status)),
+      settledAt: null,
+      snoozed: false,
+      snoozedUntil: null,
+      createdAt: launchEntry?.createdAt ?? externalActivity.createdAt,
+      updatedAt: new Date().toISOString(),
     };
-    if (scenario !== 'reference_missing_model') {
-      thread.providerInstanceId = 'qa-inherited-provider';
-      thread.model = 'qa-inherited-model';
-    }
-    return { result: toolResult(thread) };
+
+    return { result: toolResult({
+      thread,
+      recentRuns,
+      items: [],
+      nextPosition: null,
+      hasMore: false,
+    }) };
   }
   if (name === 't3_thread_send') {
     const key = `${namespace}:${args.clientRequestId}`;
@@ -555,6 +698,32 @@ async function mcpRequest(request, response) {
         thread_list_limit: args.limit ?? null,
         thread_list_result_threads: threadListResult?.threads?.map((thread) => ({ threadId: thread.threadId, projectId: thread.projectId })) ?? [],
       } : {}),
+      ...(name === 'orchestrator_capabilities' ? {
+        capability_search: args.search ?? null,
+        provider_inventory: outcome.result.structuredContent?.providers?.map((provider) => ({
+          providerInstanceId: provider.providerInstanceId,
+          driverKind: provider.driverKind,
+          models: provider.models?.map((model) => ({ id: model.id, label: model.label })) ?? [],
+          omittedModels: provider.omittedModels ?? 0,
+        })) ?? [],
+      } : {}),
+      ...(name === 't3_thread_read' ? {
+        thread_read_target_thread_id: args.threadId ?? null,
+        thread_read_result: {
+          thread: {
+            threadId: outcome.result.structuredContent?.thread?.threadId ?? null,
+            projectId: outcome.result.structuredContent?.thread?.projectId ?? null,
+            providerInstanceId: outcome.result.structuredContent?.thread?.providerInstanceId ?? null,
+            model: outcome.result.structuredContent?.thread?.model ?? null,
+          },
+          recentRuns: outcome.result.structuredContent?.recentRuns?.map((run) => ({
+            runId: run.runId,
+            providerInstanceId: run.providerInstanceId,
+            model: run.model,
+            status: run.status,
+          })) ?? [],
+        },
+      } : {}),
     });
     persist();
     if (fault === 'lost_reply_after_accept' && name === 't3_thread_launch' && outcome.accepted) {
@@ -610,7 +779,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/reset' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario ?? 'default';
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted'] });
     state = { ...emptyState(), scenario: next };
     waitingLaunches = [];
     agentCallback = null;
@@ -620,7 +789,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/scenario' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario;
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list', 'provider_missing', 'models_omitted'] });
     state.scenario = next;
     persist();
     return sendJson(response, 200, { scenario: state.scenario });

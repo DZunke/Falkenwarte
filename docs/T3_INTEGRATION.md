@@ -43,7 +43,7 @@ Der Client handelt ausschließlich MCP `2025-06-18` aus und deaktiviert Protokol
 
 | T3-Werkzeug | Verwendung in Falkenwarte |
 |---|---|
-| `orchestrator_capabilities` | Serverversion, Provider und unterstützte Aktionen lesen |
+| `orchestrator_capabilities` | Serverversion, gemeldete Providerinstanzen und unterstützte Aktionen lesen |
 | `t3_project_list` | Projekte für die Zuordnung in **Agents & T3** auflisten |
 | `t3_thread_list` (optional) | Referenzthreads des gebundenen T3-Projekts für die Rollenansicht auflisten |
 | `t3_thread_launch` | Einen neuen Thread mit eingefrorener Nachricht und stabiler Request-ID starten |
@@ -55,7 +55,17 @@ Der Client prüft die verfügbaren Werkzeuge vor dem jeweiligen Aufruf und behan
 
 Für die Threadauswahl fragt die Eigentümeroberfläche `GET /api/v1/projects/{project_id}/t3-threads` ab. Die Bridge verwendet die externe Projekt-ID der gespeicherten Bindung. Der Browser erhält Titel und Thread-ID und kann weitere Seiten laden. Bei einem T3-Server ohne dieses Werkzeug stehen der Projektstandard und die manuelle Eingabe einer bekannten Referenzthread-ID zur Verfügung. [T3-Threadlistenvertrag in v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/packages/contracts/src/orchestratorMcp.ts)
 
-Referenzthreads können eine belegte Provider-/Modellreferenz an einen neuen Start weitergeben. Fehlen diese Werte oder gehört der Thread nicht zum gebundenen Projekt, wird der Start blockiert. Der Modus `t3_project_default` lässt T3 seinen Projektstandard auswählen. Falkenwarte verwaltet keine Provider- oder Modellkonfiguration.
+## Ausführungsziele und Providerauswahl
+
+Ein Rollenprofil kann den Projektstandard, einen Referenzthread oder eine konkrete T3-Providerinstanz samt Modell wählen. Die Rollenoberfläche fragt bei Auswahl des Modus **T3-Providerinstanz** `GET /api/v1/connections/{connection_id}/providers` über die autorisierte T3-Verbindung ab. Die Antwort ist eine aktuelle Auswahl aus T3 und keine lokale oder dauerhafte Providerkonfiguration in Falkenwarte. Ein erneutes **Provider neu laden** fragt die Auswahl erneut ab; der Verbindungstest ist dafür nicht nötig.
+
+Warum Falkenwarte die Instanz-ID und das Modell als Zielreferenz speichert und Providerdetails T3 überlässt, ist in [ADR-0016](adr/0016.md) festgehalten.
+
+Die Auswahl zeigt den von T3 gemeldeten Instanz-Slug zusammen mit dem Anzeigenamen, damit gleich benannte Providerinstanzen unterscheidbar bleiben. Ein T3-Modell muss für eine explizite Providerinstanz gewählt sein. Die Oberfläche wählt es nur dann automatisch, wenn T3 genau ein Modell und eine vollständige, nicht gekürzte Liste liefert. Bei mehreren Modellen ist eine Auswahl erforderlich. Wenn T3 Modelle aus der Antwort ausgelassen hat, kann die Oberfläche **Modellsuche in T3** und **Modelle suchen** verwenden und vermeidet eine voreilige Einzelauswahl. Eine T3-Auswahl behauptet nicht, dass Falkenwarte das vollständige interne Providerinventar kennt oder die externe Ausführung vorab geprüft hat.
+
+Der Modus `t3_project_default` sendet `t3_thread_launch` ohne `modelSelection`. T3 löst den effektiven Projektstandard bei der ersten Annahme auf. Bei einer konkreten Providerinstanz übermittelt Falkenwarte die verbindungsbezogene Instanz-ID und das ausgewählte T3-Modell als `modelSelection.instanceId` und `modelSelection.model`. Der native Vertrag verlangt beide Werte. Diese Auswahl wird im Dispatch-Snapshot festgehalten; ein Replay eines bereits angenommenen Starts verwendet die von T3 gespeicherte Zuordnung. [T3-ModelSelection-Vertrag in v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/packages/contracts/src/modelSelection.ts)
+
+Der Modus `t3_reference_thread` liest den gewählten Thread aus T3, prüft seine Zuordnung zum gebundenen Projekt und übernimmt nur die belegte Providerinstanz und das Modell in den Start eines neuen Threads. Fehlen diese Werte oder gehört der Thread nicht zum gebundenen Projekt, wird der Start blockiert. Der Referenzthread überträgt weder Gesprächsverlauf noch Skills, Berechtigungen oder nicht gelieferte Provideroptionen. Falkenwarte verwaltet keine Providerzugänge, Argumente, Umgebungswerte, Modelloptionen oder Arbeitsverzeichnisse; diese bleiben in T3 konfiguriert.
 
 ## Datenfluss eines Laufs
 
@@ -88,5 +98,5 @@ Wie du den Falkenwarte-Skill im Zielprojekt installierst und den MCP-Zugang für
 - [OpenAPI-Vertrag](../contracts/openapi.yaml): Verbindungen, OAuth-Callback, Projektbindungen und Run-/Recovery-Operationen.
 - [T3-MCP-Bridge](../src/Orchestration/Infrastructure/T3McpBridge.php), [Session-Factory](../src/Orchestration/Infrastructure/T3McpSessionFactory.php), [RunHandler](../src/Orchestration/Application/RunHandler.php) und [Bridge-Manifest](../packages/t3-mcp-bridge/manifest.json).
 - [Symfony MCP Bundle](https://symfony.com/doc/current/ai/bundles/mcp-bundle.html) liefert MCP-Transport- und Sitzungsbausteine. OAuth bleibt in Falkenwartes eigenem [T3OAuthAuthenticator](../src/Orchestration/Infrastructure/T3OAuthAuthenticator.php).
-- [T3-MCP-Verträge, v0.1.10](https://github.com/pingdotgg/t3code/blob/v0.1.10/packages/contracts/src/orchestratorMcp.ts) und [T3-OAuth-Implementierung, v0.1.10](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/auth/McpOAuth.ts).
+- [T3-MCP-Verträge, v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/packages/contracts/src/orchestratorMcp.ts), [Providerauswahl im T3-Projektwerkzeug, v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/apps/server/src/mcp/toolkits/project/tools.ts), [T3-ModelSelection-Vertrag, v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/packages/contracts/src/modelSelection.ts) und [T3-OAuth-Implementierung, v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/apps/server/src/auth/McpOAuth.ts).
 - [MCP-Protokollprofil 2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18).

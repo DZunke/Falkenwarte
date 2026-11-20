@@ -21,3 +21,4 @@ Die DDD-Seiten und maschinenlesbaren Verträge beschreiben das heutige Fachverha
 | [ADR-0013](adr/0013.md) | Linux und ein Produktions-Appcontainer | accepted |
 | [ADR-0014](adr/0014.md) | Restore mit gesperrten automatischen Starts | accepted |
 | [ADR-0015](adr/0015.md) | QA für den Release-Pull-Request | accepted, präzisiert ADR-0012 |
+| [ADR-0016](adr/0016.md) | Explizite Provider- und Modellauswahl aus T3 | accepted, ergänzt ADR-0004 |

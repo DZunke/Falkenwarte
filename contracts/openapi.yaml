@@ -2057,6 +2057,40 @@ paths:
       security:
       - browser_session: []
       x-owner-only: true
+  /connections/{connection_id}/providers:
+    parameters:
+    - name: connection_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    get:
+      operationId: connection_providers_list
+      tags:
+      - agents
+      summary: Aktuelle T3-Providerinstanzen und Modelle lesen
+      description: Fragt die autorisierte T3-Verbindung live ab. Die Liste ist keine lokal gepflegte Providerkonfiguration und wird nicht
+        aus einem möglicherweise veralteten Capability-Snapshot abgeleitet.
+      parameters:
+      - name: search
+        in: query
+        required: false
+        description: Sucht gezielt in gekürzten T3-Modellkatalogen. Der Suchbegriff wird an T3 weitergereicht.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 200
+      responses:
+        '200':
+          $ref: '#/components/responses/ProviderInventory'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: connection_providers_list
+      x-required-capabilities:
+      - agents.read
+      security:
+      - browser_session: []
+      x-owner-only: true
   /connections/{connection_id}/projects:
     parameters:
     - name: connection_id
@@ -5115,6 +5149,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/CapabilitySnapshot'
+    ProviderInventory:
+      description: Aktuelle Providerinstanzen und Modelle aus der autorisierten T3-Verbindung.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProviderInventory'
     Connection:
       description: Connection-Darstellung.
       content:
@@ -8410,9 +8450,7 @@ components:
       additionalProperties: false
       properties:
         provider_instance_id:
-          type: string
-          maxLength: 64
-          minLength: 1
+          $ref: '#/components/schemas/T3ProviderInstanceId'
         display_name:
           anyOf:
           - type: string
@@ -8420,11 +8458,79 @@ components:
           - type: 'null'
         available:
           type: boolean
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderModel'
+          maxItems: 500
+        omitted_models:
+          type: integer
+          minimum: 0
       required:
       - provider_instance_id
       - display_name
       - available
-      description: Lesende Information aus T3; keine Provider- oder Modellkonfiguration in Falkenwarte.
+      description: Lesende Information aus T3; Modelle sind in älteren Capability-Snapshots möglicherweise nicht enthalten.
+    ProviderModel:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        label:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+      required:
+      - id
+    T3ProviderInstanceId:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: ^[a-zA-Z][a-zA-Z0-9_-]*$
+      description: T3-Instanz-Slug. Groß- und Kleinschreibung sind unterscheidbar.
+    ProviderInventory:
+      type: object
+      additionalProperties: false
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderInstance'
+          maxItems: 100
+      required:
+      - providers
+      description: Frisch von T3 gelesene Providerinstanzen mit Modellen; keine Provider- oder Modellkonfiguration in Falkenwarte.
+    ProviderInstance:
+      type: object
+      additionalProperties: false
+      properties:
+        provider_instance_id:
+          $ref: '#/components/schemas/T3ProviderInstanceId'
+        display_name:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+        available:
+          type: boolean
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderModel'
+          maxItems: 500
+        omitted_models:
+          type: integer
+          minimum: 0
+      required:
+      - provider_instance_id
+      - display_name
+      - available
+      - models
+      description: Aktuell von T3 gelieferte Providerinstanz. Die ID identifiziert eine Instanz innerhalb einer Verbindung; Modelle sind T3-Modell-IDs. `omitted_models` gibt bei gekürzten Katalogen die ausgelassenen Modelltreffer an.
     CapabilitySnapshot:
       type: object
       additionalProperties: false
@@ -11809,6 +11915,18 @@ components:
         title:
           type: string
           maxLength: 1000
+        provider_instance_id:
+          anyOf:
+          - $ref: '#/components/schemas/T3ProviderInstanceId'
+          - type: 'null'
+          description: Von T3 gelieferte Providerinstanz für den Thread, falls der Server Routing-Metadaten bereitstellt.
+        model:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+          description: Von T3 geliefertes Modell für den Thread, falls der Server Routing-Metadaten bereitstellt.
       required:
       - id
       - title
@@ -12041,10 +12159,29 @@ components:
         required:
         - mode
         - reference_thread_id
-      description: Referenz auf Konfiguration in T3. Keine Modell-/Providerdefinition. Referenzthread liefert nur lesbare Routingfelder;
+      - type: object
+        additionalProperties: false
+        properties:
+          mode:
+            const: t3_provider_instance
+          provider_instance_id:
+            $ref: '#/components/schemas/T3ProviderInstanceId'
+            description: Exakte Instanz-ID aus dem Live-Inventar der zugehörigen T3-Verbindung.
+          model:
+            type: string
+            minLength: 1
+            maxLength: 256
+            description: Exakte Modell-ID aus dem Inventar dieser Providerinstanz.
+        required:
+        - mode
+        - provider_instance_id
+        - model
+      description: T3-Projektstandard, Referenz auf vorhandene Konfiguration in T3 oder explizite T3-Providerinstanz samt Modell.
+        Referenzthread liefert nur lesbare Routingfelder;
         kein Import von Verlauf, Skills oder nicht gelieferten Optionen. Beim Projektstandard friert Falkenwarte nur das Weglassen von
         modelSelection ein; die effektive Auswahl erfolgt bei der ersten T3-Annahme. Erst eine angenommene Launch-Zuordnung verwendet
-        beim Replay den gespeicherten T3-Wert.
+        beim Replay den gespeicherten T3-Wert. Bei einer expliziten Providerinstanz friert Falkenwarte Instanz-ID und Modell ein und
+        sendet sie als modelSelection an T3.
     EvidenceReview:
       type: object
       additionalProperties: false

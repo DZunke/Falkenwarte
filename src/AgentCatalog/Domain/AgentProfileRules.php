@@ -11,8 +11,24 @@ final class AgentProfileRules
     /** @param array<string, mixed> $executionTarget */
     public function assertExecutionTarget(array $executionTarget): void
     {
-        if (($executionTarget['mode'] ?? null) === 't3_reference_thread' && empty($executionTarget['reference_thread_id'])) {
+        $mode = $executionTarget['mode'] ?? null;
+        if ('t3_reference_thread' === $mode && (!is_string($executionTarget['reference_thread_id'] ?? null) || '' === trim($executionTarget['reference_thread_id']))) {
             throw new Problem(422, 'validation_failed', 'Ein T3-Referenzthread benötigt eine konkrete Thread-ID.');
+        }
+
+        if ('t3_provider_instance' === $mode) {
+            $instanceId = $executionTarget['provider_instance_id'] ?? null;
+            if (!is_string($instanceId) || 1 !== preg_match('/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D', $instanceId)) {
+                throw new Problem(422, 'validation_failed', 'Die T3-Providerinstanz benötigt eine gültige Instanz-ID.');
+            }
+            $model = $executionTarget['model'] ?? null;
+            if (!is_string($model) || '' === trim($model) || $model !== trim($model) || mb_strlen($model) > 256) {
+                throw new Problem(422, 'validation_failed', 'Eine T3-Providerinstanz benötigt eine konkrete Modell-ID.');
+            }
+        }
+
+        if (!in_array($mode, ['t3_project_default', 't3_reference_thread', 't3_provider_instance'], true)) {
+            throw new Problem(422, 'validation_failed', 'Das Ausführungsziel ist unbekannt.');
         }
     }
 

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import type { components } from '@/generated/api'
 import { api, formatError, request, type Project } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,7 +13,15 @@ type Selection = {
   onChange: (threadId: string) => void
 }
 
+function threadOptionLabel(thread: components['schemas']['T3Thread']) {
+  const provider = thread.provider_instance_id ?? 'nicht in der Threadliste übermittelt'
+  const model = thread.model ?? 'nicht in der Threadliste übermittelt'
+
+  return `${thread.title} · Providerinstanz ${provider} · Modell ${model} · Thread-ID ${thread.id}`
+}
+
 export function ReferenceThreadPicker({ connectionId, projects, value, onChange }: Selection & { projects: Project[] }) {
+  const projectSelectId = `thread-project-${useId()}`
   const [chosenProject, setChosenProject] = useState('')
   const projectId = projects.length === 1 ? projects[0].id : chosenProject
   if (!connectionId || !projects.length) {
@@ -23,9 +32,9 @@ export function ReferenceThreadPicker({ connectionId, projects, value, onChange 
     <div className="space-y-3">
       {projects.length > 1 && (
         <div className="space-y-1.5">
-          <Label htmlFor="thread-project">Projekt für die Threadliste</Label>
+          <Label htmlFor={projectSelectId}>Projekt für die Threadliste</Label>
           <Select value={chosenProject} onValueChange={(id) => { setChosenProject(id); onChange('') }}>
-            <SelectTrigger id="thread-project"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
+            <SelectTrigger id={projectSelectId}><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
             <SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent>
           </Select>
         </div>
@@ -36,6 +45,9 @@ export function ReferenceThreadPicker({ connectionId, projects, value, onChange 
 }
 
 function ProjectThreads({ projectId, connectionId, value, onChange }: Selection & { projectId: string }) {
+  const id = useId()
+  const threadSelectId = `thread-choice-${id}`
+  const manualThreadId = `profile-thread-${id}`
   const [manual, setManual] = useState(false)
   const binding = useQuery({
     queryKey: ['project-binding', projectId],
@@ -71,19 +83,20 @@ function ProjectThreads({ projectId, connectionId, value, onChange }: Selection 
     <div className="space-y-2">
       {manual ? (
         <div className="space-y-1.5">
-          <Label htmlFor="profile-thread">T3-Referenzthread-ID</Label>
-          <Input id="profile-thread" value={value} maxLength={256} onChange={(event) => onChange(event.target.value)} />
+          <Label htmlFor={manualThreadId}>T3-Referenzthread-ID</Label>
+          <Input id={manualThreadId} value={value} maxLength={256} onChange={(event) => onChange(event.target.value)} />
         </div>
       ) : (
         <>
           {threads.isLoading && <p role="status" className="text-sm text-muted-foreground">Referenzthreads werden aus T3 geladen…</p>}
           {items.length > 0 && (
             <div className="space-y-1.5">
-              <Label htmlFor="thread-choice">Referenzthread aus T3</Label>
+              <Label htmlFor={threadSelectId}>Referenzthread aus T3</Label>
               <Select value={value} onValueChange={onChange}>
-                <SelectTrigger id="thread-choice" className="max-w-full"><SelectValue placeholder="Thread wählen" /></SelectTrigger>
-                <SelectContent>{items.map((thread) => <SelectItem key={thread.id} value={thread.id}>{thread.title} · {thread.id}</SelectItem>)}</SelectContent>
+                <SelectTrigger id={threadSelectId} className="w-full max-w-full"><SelectValue placeholder="Thread wählen" /></SelectTrigger>
+                <SelectContent className="max-w-[min(90vw,36rem)]">{items.map((thread) => <SelectItem key={thread.id} className="whitespace-normal break-words" value={thread.id}>{threadOptionLabel(thread)}</SelectItem>)}</SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">Falkenwarte liest Providerinstanz und Modell aus T3 und übergibt sie an einen neuen Auftrags-Thread. Der vorhandene Threadverlauf wird nicht fortgesetzt.</p>
             </div>
           )}
           {threads.isSuccess && !items.length && <p className="text-sm text-muted-foreground">T3 meldet für dieses Projekt keine Referenzthreads.</p>}

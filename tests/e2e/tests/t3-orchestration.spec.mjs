@@ -125,6 +125,23 @@ async function createProfile(ownerApi, ownerPage, baseURL, project, connection, 
   return profile;
 }
 
+async function createProfileRecord(ownerApi, project, connection, name, executionTarget) {
+  const result = await ownerApi.post('/agent-profiles', {
+    name,
+    icon_key: 'bot',
+    role: 'Implementierung',
+    connection_id: connection.id,
+    allowed_project_ids: [project.id],
+    max_parallel_runs: 1,
+    prompt_template: 'Berichte Beobachtungen über den Falkenwarte-MCP-Server.',
+    enabled: true,
+    default_run_completion_policy: defaultPolicy,
+    execution_target: executionTarget,
+  });
+  expect(result.response.status(), JSON.stringify(result.data)).toBe(201);
+  return result.data;
+}
+
 async function configureAmbiguousRouting(ownerApi, project, profile) {
   const topic = await ownerApi.createLabel(project.id, {
     key: `topic.t3qa-${randomUUID().slice(0, 6)}`,
@@ -592,8 +609,12 @@ test('A29 reference threads supply only live T3 routing and block removed or for
     const journalBeforeReport = await qaMocks.t3Journal();
     expect(journalBeforeReport.accepted_launches).toHaveLength(1);
     expect(journalBeforeReport.accepted_launches[0].payload.modelSelection).toEqual({
-      instanceId: 'qa-inherited-provider',
-      model: 'qa-inherited-model',
+      instanceId: 'codex_general',
+      model: 'qa-general-model',
+    });
+    expect(journalBeforeReport.accepted_launches[0].response.modelSelection).toEqual({
+      instanceId: 'codex_general',
+      model: 'qa-general-model',
     });
     await reportThroughMcp(validReporter.agent, validRun, validTask, ownerApi);
     await readUntil(ownerApi, `/runs/${validRunId}`, (run) => run.state === 'succeeded');
@@ -653,9 +674,20 @@ test('A29 reference threads supply only live T3 routing and block removed or for
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);
     expect(t3.accepted_launches).toHaveLength(1);
-    expect(t3.accepted_launches[0].payload.modelSelection).toEqual({ instanceId: 'qa-inherited-provider', model: 'qa-inherited-model' });
+    expect(t3.accepted_launches[0].payload.modelSelection).toEqual({ instanceId: 'codex_general', model: 'qa-general-model' });
+    expect(t3.accepted_launches[0].response.modelSelection).toEqual({ instanceId: 'codex_general', model: 'qa-general-model' });
     expect(t3.journal.filter((entry) => entry.tool === 't3_thread_launch')).toHaveLength(1);
     expect(t3.journal.some((entry) => entry.tool === 't3_thread_read' && entry.outcome === 'success')).toBe(true);
+    const matchingThreadRead = t3.journal.find((entry) => entry.tool === 't3_thread_read' && entry.outcome === 'success');
+    expect(matchingThreadRead.thread_read_result).toMatchObject({
+      thread: {
+        threadId: matchingReference.thread_id,
+        projectId: 'qa-t3-project-1',
+        providerInstanceId: 'codex_general',
+        model: 'qa-general-model',
+      },
+      recentRuns: [expect.objectContaining({ providerInstanceId: 'codex_general', model: 'qa-general-model' })],
+    });
     expect(journalBeforeForeign.accepted_launches).toHaveLength(1);
     expect(journalBeforeRemoved.accepted_launches).toHaveLength(1);
     recordEvidence(
@@ -665,6 +697,99 @@ test('A29 reference threads supply only live T3 routing and block removed or for
     );
   } finally {
     await validReporter.close();
+  }
+});
+
+test('explicit T3 provider instances dispatch exactly and a disappeared instance never falls back', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+  test.setTimeout(240_000);
+  const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'Providerinstanzen');
+  const generalTarget = { mode: 't3_provider_instance', provider_instance_id: 'codex_general', model: 'qa-general-model' };
+  const reviewTarget = { mode: 't3_provider_instance', provider_instance_id: 'codex_review', model: 'qa-review-model' };
+  const generalProfile = await createProfileRecord(ownerApi, project, connection, 'Codex Allgemein', generalTarget);
+  const reviewProfile = await createProfileRecord(ownerApi, project, connection, 'Codex Review', reviewTarget);
+  const reporter = await createReportingAgent(ownerApi, project, baseURL);
+
+  try {
+    const firstT3Journal = await qaMocks.t3Journal();
+    const providerInventory = firstT3Journal.journal.find((entry) => entry.tool === 'orchestrator_capabilities' && entry.provider_inventory?.length === 2);
+    expect(providerInventory.provider_inventory).toEqual([
+      expect.objectContaining({ providerInstanceId: 'codex_general', driverKind: 'codex' }),
+      expect.objectContaining({ providerInstanceId: 'codex_review', driverKind: 'codex' }),
+    ]);
+    expect(providerInventory.provider_inventory[0].models).toContainEqual({ id: 'qa-general-model', label: 'QA General Model' });
+    expect(providerInventory.provider_inventory[1].models).toContainEqual({ id: 'qa-review-model', label: 'QA Review Model' });
+    expect(providerInventory.provider_inventory.map((provider) => provider.driverKind)).toEqual(['codex', 'codex']);
+    expect(firstT3Journal.journal.filter((entry) => entry.tool === 't3_thread_read')).toHaveLength(0);
+
+    for (const [index, { profile, target, title }] of [
+      { profile: generalProfile, target: generalTarget, title: 'Auftrag Allgemein' },
+      { profile: reviewProfile, target: reviewTarget, title: 'Auftrag Review' },
+    ].entries()) {
+      const beforeLaunch = await qaMocks.t3Journal();
+      const alreadyLaunched = new Set(beforeLaunch.accepted_launches.map((launch) => launch.response.threadId));
+      for (const read of beforeLaunch.journal.filter((entry) => entry.tool === 't3_thread_read')) {
+        expect(alreadyLaunched.has(read.thread_read_target_thread_id)).toBe(true);
+      }
+      const taskResult = await createReadyTask(ownerApi, project.id, title);
+      const task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
+      const runId = await requestRun(ownerApi, task, profile);
+      const run = await readUntil(ownerApi, `/runs/${runId}`, (current) => current.state === 'verifying');
+      const t3 = await qaMocks.t3Journal();
+      expect(t3.accepted_launches).toHaveLength(index + 1);
+      const launch = t3.accepted_launches[index];
+      expect(launch.payload.modelSelection).toEqual({ instanceId: target.provider_instance_id, model: target.model });
+      expect(launch.response.modelSelection).toEqual({ instanceId: target.provider_instance_id, model: target.model });
+      expect(run.attempts[0].external_thread_id).toBe(launch.response.threadId);
+      const launchedThreadRead = t3.journal.find((entry) => entry.tool === 't3_thread_read'
+        && entry.thread_read_target_thread_id === launch.response.threadId
+        && entry.outcome === 'success');
+      expect(launchedThreadRead?.thread_read_result).toMatchObject({
+        thread: {
+          threadId: launch.response.threadId,
+          providerInstanceId: target.provider_instance_id,
+          model: target.model,
+        },
+        recentRuns: [expect.objectContaining({
+          providerInstanceId: target.provider_instance_id,
+          model: target.model,
+        })],
+      });
+      const launchedThreadIds = new Set(t3.accepted_launches.map((accepted) => accepted.response.threadId));
+      for (const read of t3.journal.filter((entry) => entry.tool === 't3_thread_read')) {
+        expect(launchedThreadIds.has(read.thread_read_target_thread_id)).toBe(true);
+      }
+
+      await reportThroughMcp(reporter.agent, run, task, ownerApi);
+      await readUntil(ownerApi, `/runs/${runId}`, (current) => current.state === 'succeeded');
+    }
+
+    await qaMocks.setT3Scenario('provider_missing');
+    const missingTaskResult = await createReadyTask(ownerApi, project.id, 'Verschwundene Providerinstanz');
+    const missingTask = (await ownerApi.get(`/tasks/${missingTaskResult.id}`)).data;
+    const missingRunId = await requestRun(ownerApi, missingTask, reviewProfile);
+    const blockedRun = await readUntil(ownerApi, `/runs/${missingRunId}`, (current) => current.state === 'failed');
+    expect(blockedRun.status_reason).toContain('Die gewählte T3-Providerinstanz oder das Modell ist in der gebundenen Verbindung nicht mehr verfügbar.');
+    expect(blockedRun.snapshot.execution_target).toEqual(reviewTarget);
+
+    const t3 = await qaMocks.t3Journal();
+    expect(t3.unexpected).toEqual([]);
+    expect(t3.accepted_launches).toHaveLength(2);
+    expect(t3.journal.filter((entry) => entry.tool === 't3_thread_launch')).toHaveLength(2);
+    const launchedThreadIds = new Set(t3.accepted_launches.map((launch) => launch.response.threadId));
+    for (const read of t3.journal.filter((entry) => entry.tool === 't3_thread_read')) {
+      expect(launchedThreadIds.has(read.thread_read_target_thread_id)).toBe(true);
+    }
+    const missingProviderCheck = t3.journal.filter((entry) => entry.tool === 'orchestrator_capabilities').at(-1);
+    expect(missingProviderCheck.provider_inventory).toEqual([
+      expect.objectContaining({ providerInstanceId: 'codex_general', driverKind: 'codex' }),
+    ]);
+    recordEvidence(
+      'Zwei T3-Providerinstanzen desselben Drivers erzeugen je einen neuen Thread mit exakt ihrer eigenen Instanz- und Modell-ID. Fehlt eine gewählte Instanz später im T3-Inventar, wird der Auftrag mit Owner-Handlungsbedarf beendet, ohne Referenzthread-Lesezugriff oder stillen Ersatzprovider.',
+      `Die Rollen Codex Allgemein und Codex Review starteten je einen T3-Thread. Die Launchantworten bestätigten modelSelection codex_general/qa-general-model und codex_review/qa-review-model. Der spätere Lauf für codex_review endete failed mit sichtbarem Hinweis auf die nicht verfügbare Auswahl; T3 nahm weiterhin exakt zwei Launches an. Die normalen Beobachtungs-Reads betrafen ausschließlich diese beiden gestarteten Threads.`,
+      { t3 },
+    );
+  } finally {
+    await reporter.close();
   }
 });
 
