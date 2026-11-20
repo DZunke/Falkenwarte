@@ -8,6 +8,19 @@ import { expect, recordEvidence, test } from '../support/fixtures.mjs';
 test('A20 restore restarts the single service and blocks T3 starts until inventory is resolved', async ({ ownerApi, ownerPage, qaMocks, baseURL }) => {
   test.setTimeout(270_000);
   const workDirectory = await mkdtemp(path.join(os.tmpdir(), 'falkenwarte-a20-'));
+  const waitForSucceededAction = async (actionId, message) => {
+    let action;
+    await expect.poll(async () => {
+      const response = await ownerApi.get('/actions/' + actionId);
+      if (response.response.status() !== 200) {
+        return false;
+      }
+      action = response.data;
+
+      return action.status === 'succeeded';
+    }, { timeout: 30_000, message }).toBe(true);
+    expect(action).toMatchObject({ id: actionId, status: 'succeeded' });
+  };
 
   try {
     const project = await ownerApi.createProject({ name: 'A20 Wiederherstellung' });
@@ -189,6 +202,8 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
       reason: 'A18 prüft bekannte und unbekannte T3-Aktivität nach einem Restore.',
     }, { version: bridgePlugin.version });
     expect(startDrain.response.status(), JSON.stringify(startDrain.data)).toBe(202);
+    expect(startDrain.data.action_url).toBe(`/api/v1/actions/${startDrain.data.action_id}`);
+    await waitForSucceededAction(startDrain.data.action_id, 'Der Bridge-Drain-Auftrag muss abgeschlossen sein, bevor die Inventur weiterbearbeitet wird.');
     await expect.poll(async () => {
       bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
       return [bridgePlugin.state, bridgePlugin.active_run_count, bridgePlugin.unresolved_external_activity_count];
@@ -240,6 +255,8 @@ test('A20 restore restarts the single service and blocks T3 starts until invento
       reason: 'A18 prüft, dass die unaufgelöste Projektinventur den Drain weiter blockiert.',
     }, { version: bridgePlugin.version });
     expect(checkUnknownActivity.response.status(), JSON.stringify(checkUnknownActivity.data)).toBe(202);
+    expect(checkUnknownActivity.data.action_url).toBe(`/api/v1/actions/${checkUnknownActivity.data.action_id}`);
+    await waitForSucceededAction(checkUnknownActivity.data.action_id, 'Die Prüfung der unbekannten T3-Aktivität muss abgeschlossen sein, bevor die Inventur verändert wird.');
     await expect.poll(async () => {
       bridgePlugin = (await ownerApi.get('/plugins/' + bridgePluginId)).data;
       return [bridgePlugin.state, bridgePlugin.active_run_count, bridgePlugin.unresolved_external_activity_count];
