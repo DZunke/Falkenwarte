@@ -109,11 +109,24 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const [evidenceLabel, setEvidenceLabel] = useState('')
   const [evidenceText, setEvidenceText] = useState('')
   const [evidenceCriteria, setEvidenceCriteria] = useState<string[]>([])
+  const [evidenceAssignmentTarget, setEvidenceAssignmentTarget] = useState<string>()
+  const [evidenceAssignmentCriteria, setEvidenceAssignmentCriteria] = useState<string[]>([])
+  const [evidenceAssignmentError, setEvidenceAssignmentError] = useState('')
+  const [evidenceAssignmentProgress, setEvidenceAssignmentProgress] = useState('')
   const [reviewTarget, setReviewTarget] = useState<string>()
   const [reviewReason, setReviewReason] = useState('')
   const [saveConflict, setSaveConflict] = useState('')
   const [restoreRevision, setRestoreRevision] = useState<string>()
   const [restoreReason, setRestoreReason] = useState('')
+  const evidenceItems = evidenceQuery.data?.items ?? []
+  const evidenceAssignmentEvidence = evidenceItems.find((item) => item.id === evidenceAssignmentTarget)
+  const evidenceAssignmentIsStale = Boolean(task && evidenceAssignmentEvidence && evidenceAssignmentEvidence.task_revision !== task.version)
+  const evidenceAssignmentLinkedCriteria = task && evidenceAssignmentEvidence
+    ? task.criteria.filter((criterion) => criterion.evidence_ids.includes(evidenceAssignmentEvidence.id))
+    : []
+  const evidenceAssignmentAvailableCriteria = task && evidenceAssignmentEvidence && !evidenceAssignmentIsStale && evidenceAssignmentEvidence.review_status !== 'rejected'
+    ? task.criteria.filter((criterion) => ['pending', 'reported'].includes(criterion.state) && !criterion.evidence_ids.includes(evidenceAssignmentEvidence.id))
+    : []
   const missingCustomFields = missingRequiredCustomFields(customFields, customFieldDraftValues)
   const taskFlowPages = taskFlowQuery.data?.pages ?? []
   const lastTaskFlowPage = taskFlowPages.at(-1)
@@ -124,7 +137,13 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
     has_more: lastTaskFlowPage?.has_more ?? false,
   } : undefined
 
-  useEffect(() => setActiveTab('details'), [taskId])
+  useEffect(() => {
+    setActiveTab('details')
+    setEvidenceAssignmentTarget(undefined)
+    setEvidenceAssignmentCriteria([])
+    setEvidenceAssignmentError('')
+    setEvidenceAssignmentProgress('')
+  }, [taskId])
 
   useEffect(() => {
     if (!task || editing) return
@@ -260,8 +279,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const registerEvidence = useMutation({
     mutationFn: async () => {
       if (!task || !evidenceLabel.trim() || !evidenceText.trim()) throw new Error('Bezeichnung und Meldung sind erforderlich.')
-      let currentTask = task
-      const evidence = await request(api.POST('/tasks/{task_id}/evidence', {
+      return request(api.POST('/tasks/{task_id}/evidence', {
         params: { path: { task_id: task.id }, ...mutationParams(task.version) },
         body: {
           task_id: task.id,
@@ -272,17 +290,58 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
           criterion_ids: evidenceCriteria,
         },
       }))
-      currentTask = await request(api.GET('/tasks/{task_id}', { params: { path: { task_id: task.id } } }))
-      for (const criterionId of evidenceCriteria) {
-        currentTask = await request(api.POST('/tasks/{task_id}/criteria/{criterion_id}/evidence', {
-          params: { path: { task_id: task.id, criterion_id: criterionId }, ...mutationParams(currentTask.version) },
-          body: { evidence_ids: [evidence.id] },
-        }))
-      }
-      return evidence
     },
     onSuccess: async () => { setEvidenceOpen(false); setEvidenceLabel(''); setEvidenceText(''); setEvidenceCriteria([]); await invalidate(); toast.success('Meldung gespeichert') },
     onError: async (error) => { toast.error(formatError(error)); await invalidate() },
+  })
+
+  const assignEvidence = useMutation({
+    mutationFn: async () => {
+      if (!task || !evidenceAssignmentTarget || evidenceAssignmentCriteria.length === 0) throw new Error('Wähle mindestens ein offenes Erfolgskriterium aus.')
+      setEvidenceAssignmentError('')
+      setEvidenceAssignmentProgress('')
+      const evidence = await request(api.GET('/evidence/{evidence_id}', { params: { path: { evidence_id: evidenceAssignmentTarget } } }))
+      const requestedTask = await request(api.GET('/tasks/{task_id}', { params: { path: { task_id: task.id } } }))
+      if (evidence.task_id !== requestedTask.id) throw new Error('Der Nachweis gehört nicht mehr zu diesem Ticket.')
+      if (evidence.review_status === 'rejected') throw new Error('Ein zurückgewiesener Nachweis kann nicht zugeordnet werden.')
+      if (evidence.task_revision !== requestedTask.version) throw new Error('Der Nachweis ist veraltet. Er bezieht sich auf eine ältere Ticketversion.')
+
+      let currentTask = requestedTask
+      let savedCount = 0
+      const requestedCriteria = [...new Set(evidenceAssignmentCriteria)]
+      try {
+        for (const criterionId of requestedCriteria) {
+          const criterion = currentTask.criteria.find((item) => item.id === criterionId)
+          if (!criterion) throw new Error('Ein ausgewähltes Erfolgskriterium ist nicht mehr vorhanden. Lade das Ticket neu.')
+          if (criterion.evidence_ids.includes(evidence.id)) continue
+          if (!['pending', 'reported'].includes(criterion.state)) throw new Error('Ein ausgewähltes Erfolgskriterium ist nicht mehr offen. Lade das Ticket neu.')
+          currentTask = await request(api.POST('/tasks/{task_id}/criteria/{criterion_id}/evidence', {
+            params: { path: { task_id: currentTask.id, criterion_id: criterionId }, ...mutationParams(currentTask.version) },
+            body: { evidence_ids: [evidence.id] },
+          }))
+          savedCount += 1
+          setEvidenceAssignmentProgress(`${savedCount} Zuordnung${savedCount === 1 ? '' : 'en'} bestätigt gespeichert. Bereits gespeicherte Zuordnungen bleiben erhalten.`)
+        }
+      } catch (error) {
+        if (savedCount > 0) setEvidenceAssignmentProgress(`${savedCount} Zuordnung${savedCount === 1 ? '' : 'en'} bestätigt gespeichert. Bereits gespeicherte Zuordnungen bleiben erhalten.`)
+        throw error
+      }
+
+      return { savedCount }
+    },
+    onSuccess: async ({ savedCount }) => {
+      await invalidate()
+      setEvidenceAssignmentTarget(undefined)
+      setEvidenceAssignmentCriteria([])
+      setEvidenceAssignmentError('')
+      setEvidenceAssignmentProgress('')
+      toast.success(savedCount > 0 ? `${savedCount} Kriterium${savedCount === 1 ? '' : 'e'} zugeordnet` : 'Die ausgewählten Kriterien waren bereits zugeordnet')
+    },
+    onError: async (error) => {
+      setEvidenceAssignmentError(formatError(error))
+      toast.error(formatError(error))
+      await invalidate()
+    },
   })
 
   const reviewCriterion = useMutation({
@@ -360,7 +419,25 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                     {linksQuery.isPending ? <p className="text-sm text-muted-foreground">Links werden geladen…</p> : linksQuery.isError ? <p role="alert" className="text-sm text-destructive">{formatError(linksQuery.error)}</p> : linkCollections.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine externen Referenzen gespeichert.</p> : <div className="space-y-3">{linkCollections.map((collection) => <div key={collection.id} className="rounded-lg border p-3"><div className="mb-2 flex items-center justify-between"><h4 className="text-sm font-medium">{collection.name}</h4><Badge variant="secondary" className="capitalize">{collection.kind === 'delivery' ? 'Ergebnis' : collection.kind === 'source' ? 'Quelle' : 'Referenz'}</Badge></div>{collection.links.length === 0 ? <p className="text-xs text-muted-foreground">Noch keine Links.</p> : <div className="space-y-2">{collection.links.map((link) => <div key={link.id} className="rounded-md px-2 py-2 hover:bg-muted"><a href={link.url} target="_blank" rel="noopener noreferrer" className="flex items-start gap-2 text-sm"><Link2 className="mt-0.5 size-4 shrink-0 text-primary" /><span className="min-w-0 flex-1"><span className="block font-medium">{link.title}</span><span className="block truncate text-xs text-muted-foreground">{link.url}</span></span><ExternalLink className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" /></a><div className="mt-1 flex gap-1 pl-6"><Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setEditingLink({ collectionId: collection.id, taskVersion: collection.task_version, link }); setLinkTitle(link.title); setLinkUrl(link.url); setLinkKind(link.kind); setLinkRelation(link.relation); setLinkForm(false) }}><Pencil />Link bearbeiten</Button><Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive hover:text-destructive" onClick={() => setRemovingLink({ collectionId: collection.id, taskVersion: collection.task_version, link })}><Trash2 />Entfernen</Button></div></div>)}</div>}</div>)}</div>}
                     <p className="text-xs text-muted-foreground">Links sind registrierte Referenzen. Falkenwarte liest keine Inhalte oder Statuswerte von externen Seiten.</p>
                   </section>
-                  <section className="space-y-3"><h3 className="text-sm font-semibold">Gemeldete Nachweise</h3>{evidenceQuery.isPending ? <p className="text-sm text-muted-foreground">Meldungen werden geladen…</p> : (evidenceQuery.data?.items ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Meldungen. Ein Nachweis bleibt als menschliche oder Agentenmeldung gekennzeichnet.</p> : <div className="space-y-2">{evidenceQuery.data?.items.map((item) => <div key={item.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{item.label}</p><Badge variant="outline">{item.review_status === 'human_confirmed' ? 'Menschlich bestätigt' : item.review_status === 'rejected' ? 'Zurückgewiesen' : 'Gemeldet'}</Badge></div>{item.text && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{item.text}</p>}</div>)}</div>}</section>
+                  <section className="space-y-3">
+                    <h3 className="text-sm font-semibold">Gemeldete Nachweise</h3>
+                    {evidenceQuery.isPending ? <p className="text-sm text-muted-foreground">Meldungen werden geladen…</p> : evidenceQuery.isError ? <p role="alert" className="text-sm text-destructive">Meldungen konnten nicht geladen werden: {formatError(evidenceQuery.error)}</p> : evidenceItems.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Meldungen. Ein Nachweis bleibt als menschliche oder Agentenmeldung gekennzeichnet.</p> : <div className="space-y-2">{evidenceItems.map((item) => {
+                      const linkedCriteria = task.criteria.filter((criterion) => criterion.evidence_ids.includes(item.id))
+                      const openCriteria = task.criteria.filter((criterion) => ['pending', 'reported'].includes(criterion.state) && !criterion.evidence_ids.includes(item.id))
+                      const stale = item.task_revision !== task.version
+                      const canAssign = item.review_status !== 'rejected' && !stale && openCriteria.length > 0
+
+                      return <div key={item.id} className="rounded-lg border p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{item.label}</p><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{item.review_status === 'human_confirmed' ? 'Menschlich bestätigt' : item.review_status === 'rejected' ? 'Zurückgewiesen' : 'Gemeldet'}</Badge>{stale && <Badge variant="destructive">Veraltet</Badge>}</div></div>
+                        {item.text && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{item.text}</p>}
+                        {linkedCriteria.length > 0 ? <p className="mt-2 text-xs text-muted-foreground">Bereits zugeordnet: {linkedCriteria.map((criterion) => criterion.text).join(' · ')}</p> : <p className="mt-2 text-xs text-muted-foreground">Noch keinem Erfolgskriterium zugeordnet.</p>}
+                        {item.review_status === 'rejected' && <p className="mt-2 text-xs text-destructive">Zurückgewiesene Nachweise lassen sich nicht zuordnen.</p>}
+                        {stale && <p className="mt-2 text-xs text-destructive">Dieser Nachweis bezieht sich auf Ticketversion {item.task_revision}, aktuell ist Version {task.version}. Er lässt sich nicht zuordnen.</p>}
+                        {item.review_status !== 'rejected' && !stale && openCriteria.length === 0 && <p className="mt-2 text-xs text-muted-foreground">Keine offenen Kriterien ohne diese Zuordnung verfügbar.</p>}
+                        {canAssign && <Button size="sm" variant="outline" className="mt-2" disabled={assignEvidence.isPending} onClick={() => { setEvidenceAssignmentTarget(item.id); setEvidenceAssignmentCriteria([]); setEvidenceAssignmentError(''); setEvidenceAssignmentProgress('') }}><Link2 />Kriterien zuordnen</Button>}
+                      </div>
+                    })}</div>}
+                  </section>
                 </TabsContent>
                 <TabsContent value="flow" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   <TaskFlow
@@ -398,6 +475,43 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
       <Dialog open={editing} onOpenChange={(open) => { setEditing(open); if (!open) { setSaveConflict(''); setEditBaseVersion(undefined) } }}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Ticket bearbeiten</DialogTitle><DialogDescription>Änderungen erzeugen eine neue Version und werden im Verlauf festgehalten.</DialogDescription></DialogHeader>{saveConflict && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p>{saveConflict}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={rebaseTaskEdit}>Aktuelle Version als Basis verwenden</Button><Button variant="outline" size="sm" onClick={reloadTaskEdit}>Formular mit aktuellem Stand laden</Button></div></div>}<div className="grid max-h-[65vh] gap-4 overflow-y-auto py-2 pr-1"><div className="grid gap-2"><Label htmlFor="edit-title">Titel</Label><Input id="edit-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label htmlFor="edit-description">Beschreibung</Label><Textarea id="edit-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={5} maxLength={20000} /></div><div className="grid gap-2"><Label htmlFor="edit-priority">Priorität</Label><Select value={priority} onValueChange={(value) => setPriority(value as Task['priority'])}><SelectTrigger id="edit-priority"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">Niedrig</SelectItem><SelectItem value="normal">Normal</SelectItem><SelectItem value="high">Hoch</SelectItem><SelectItem value="urgent">Dringend</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="edit-criteria">Erfolgskriterien</Label><Textarea id="edit-criteria" value={criteriaText} onChange={(event) => setCriteriaText(event.target.value)} rows={4} placeholder="Ein Kriterium pro Zeile" /></div>{customFieldsQuery.isPending ? <p className="text-xs text-muted-foreground">Projektfelder werden geladen…</p> : customFieldsQuery.isError ? <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm"><p>Projektfelder konnten nicht geladen werden: {formatError(customFieldsQuery.error)}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => void customFieldsQuery.refetch()}>Projektfelder erneut laden</Button></div> : <><CustomFieldInputs fields={customFields} value={customFieldDraftValues} onChange={(key, value) => setCustomFieldDraftValues((current) => ({ ...current, [key]: value }))} idPrefix="edit-task-field" /><CustomFieldValues fields={customFields} values={task?.custom_fields ?? {}} onlyInactive /></>}{missingCustomFields.length > 0 && <p className="text-xs text-amber-800">Erforderlich: {missingCustomFields.join(', ')}</p>}<fieldset className="grid gap-2"><legend className="text-sm font-medium">Labels</legend>{labels.length ? labels.map((label) => <label key={label.id} className="flex items-center gap-2 text-sm"><Checkbox checked={labelIds.includes(label.id)} onCheckedChange={(checked) => setLabelIds((current) => checked ? [...current, label.id] : current.filter((id) => id !== label.id))} /><span className="size-2 rounded-full" style={{ backgroundColor: label.color }} /><span>{label.name}</span><span className="ml-auto text-xs text-muted-foreground">{label.kind === 'workflow' ? 'Workflow' : 'Thema'}</span></label>) : <p className="text-xs text-muted-foreground">Für dieses Projekt sind noch keine Labels angelegt.</p>}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEditing(false)}>Abbrechen</Button><Button onClick={() => saveTask.mutate()} disabled={!title.trim() || customFieldsQuery.isPending || customFieldsQuery.isError || missingCustomFields.length > 0 || saveTask.isPending}>{saveTask.isPending ? 'Speichert…' : 'Änderungen speichern'}</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Meldung hinzufügen</DialogTitle><DialogDescription>Speichere eine nachvollziehbare Meldung zu einem Erfolgskriterium. Die Meldung ist keine automatische Codeprüfung.</DialogDescription></DialogHeader><div className="grid gap-4 py-2"><div className="grid gap-2"><Label htmlFor="evidence-label">Bezeichnung</Label><Input id="evidence-label" value={evidenceLabel} onChange={(event) => setEvidenceLabel(event.target.value)} maxLength={200} /></div><div className="grid gap-2"><Label htmlFor="evidence-text">Meldung</Label><Textarea id="evidence-text" value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} rows={4} maxLength={10000} /></div><fieldset className="grid gap-2"><legend className="text-sm font-medium">Kriterien zuordnen</legend>{task?.criteria.map((criterion) => <label key={criterion.id} className="flex items-start gap-2 text-sm"><Checkbox checked={evidenceCriteria.includes(criterion.id)} onCheckedChange={(checked) => setEvidenceCriteria((current) => checked ? [...current, criterion.id] : current.filter((id) => id !== criterion.id))} /><span>{criterion.text}</span></label>)}</fieldset></div><DialogFooter><Button variant="outline" onClick={() => setEvidenceOpen(false)}>Abbrechen</Button><Button onClick={() => registerEvidence.mutate()} disabled={!evidenceLabel.trim() || !evidenceText.trim() || registerEvidence.isPending}>{registerEvidence.isPending ? 'Speichert…' : 'Meldung speichern'}</Button></DialogFooter></DialogContent></Dialog>
+
+      <Dialog open={Boolean(evidenceAssignmentTarget)} onOpenChange={(open) => {
+        if (open || assignEvidence.isPending) return
+        setEvidenceAssignmentTarget(undefined)
+        setEvidenceAssignmentCriteria([])
+        setEvidenceAssignmentError('')
+        setEvidenceAssignmentProgress('')
+      }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Kriterien zuordnen</DialogTitle>
+            <DialogDescription>Ordne einen bestehenden Nachweis offenen Erfolgskriterien zu. Inhalt und Herkunft der Meldung bleiben erhalten; die Zuordnung bestätigt kein Kriterium.</DialogDescription>
+          </DialogHeader>
+          {evidenceAssignmentEvidence && <div className="rounded-lg border p-3"><p className="text-sm font-medium">{evidenceAssignmentEvidence.label}</p>{evidenceAssignmentEvidence.text && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{evidenceAssignmentEvidence.text}</p>}</div>}
+          {evidenceAssignmentLinkedCriteria.length > 0 && <p role="status" className="text-sm text-muted-foreground">Bereits zugeordnet: {evidenceAssignmentLinkedCriteria.map((criterion) => criterion.text).join(' · ')}</p>}
+          {evidenceAssignmentEvidence?.review_status === 'rejected' && <p role="alert" className="text-sm text-destructive">Dieser Nachweis wurde zurückgewiesen und kann nicht zugeordnet werden.</p>}
+          {evidenceAssignmentIsStale && evidenceAssignmentEvidence && task && <p role="alert" className="text-sm text-destructive">Dieser Nachweis bezieht sich auf Ticketversion {evidenceAssignmentEvidence.task_revision}, aktuell ist Version {task.version}. Er lässt sich nicht zuordnen.</p>}
+          {evidenceAssignmentAvailableCriteria.length > 0 ? <fieldset className="grid gap-2 py-2">
+            <legend className="text-sm font-medium">Offene Kriterien</legend>
+            {evidenceAssignmentAvailableCriteria.map((criterion) => <label key={criterion.id} className="flex items-start gap-2 text-sm">
+              <Checkbox aria-label={criterion.text} checked={evidenceAssignmentCriteria.includes(criterion.id)} onCheckedChange={(checked) => {
+                setEvidenceAssignmentError('')
+                setEvidenceAssignmentCriteria((current) => checked ? current.includes(criterion.id) ? current : [...current, criterion.id] : current.filter((id) => id !== criterion.id))
+              }} />
+              <span>{criterion.text}</span>
+            </label>)}
+          </fieldset> : <p className="py-2 text-sm text-muted-foreground">{task?.criteria.length ? 'Es gibt keine offenen, noch nicht zugeordneten Kriterien.' : 'Für dieses Ticket sind keine Erfolgskriterien festgelegt.'}</p>}
+          {evidenceAssignmentProgress && <p role="status" className="text-sm text-muted-foreground">{evidenceAssignmentProgress}</p>}
+          {evidenceAssignmentError && <p role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">{evidenceAssignmentError}</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setEvidenceAssignmentTarget(undefined); setEvidenceAssignmentCriteria([]); setEvidenceAssignmentError(''); setEvidenceAssignmentProgress('') }} disabled={assignEvidence.isPending}>Abbrechen</Button>
+            <Button onClick={() => assignEvidence.mutate()} disabled={assignEvidence.isPending || !evidenceAssignmentCriteria.some((id) => evidenceAssignmentAvailableCriteria.some((criterion) => criterion.id === id))}>
+              {assignEvidence.isPending ? 'Speichert…' : 'Zuordnung speichern'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(editingLink)} onOpenChange={(open) => { if (!open) { setEditingLink(undefined); setLinkForm(false) } }}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Link bearbeiten</DialogTitle><DialogDescription>Die Referenz bleibt in ihrer Sammlung und Reihenfolge. Gespeicherte Bestätigungen können dadurch ungültig werden.</DialogDescription></DialogHeader><div className="grid gap-3 py-2"><div className="grid gap-2"><Label htmlFor="edit-link-title">Titel</Label><Input id="edit-link-title" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} maxLength={300} /></div><div className="grid gap-2"><Label htmlFor="edit-link-url">URL</Label><Input id="edit-link-url" type="url" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} maxLength={4000} /></div><div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label>Linktyp</Label><Select value={linkKind} onValueChange={(value) => setLinkKind(value as typeof linkKind)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{linkKinds.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-2"><Label>Beziehung</Label><Select value={linkRelation} onValueChange={(value) => setLinkRelation(value as typeof linkRelation)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{linkRelations.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div></div></div><DialogFooter><Button variant="outline" onClick={() => { setEditingLink(undefined); setLinkForm(false) }}>Abbrechen</Button><Button onClick={() => updateLink.mutate()} disabled={!linkTitle.trim() || !linkUrl.trim() || updateLink.isPending}>{updateLink.isPending ? 'Speichert…' : 'Link speichern'}</Button></DialogFooter></DialogContent></Dialog>
 

@@ -178,3 +178,50 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
     `Chromium mit 390×844 Pixeln und 200 Prozent Grundschrift erstellte Projekt Browser Bedienbarkeit ${projectSuffix}, richtete das Board ein, erstellte und bearbeitete das Label ${labelName} geprüft, legte Ticket ${taskId} mit einem Kriterium an, registrierte und bearbeitete eine passive HTTPS-Referenz, änderte Titel/Beschreibung und Labelzuordnung, filterte das Board, registrierte eine manuelle Meldung, bestätigte das Kriterium mit Begründung und setzte den Status auf done. Tastatur-Enter öffnete Projekt-, Board- und Ticketdialoge; Escape schloss das Ticket-Sheet. Die öffentliche API bestätigte origin=manual und ${history.items.length} Verlaufsrevisionen. Ein unkritischer Browserboard-Screenshot liegt unter public/board.png.`,
   );
 });
+
+test('an owner links an existing report to both criteria before closing a ticket', async ({ ownerApi, ownerPage }) => {
+  const project = await ownerApi.createProject({ name: 'Prüfbericht zuordnen' });
+  const board = await ownerApi.ensureDefaultBoard(project.id);
+  const criteria = ['Abhängigkeiten installiert', 'Tests erfolgreich'];
+  const task = await ownerApi.createTask(project.id, {
+    title: 'Vorhandenen Nachweis abnehmen',
+    criteria: criteria.map((text) => ({ text, is_required: true })),
+  });
+  const taskPath = `/tasks/${task.id}`;
+  const current = await ownerApi.get(taskPath);
+  const evidence = await ownerApi.post(`${taskPath}/evidence`, {
+    task_id: task.id,
+    task_revision: current.data.version,
+    run_id: null,
+    attempt_no: null,
+    artifact: { kind: 'test_report', label: 'Installation und Tests', text: 'Installation erfolgreich.\nTests bestanden.' },
+    criterion_ids: [],
+  }, { version: current.data.version });
+  expect(evidence.response.status()).toBe(201);
+
+  await ownerPage.goto(`/#/project/${project.id}/board`);
+  await ownerPage.getByRole('button', { name: board.name, exact: true }).click();
+  await ownerPage.getByText('Vorhandenen Nachweis abnehmen', { exact: true }).click();
+  await ownerPage.getByRole('button', { name: 'Kriterien zuordnen', exact: true }).click();
+  const dialog = ownerPage.getByRole('dialog', { name: 'Kriterien zuordnen' });
+  for (const criterion of criteria) {
+    await dialog.getByRole('checkbox', { name: criterion, exact: true }).check();
+  }
+  await dialog.getByRole('button', { name: 'Zuordnung speichern', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect.poll(async () => (await ownerApi.get(taskPath)).data.criteria.map((item) => [item.state, item.evidence_ids]))
+    .toEqual(criteria.map(() => ['reported', [evidence.data.id]]));
+
+  const details = ownerPage.getByRole('tabpanel', { name: 'Details' });
+  for (const criterion of criteria) {
+    await details.getByRole('button', { name: 'Bestätigen', exact: true }).first().click();
+    await ownerPage.getByLabel('Begründung').fill(`Der Prüfbericht belegt: ${criterion}.`);
+    await ownerPage.getByRole('button', { name: 'Fachlich bestätigen', exact: true }).click();
+    await expect(ownerPage.getByRole('dialog', { name: 'Kriterium bestätigen' })).not.toBeVisible();
+  }
+  await ownerPage.getByRole('combobox', { name: 'Ticketstatus' }).click();
+  await ownerPage.getByRole('option', { name: 'Erledigt', exact: true }).click();
+  await expect.poll(async () => (await ownerApi.get(taskPath)).data.status_category).toBe('done');
+  const evidenceList = await ownerApi.get(`/evidence?task_id=${task.id}`);
+  expect(evidenceList.data.items.map((item) => item.id)).toEqual([evidence.data.id]);
+});
