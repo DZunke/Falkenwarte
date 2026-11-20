@@ -1,47 +1,32 @@
 # Falkenwarte
 
-Falkenwarte is a private, single-owner workspace for projects, tickets, agent handoffs, and decisions around an existing T3 Code installation. T3 owns model and provider configuration. Falkenwarte does not read project repositories or verify reported code changes.
+Falkenwarte ist ein privater Arbeitsbereich für eine Person. Du organisierst Projekte auf Boards, hältst Kriterien und Entscheidungen an Tickets fest und siehst, welche Rückfragen auf dich warten. Projekte und Tickets kannst du ohne externe Dienste bearbeiten. Wenn du Agents einbindest, übernimmt OpenAI Decisions die Einordnung technischer Eingänge. Über T3 Code vergibst du Aufträge und erhältst Ergebnisse am Ticket.
 
-The implementation follows concept version 2.0. The [product concept](docs/PRODUCT_CONCEPT.md) defines its scope, [public contracts](contracts/README.md) define HTTP, MCP, and event shapes, and the [acceptance plan](docs/ACCEPTANCE.md) defines observable outcomes. The [traceability report](docs/TRACEABILITY.md) distinguishes implemented files from acceptance evidence.
+## Lokal starten
 
-## Run locally
-
-Use the Linux production-shaped app container and its persistent data volume.
-
-The checked-in `.env` contains safe defaults. Symfony loads personal overrides from the ignored `.env.local`; keep credentials there. `make app-up` also passes `.env.local` to Compose when it exists, and Compose overrides can be supplied directly with `docker compose --env-file .env --env-file .env.local ...`.
+Du brauchst Linux, Git, Docker mit Compose und Make. Starte die Anwendung im ausgecheckten Repository und kopiere ihr lokales Stammzertifikat.
 
 ```sh
-docker compose up --build -d --wait
+make app-up
+docker compose exec -T app cat /certs/root.crt > ~/falkenwarte-root.crt
 ```
 
-The local application opens at <https://localhost:8443>. Before visiting it, copy Caddy's local root certificate and import it into the certificate store used by your Linux browser:
-
-```sh
-docker compose exec -T app cat /certs/root.crt > falkenwarte-root.crt
-```
-
-Read the one-time owner setup token from the persistent data volume, then enter it in the browser's first-run setup:
+Importiere das Zertifikat in den Vertrauensspeicher deines Browsers. Öffne anschließend [Falkenwarte auf localhost](https://localhost:8443). Beim ersten Start fragt die Anwendung nach dem einmaligen Einrichtungstoken. Lies es im lokalen Terminal aus.
 
 ```sh
 docker compose exec -T app cat /data/setup-token
 ```
 
-The static documentation site is available at <https://localhost:8443/docs/>. T3 and OpenAI credentials are not required to start the local app; those external integrations remain unavailable until configured. Runtime configuration and backup/restore steps are documented in [operations](docs/OPERATIONS.md).
+Nach der Einrichtung kannst du dein erstes Projekt und Ticket anlegen. Die Konfiguration beginnt mit den eingecheckten Standardwerten in `.env`. Persönliche Einstellungen gehören in `.env.local`. [Erste Schritte und Bedienung](docs/USER_GUIDE.md) · [Betrieb und Konfiguration](docs/OPERATIONS.md)
 
-## Development checks
+## Im Projekt arbeiten
 
-Run `make install` once on a new checkout to install the locked PHP and Node dependencies; `make qa` includes that bootstrap. Use `make help` to list the common local-development and QA commands.
+| Ich möchte … | Einstieg |
+| --- | --- |
+| Einen Arbeitsablauf im Handbuch nachschlagen | [Handbuch](docs/README.md) |
+| Eine Fachregel ändern und das zuständige Modul finden | [Architektur](docs/ARCHITECTURE.md) und [Fachmodell](docs/domain/BOUNDED_CONTEXTS.md) |
+| Einen Client oder ein MCP-Werkzeug anbinden | [Öffentliche Verträge](contracts/README.md) |
+| Eine Änderung lokal prüfen | [Tests und QA](docs/TESTING.md) |
+| Eine Anleitung ändern und im Browser lesen | [Dokumentationspflege](docs/DOCUMENTATION.md) |
 
-`make check` assumes dependencies are installed and reuses them. `make format-check` can be rerun directly without reinstalling Composer packages.
-
-`make app-up` builds and starts the application. `make app-down` stops it while keeping its data and certificate volumes. `make app-logs` follows the app logs.
-
-`make check` runs PHP formatting checks, static analysis, frontend checks, documentation validation, and the focused background-job checks. `make qa` also runs the real Docker and Playwright browser suite and the plugin image-upgrade checks.
-
-`make format` applies the Symfony PHP coding standards. After dependencies are installed, `make format-check` checks them without editing files or reinstalling Composer packages. `make clean` removes only generated frontend and handbook files; it preserves volumes, environment files, secrets, dependencies, and QA evidence.
-
-The product test suite uses Playwright end-to-end scenarios against a started application with real database, workers, and Mercure, plus external T3 and Decisions mocks. See [testing](docs/TESTING.md) for the current commands and results.
-
-## Documentation
-
-The [documentation index](docs/README.md) links product guidance, the domain model, architecture decisions, integration boundaries, and operations. `make docs` builds the standalone HTML pages under `public/docs/`; the Docker image runs this PHP build separately from the Vite frontend build.
+`make install` installiert die Entwicklungsabhängigkeiten. `make check` prüft unter anderem die PHP-Formatierung, den Symfony-Container, das Frontend und das Handbuch. `make qa` führt zusätzlich die Docker- und Browserprüfungen aus. Alle Ziele zeigt `make help`.

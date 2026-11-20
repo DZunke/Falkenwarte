@@ -345,7 +345,7 @@
     },
     {
       "name": "tasks_create",
-      "description": "Owner-UI/JSON kann händisch anlegen. Jeder MCP-Aufruf und jeder technische API-Principal wird zwingend klassifiziert; source/manual sind keine beschreibbaren Eingabefelder. 201 liefert finalen aktuellen Receipt, 202 einen dauerhaft nachverfolgbaren accepted Receipt. Bei needs_information bleibt dasselbe Ticket bestehen. Anfragen warten höchstens prefer_wait_ms, Worker bleibt Besitzer der Klassifikation.",
+      "description": "Owner-JSON/UI legt standardmäßig manuelle Tickets an; eine Projektpolicy kann manuelle Klassifikation aktivieren. Technische API-Anlagen und tasks_create über MCP durchlaufen immer die Klassifikation; source/manual sind keine Eingabefelder. Technische Tickets werden dauerhaft gespeichert und mit outcome=accepted quittiert. Den Intake-Ausgang liest der ursprüngliche Principal über tasks_intake_get. prefer_wait_ms wird aus Kompatibilitätsgründen akzeptiert, löst aktuell aber kein Warten im Request aus. Bei needs_information bleibt dasselbe Ticket bestehen.",
       "operation_id": "tasks_create",
       "http_mapping": {
         "method": "POST",
@@ -652,7 +652,8 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 1500,
-            "default": 1000
+            "default": 1000,
+            "description": "Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die Klassifikation."
           },
           "client_request_id": {
             "type": "string",
@@ -2097,7 +2098,7 @@
     },
     {
       "name": "tasks_supply_information",
-      "description": "Fehlende Angaben zum bestehenden Ticket nachreichen",
+      "description": "Angeforderte Angaben für dasselbe Ticket nachreichen; die Klassifikation läuft anschließend asynchron und wird mit tasks_intake_get nachverfolgt.",
       "operation_id": "tasks_supply_information",
       "http_mapping": {
         "method": "POST",
@@ -2152,7 +2153,8 @@
           "prefer_wait_ms": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 1500
+            "maximum": 1500,
+            "description": "Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die neue Klassifikationsgeneration."
           },
           "client_request_id": {
             "type": "string",
@@ -2175,7 +2177,7 @@
     },
     {
       "name": "tasks_reclassify",
-      "description": "Erneute Einordnung anfordern",
+      "description": "Erneute Einordnung anfordern; die Klassifikation läuft asynchron und wird mit tasks_intake_get nachverfolgt.",
       "operation_id": "tasks_reclassify",
       "http_mapping": {
         "method": "POST",
@@ -2210,7 +2212,8 @@
           "prefer_wait_ms": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 1500
+            "maximum": 1500,
+            "description": "Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die erneute Klassifikation."
           },
           "client_request_id": {
             "type": "string",

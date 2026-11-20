@@ -365,7 +365,7 @@ export interface paths {
         put?: never;
         /**
          * Ticket dauerhaft anlegen und technischen Eingang klassifizieren
-         * @description Owner-UI/JSON kann händisch anlegen. Jeder MCP-Aufruf und jeder technische API-Principal wird zwingend klassifiziert; source/manual sind keine beschreibbaren Eingabefelder. 201 liefert finalen aktuellen Receipt, 202 einen dauerhaft nachverfolgbaren accepted Receipt. Bei needs_information bleibt dasselbe Ticket bestehen. Anfragen warten höchstens prefer_wait_ms, Worker bleibt Besitzer der Klassifikation.
+         * @description Owner-UI/JSON kann standardmäßig händisch anlegen; ein Projekt kann Klassifikation für manuelle Tickets aktivieren. tasks_create über MCP und jede Anlage mit technischem API-Principal werden zwingend klassifiziert; source/manual sind keine beschreibbaren Eingabefelder. Technische Ticketanlagen werden dauerhaft gespeichert und als accepted Receipt mit 202 quittiert. Der endgültige Intake-Ausgang wird über GET /api/v1/tasks/{task_id}/intake gelesen. prefer_wait_ms wird aus Kompatibilitätsgründen akzeptiert, der aktuelle Server wartet damit aber nicht innerhalb des Requests. Bei needs_information bleibt dasselbe Ticket bestehen.
          */
         post: operations["tasks_create"];
         delete?: never;
@@ -2670,7 +2670,7 @@ export interface components {
             classification_id: components["schemas"]["Id"] | null;
             link_collection_ids: components["schemas"]["Id"][];
         };
-        /** @description Server klassifiziert alle technischen Principals und alle MCP-Aufrufe zwingend; Quelle ist nicht clientseitig schreibbar. Owner-JSON/UI gilt als händisch, technische Automationen benötigen technische Tokens. Dauerhafte Anlage erfolgt vor einem begrenzten optionalen Warten auf Klassifikation. */
+        /** @description Owner-JSON/UI legt standardmäßig manuelle Tickets an; eine Projektpolicy kann manuelle Klassifikation aktivieren. Technische API- und MCP-Anlagen durchlaufen immer die Klassifikation. Herkunft und Quelle werden serverseitig aus Credential und Transport abgeleitet und können nicht als Eingabe gesetzt werden. Technische Tickets werden vor dem Intake-Command dauerhaft angelegt. */
         TaskCreate: {
             title: string;
             description?: string;
@@ -2688,7 +2688,10 @@ export interface components {
             label_ids?: components["schemas"]["Id"][];
             suggested_label_ids?: components["schemas"]["Id"][];
             link_collections?: components["schemas"]["InitialLinkCollection"][];
-            /** @default 1000 */
+            /**
+             * @description Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die Klassifikation.
+             * @default 1000
+             */
             prefer_wait_ms: number;
         };
         /** @description Status, Zuweisung, Kriterien, Abhängigkeiten und Labels über ihre Regeln. Relevante Titel-/Beschreibung-/Intakeänderungen invalidieren Klassifikation und blockieren neue automatische Starts bis zum erneuten Abgleich. Menschlich gesetzte Einordnung wird nicht automatisch überschrieben. */
@@ -4200,10 +4203,12 @@ export interface components {
                 field_key: string;
                 value: string;
             }[];
+            /** @description Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die neue Klassifikationsgeneration. */
             prefer_wait_ms?: number;
         };
         IntakeReclassify: {
             reason: string;
+            /** @description Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die erneute Klassifikation. */
             prefer_wait_ms?: number;
         };
         /** @description Expliziter Owner-Override nach sichtbarer KI-Unsicherheit oder Ausfall; protokolliert und versioniert, keine automatische stille Ersatzklassifikation. Rechte, vorhandene Workflowversionen und harte Regeln bleiben verbindlich. Aufgelöst werden nur die diesem Intake zugeordneten erfüllten Gründe; andere Approval-, Auth- oder Rungründe bleiben bestehen. */

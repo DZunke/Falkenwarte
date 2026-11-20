@@ -1,42 +1,43 @@
-# Context Map und veröffentlichte Beziehungen
+# Context Map und gerichtete Verträge
 
-**Status:** Verbindlicher Fachvertrag aus Konzeptfassung 2.0. Der Umsetzungs- und Abnahmenachweis steht in [TRACEABILITY.md](../TRACEABILITY.md).
+Die Tabelle beschreibt die heute vorhandenen Abhängigkeiten zwischen Modulen. Jede Zeile nennt den Aufrufer, den Vertrag und die Wirkung beim Empfänger.
 
-![Context Map: fachliche Führung, Integration und unterstützende Contexts.](../media/context-map.png)
+## Gerichtete Beziehungen
 
-## Fachliche Richtung
-
-Portfolio liefert Projektidentität und Scope. WorkManagement führt die Aufgaben. Classification bewertet Eingänge und schlägt zulässige Zuordnungen vor. Automation wählt eine versionierte Route und fordert Phasenarbeit von Orchestration an. Orchestration verwendet AgentCatalog für ein auflösbares T3-Ziel.
-
-| Liefernder Context | Konsument | Vertrag und Abhängigkeit |
+| Von | Nach | Vertrag und Wirkung |
 |---|---|---|
-| Portfolio | WorkManagement, AgentCatalog, Automation | Projekt-ID, Aktivstatus, T3-Bindungsreferenz; keine Kopie der gesamten Projektverwaltung |
-| WorkManagement | Classification | Unveränderliche Intake-/Ticketrevision und erforderliche Angaben |
-| Classification | WorkManagement | Validierte Labelzuordnung, Herkunft und Handlungsbedarf über lokalen Application-Vertrag |
-| Classification | Automation | Ausgewähltes Workflowlabel und konkrete Routingregelversion |
-| WorkManagement | Automation | Fachliche Ereignisse über Bereitschaft, Änderungen und Abschluss |
-| Automation | Orchestration | Versionierter Phasenauftrag, Abschlussregel und begrenzte Wiederholungsregel |
-| AgentCatalog | Orchestration | Berechtigtes Profil, Verbindung und vorhandene T3-Zielreferenz |
-| Orchestration | WorkManagement, Automation | Zugeordnete Meldung, Run-Ausgang und mögliche Folgephase |
-| Ändernder Context | History | Redigierter Snapshot als Teilnehmer derselben DBAL-Transaktion |
-| Ändernder Context | Metrics | Versioniertes Domain Event über Outbox; spätere, wiederaufbaubare Projektion |
-| Access, Extensions | Öffentliche Einstiegspunkte | Projekt-/Principalrechte und aktive Capability-Gates |
+| HTTP- oder MCP-Einstieg | `Presentation\Gateway` | Beide Einstiege leiten API-Aufrufe an denselben Gateway. Er prüft OpenAPI-Vertrag, Akteur, Capability, Pluginvoraussetzung, Idempotenzschlüssel und `If-Match`, wenn die jeweilige Operation diese Angaben verlangt. Anschließend wählt er einen registrierten `OperationHandler`. |
+| WorkManagement | Classification | `WorkHandler` ruft bei technischen Eingängen, manueller Klassifikation und geänderten technischen Aufgaben `WorkManagement\Application\TaskIntake` auf. `IntakeHandler` implementiert diesen Port und legt Intake sowie Bewertungsauftrag an. |
+| Classification | OpenAI Decisions | `DecisionGateway` ist die Application-Schnittstelle. `SymfonyAiDecisionAdapter`, `OpenAiDecisionsPlatform` und `DecisionResultConverter` übersetzen die Providerantwort in Falkenwarte-Klassifikationswerte. |
+| Orchestration | AgentCatalog | `RunHandler` fragt über `AgentCatalogReader` Agentprofile, Projektbindung, Verbindung, Providerverfügbarkeit und Anmeldezustand ab. |
+| Orchestration | Automation | `RunHandler` verwendet `WorkflowPolicy`, um Definitionen zu validieren und den nächsten Übergang auszuwählen. Orchestration speichert die Workflowdefinitionen und -instanzen. |
+| Orchestration | T3 MCP und OAuth | `AgentExecutionBridge` und `T3OAuthClient` sind Application-Ports. `T3McpBridge` und `T3OAuthAuthenticator` übersetzen T3-Antworten und Identitäten in Falkenwarte-Datensätze. |
+| Extensions | Capability-Nutzer | `PluginRegistry` stellt Manifeste und Pluginzustände bereit. `PluginAvailability` gibt Beiträge und MCP-Werkzeuge nur frei, wenn Plugin und Abhängigkeiten aktiviert sind. |
+| Extensions | Orchestration | Beim Drain verwendet `PluginHandler` `ProviderRunDrainPort`, um laufende oder offene Arbeit des Providers abzufragen. Die Drainpolicy kann außerdem einen Abbruch anfordern. |
+| Application-Handler | Shared | Handler lesen und ändern typisierte Datensätze über `Shared\Application\Store`. Application-Ports importieren weder DBAL noch SQL. |
+| DbalStore | Live und Browser | `DbalStore` legt für unterstützte Ressourcen einen UI-Änderungshinweis in `events.change_json` ab. `Live::publish()` versendet offene Hinweise privat über Mercure. Der Browser lädt danach die autoritative JSON-Ressource erneut. |
+| Metrics | Shared-Ereignisjournal | `MetricsHandler` liest gespeicherte Aufgaben, Runs und Ereignisse für Dashboard und Messwerte. Ein Rebuild schreibt Projektionen, stellt aber keine Agentenaufträge zu. |
 
-Die zwei Richtungen zwischen Aufgabe und Klassifikation sind ausdrücklich unterschiedliche Application-Verträge. Ein KI-Aufruf erfolgt niemals als verschachtelte Datenbankmutation. Eine Eventschleife wird nicht aus bloßem „Label geändert“ erneut gestartet; nur eine ausdrücklich neue Intake-/Reclassify-Aktion löst eine Bewertung aus.
+## Ablauf einer Änderung
 
-## Externe Grenzen
+Eine mutierende HTTP- oder MCP-Operation wird im `Gateway` gegen OpenAPI geprüft und erhält eine Action-ID. Der Gateway prüft Versions- und Idempotenzbedingungen vor dem Aufruf des zuständigen Handlers.
 
-| Grenze | Eigentümer in Falkenwarte | Abstraktion und Schutz vor fremdem Modell |
-|---|---|---|
-| T3 MCP | Orchestration-Infrastruktur | `AgentExecutionBridge` normalisiert Fähigkeiten, Launchbelege und Beobachtungen. T3-Statuswerte werden nicht ungeprüft zu Domainzuständen. |
-| OpenAI Decisions über Symfony AI | Classification-Infrastruktur | `DecisionGateway` liefert eigene Assessment-DTOs. Provider-Question- und Answerklassen bleiben im Adapter. |
-| Mercure | Delivery-Infrastruktur | `UiChangePublisher` sendet Ressourcenhinweise nach Commit. Der Hub besitzt keine Fachzustände. |
-| Externe Issue-/PR-URLs | WorkManagement | Eine gespeicherte Linkreferenz ohne API-Client, Fernabfrage oder Statusprojektion. |
+Der Handler prüft Projektbereich und fachliche Voraussetzungen und ändert Datensätze innerhalb einer gemeinsamen `Store::atomic()`-Grenze. Für registrierte Datensatztypen entstehen in derselben lokalen Transaktion Revisionen und Journalereignisse.
 
-Die Integrationsadapter sind Anti-Corruption Layers: Sie übersetzen das fremde Datenmodell, statt es in die Domain zu übernehmen. Ein Wechsel der technischen Bridge darf keine neue Bedeutung für „Ticket abgeschlossen“ erzeugen.
+Wenn Folgearbeit nötig ist, schreibt der Handler einen Auftrag in `commands` und gibt eine Annahme mit Action- oder Ressourcenreferenz zurück. `Consumer` prüft den `inbox`-Marker und leitet den Auftrag anhand seines Präfixes an den zuständigen Worker weiter.
 
-## Änderungsregel
+Der Worker führt lokale Verarbeitung in einer Transaktion aus. Für externe Arbeit ruft er den jeweiligen Adapter außerhalb der SQLite-Schreibtransaktion auf. Bei T3 werden Start, Beobachtung und Meldung als getrennte Schritte gespeichert und abgeglichen.
 
-Eine neue Pfeilrichtung in dieser Map benötigt einen veröffentlichten Vertrag und einen dokumentierten Datenbesitzer. Ein neues externes System benötigt außerdem eine eigene Scope-Entscheidung. Ein Plugin darf nicht durch einen direkten SQL-Zugriff eine nicht dokumentierte Context-Beziehung schaffen.
+Der Gateway beendet die Action nach der lokalen Verarbeitung, wenn kein Hintergrundauftrag offen ist. Andernfalls beendet der Consumer die Action nach Abschluss der Aufträge oder markiert sie nach einem endgültigen Workerfehler als `failed`.
 
-Die bearbeitbare Diagrammquelle liegt unter `diagrams/context-map.mmd`. Die PNG-Fassung dient PDF und statischer Dokumentation. Bei Änderungen werden beide gemeinsam aktualisiert.
+## Daten- und Integrationsgrenzen
+
+Application-Handler verwenden gemeinsam gespeicherte Datensatztypen und veröffentlichte Application-Ports. `Store` kapselt den Persistenzzugriff. Die Anwendung besitzt für jede Ressource keine eigene Repositoryklasse.
+
+Ein Domain- oder Action-Ereignis beschreibt eine lokale Änderung. Ein UI-Hinweis fordert den Client zum Neuladen einer Ressource auf. Ein Eintrag in `commands` fordert einen Worker zur Arbeit auf.
+
+Die Anwendung speichert Aufgabenlinks als URLs. Sie fragt die Ziele weder ab noch synchronisiert sie Status aus Issue-, Pull-Request-, CI- oder Repositorydiensten.
+
+T3 führt die Agentenaufträge aus. Falkenwarte speichert Bindungen, Profile, Runs, Berichte und Beobachtungen, die es zur Zuordnung und zum Abgleich verwendet.
+
+Die öffentlichen JSON- und MCP-Formen stehen in [OpenAPI](../../contracts/openapi.yaml), [MCP-Werkzeugen](../../contracts/mcp-tools.json) und den [versionierten Ereignisschemas](../../contracts/schemas/event-envelope.schema.json).

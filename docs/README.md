@@ -1,32 +1,36 @@
-# Falkenwarte-Dokumentation
+# Falkenwarte-Handbuch
 
-Diese Dokumentation enthält den Fachvertrag aus Konzeptfassung 2.0 und die Bedienungs- und Betriebsanleitungen für die Anwendung. Ob ein Verhalten implementiert und geprüft wurde, steht im [Anforderungs- und Abnahmenachweis](TRACEABILITY.md). Konzeptbeschreibung, vorhandener Code und bestandene E2E-Abnahme sind getrennte Aussagen.
+In Falkenwarte bündelt ein Ticket die Arbeit an einer Aufgabe. Es gehört zu einem Projekt und kann von dir selbst oder mit einem Agent bearbeitet werden. Welchen nächsten Schritt ein Ticket braucht, siehst du an seinen Kriterien, Rückfragen und offenen Entscheidungen.
 
-## Einstieg
+## Falkenwarte benutzen
 
-| Anliegen | Dokument |
-|---|---|
-| Produktumfang und Zuständigkeiten | [Produktkonzept](PRODUCT_CONCEPT.md) |
-| Visuelle Referenzen des Konzepts | [Layoutbilder](MOCKUPS.md) |
-| Projekte, Tickets, Rückfragen und Links bedienen | [Benutzerhandbuch](USER_GUIDE.md) |
-| Begriffe und Modulverantwortung | [Glossar](domain/GLOSSARY.md), [Bounded Contexts](domain/BOUNDED_CONTEXTS.md), [Context Map](domain/CONTEXT_MAP.md) |
-| Zustandsübergänge nachvollziehen | [Lebenszyklen](domain/LIFECYCLES.md) |
-| Ereignisse und Objektgeschichte einordnen | [Ereigniskatalog](domain/EVENTS.md) |
-| Architekturentscheidungen prüfen | [ADR-Index](DECISIONS.md) |
-| Decisions- und T3-Grenzen verstehen | [OpenAI Decisions](AI_DECISIONS.md), [T3-Integration](T3_INTEGRATION.md) |
-| Plugins und Live-Updates verstehen | [Plugin-System](PLUGIN_SYSTEM.md), [Mercure](LIVE_SERVICES.md) |
-| API, MCP und Schemas nutzen | [Verträge](../contracts/README.md) |
-| Testläufe und Ergebnisse prüfen | [Teststrategie](TESTING.md), [Fixture- und Mockprofil](QA_FIXTURES.md), [Abnahmeplan](ACCEPTANCE.md), [Traceability](TRACEABILITY.md), [Prüfergebnisse](VALIDATION.md) |
-| Linux-Installation und Wiederherstellung | [Betrieb](OPERATIONS.md) |
-| Entwicklung und Releases | [GitHub und Releases](GITHUB_DELIVERY.md) |
-| Fachtexte aktuell halten | [Dokumentationspflege](DOCUMENTATION.md), [Quellen](SOURCES.md) |
+- [Ein Projekt und das erste Ticket anlegen](user/PROJECTS_AND_TICKETS.md)
+- [Eine Agentenmeldung einordnen und Rückfragen klären](user/INTAKE_AND_DECISIONS.md)
+- [Eine Agentrolle einsetzen und einen Workflow begleiten](user/AGENTS_AND_WORKFLOWS.md)
+- [Metriken und ihre Herkunft lesen](user/METRICS.md)
+- [Alle Bedienungsanleitungen](USER_GUIDE.md)
 
-## Verbindliche Quellen
+## Eine Installation betreiben
 
-Konzept und Domain-Dokumente erklären Fachregeln. `contracts/openapi.yaml` und `contracts/mcp-tools.json` definieren öffentliche Formen. Die Abnahmefälle beschreiben beobachtbares Produktverhalten. Bei Widersprüchen wird die Fachregel, der Vertrag und der Abnahmefall gemeinsam korrigiert.
+- [Die Anwendung starten und konfigurieren](operations/DEPLOYMENT_AND_CONFIGURATION.md)
+- [Einem Agenten Zugriff auf ein Projekt geben](operations/ACCESS.md)
+- [Daten sichern und eine Sicherung wiederherstellen](operations/BACKUP_AND_RESTORE.md)
+- [Betrieb und Fehlerdiagnose](OPERATIONS.md)
 
-Die Architekturentscheidungen in `adr/` gelten als gewählte Richtung. Ihre Umsetzung wird erst durch konkrete Dateien, statische Prüfungen und Abnahmen nachgewiesen. Der [Traceability-Bericht](TRACEABILITY.md) hält diese Nachweise pro Anforderung fest.
+## Das Fachmodell verstehen
 
-## Dokumentationsstatus
+| Frage | Wo du die Antwort findest |
+| --- | --- |
+| Was unterscheiden Ticket, Action und Run? | [Glossar](domain/GLOSSARY.md) |
+| Welches Modul entscheidet über eine Änderung? | [Verantwortung der Fachkontexte](domain/BOUNDED_CONTEXTS.md) |
+| Welche Informationen tauschen die Kontexte aus? | [Context Map](domain/CONTEXT_MAP.md) |
+| Wann darf ein Ticket oder ein Run abgeschlossen werden? | [Lebenszyklen und Übergänge](domain/LIFECYCLES.md) |
+| Was lässt sich aus einem Ereignis ablesen? | [Ereignisse und Objektgeschichte](domain/EVENTS.md) |
 
-Die Konzept- und Architekturtexte sind normative Vorgaben. Benutzer- und Betriebsanleitungen beschreiben den gelieferten Funktionsumfang und werden nach Browser- und Betriebsläufen mit echten Ergebnissen aktualisiert. Der Build veröffentlicht ausschließlich versionierte Dokumentdateien aus diesem Verzeichnis.
+## Entwickeln und integrieren
+
+- [Architektur und Weg eines Schreibzugriffs](ARCHITECTURE.md) · [Entscheidungen zur Architektur](DECISIONS.md)
+- [HTTP, MCP und öffentliche Schemas](API.md) · [T3-Anbindung](T3_INTEGRATION.md) · [OpenAI Decisions](AI_DECISIONS.md)
+- [Plugins entwickeln](PLUGIN_SYSTEM.md) · [Live-Updates mit Mercure](LIVE_SERVICES.md)
+- [Änderungen prüfen](TESTING.md) · [Fixtures und externe Testdienste](QA_FIXTURES.md)
+- [Pull Requests und Releases](GITHUB_DELIVERY.md) · [Das Handbuch bearbeiten](DOCUMENTATION.md)
