@@ -300,7 +300,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   return (
     <>
       <Sheet open={Boolean(taskId)} onOpenChange={(open) => { if (!open) { setEditing(false); onClose() } }}>
-        <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <SheetContent side="right" className="flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
           {taskQuery.isPending ? <div className="space-y-4 p-6"><div className="h-6 w-3/4 animate-pulse rounded bg-muted" /><div className="h-24 animate-pulse rounded bg-muted" /></div> : taskQuery.isError || !task ? (
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 p-8 text-center"><h2 className="font-semibold">Ticket konnte nicht geladen werden</h2><p className="text-sm text-muted-foreground">{formatError(taskQuery.error)}</p><Button variant="outline" onClick={() => void taskQuery.refetch()}><RefreshCw />Erneut laden</Button></div>
           ) : (
@@ -318,9 +318,9 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                   {task.intake_outcome === 'needs_information' && <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-900">Rückfrage an Agent</Badge>}
                 </div>
               </SheetHeader>
-              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
-                <TabsList className="falkenwarte-scrollbar mx-4 mt-4 max-w-[calc(100vw-2rem)] overflow-x-auto sm:mx-6 sm:max-w-[calc(100vw-3rem)]"><TabsTrigger value="details">Details</TabsTrigger><TabsTrigger value="decisions"><ShieldCheck />Entscheidungen</TabsTrigger><TabsTrigger value="execution"><Play />Ausführung</TabsTrigger><TabsTrigger value="history"><History />Verlauf</TabsTrigger>{linkNotesContribution && <TabsTrigger value="link-notes"><Link2 />{linkNotesContribution.label}</TabsTrigger>}</TabsList>
-                <TabsContent value="details" className="falkenwarte-scrollbar mt-0 flex-1 space-y-6 overflow-y-auto px-6 pb-8 pt-5">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <TabsList className="falkenwarte-scrollbar mx-4 mt-4 w-auto min-w-0 self-stretch justify-start overflow-x-auto overflow-y-hidden sm:mx-6"><TabsTrigger value="details">Details</TabsTrigger><TabsTrigger value="decisions"><ShieldCheck />Entscheidungen</TabsTrigger><TabsTrigger value="execution"><Play />Ausführung</TabsTrigger><TabsTrigger value="history"><History />Verlauf</TabsTrigger>{linkNotesContribution && <TabsTrigger value="link-notes"><Link2 />{linkNotesContribution.label}</TabsTrigger>}</TabsList>
+                <TabsContent value="details" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 space-y-6 overflow-y-auto px-6 pb-8 pt-5">
                   <section className="space-y-2"><h3 className="text-sm font-semibold">Beschreibung</h3><p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{task.description || 'Keine Beschreibung hinterlegt.'}</p></section>
                   {(Object.keys(task.custom_fields).length > 0 || customFields.length > 0) && <section className="space-y-3"><h3 className="text-sm font-semibold">Projektfelder</h3>{customFieldsQuery.isError && <p role="alert" className="text-xs text-destructive">Feldnamen konnten nicht geladen werden: {formatError(customFieldsQuery.error)}</p>}<CustomFieldValues fields={customFields} values={task.custom_fields} />{Object.keys(task.custom_fields).length === 0 && <p className="text-sm text-muted-foreground">Für dieses Ticket sind keine Projektfeldwerte hinterlegt.</p>}</section>}
                   <section className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-semibold">Erfolgskriterien</h3><Button size="sm" variant="outline" onClick={() => setEvidenceOpen(true)}><Plus />Meldung hinzufügen</Button></div>
@@ -343,17 +343,17 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                   </section>
                   <section className="space-y-3"><h3 className="text-sm font-semibold">Gemeldete Nachweise</h3>{evidenceQuery.isPending ? <p className="text-sm text-muted-foreground">Meldungen werden geladen…</p> : (evidenceQuery.data?.items ?? []).length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Meldungen. Ein Nachweis bleibt als menschliche oder Agentenmeldung gekennzeichnet.</p> : <div className="space-y-2">{evidenceQuery.data?.items.map((item) => <div key={item.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{item.label}</p><Badge variant="outline">{item.review_status === 'human_confirmed' ? 'Menschlich bestätigt' : item.review_status === 'rejected' ? 'Zurückgewiesen' : 'Gemeldet'}</Badge></div>{item.text && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{item.text}</p>}</div>)}</div>}</section>
                 </TabsContent>
-                <TabsContent value="decisions" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
+                <TabsContent value="decisions" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   <TaskDecisions task={task} project={project} onChanged={invalidate} />
                 </TabsContent>
-                <TabsContent value="execution" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
+                <TabsContent value="execution" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   <TaskExecution task={task} project={project} onChanged={invalidate} onOpenDecisions={() => setActiveTab('decisions')} />
                 </TabsContent>
-                <TabsContent value="history" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
+                <TabsContent value="history" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   {restoreActionQuery.data && <div className={`mb-5 rounded-lg border p-3 text-sm ${restoreActionQuery.data.status === 'failed' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-primary/20 bg-accent text-accent-foreground'}`} role="status"><p className="font-medium">{restoreActionQuery.data.status === 'succeeded' ? 'Wiederherstellung abgeschlossen' : restoreActionQuery.data.status === 'failed' ? 'Wiederherstellung fehlgeschlagen' : 'Wiederherstellung läuft'}</p><p className="mt-1 text-xs">Action {restoreActionQuery.data.id}</p></div>}
                   {historyQuery.isPending ? <p className="text-sm text-muted-foreground">Verlauf wird geladen…</p> : historyQuery.isError ? <p role="alert" className="text-sm text-destructive">{formatError(historyQuery.error)}</p> : historyQuery.data?.items.length ? <div className="space-y-0">{historyQuery.data.items.map((revision) => <div key={revision.id} className="relative border-l pb-5 pl-5 last:pb-0"><span className="absolute -left-1.5 top-1 size-3 rounded-full border-2 border-primary bg-background" /><div className="flex flex-wrap items-baseline justify-between gap-2"><div><p className="text-sm font-medium">{revision.summary}</p><time className="text-xs text-muted-foreground">{new Date(revision.recorded_at).toLocaleString('de-DE')}</time></div>{revision.restorable && <Button size="sm" variant="outline" onClick={() => setRestoreRevision(revision.id)}>Wiederherstellen</Button>}</div>{revision.reason && <p className="mt-1 text-xs text-muted-foreground">Grund: {revision.reason}</p>}<p className="mt-1 text-xs text-muted-foreground">{revision.actor.display_name}</p><RevisionFields fields={revision.custom_field_values} /></div>)}</div> : <p className="text-sm text-muted-foreground">Für dieses Ticket ist noch kein Verlauf vorhanden.</p>}
                 </TabsContent>
-                {linkNotesContribution && <TabsContent value="link-notes" className="falkenwarte-scrollbar mt-0 flex-1 overflow-y-auto px-6 pb-8 pt-5"><LinkNotesPanel taskId={task.id} projectId={project.id} /></TabsContent>}
+                {linkNotesContribution && <TabsContent value="link-notes" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5"><LinkNotesPanel taskId={task.id} projectId={project.id} /></TabsContent>}
               </Tabs>
             </>
           )}
