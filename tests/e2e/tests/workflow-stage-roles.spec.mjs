@@ -251,7 +251,22 @@ async function taskOnBoardColumn(ownerApi, boardId, columnId, taskId) {
 
 async function launchForRun(qaMocks, runId) {
   const journal = await qaMocks.t3Journal();
-  return journal.accepted_launches.find((launch) => launch.payload.message.includes('Run-ID: ' + runId + '\n'));
+  const launches = journal.accepted_launches.filter((launch) => launch.payload.message.includes('Run-ID: ' + runId + '\n'));
+  expect(launches, 'Each run must have exactly one accepted T3 launch.').toHaveLength(1);
+  return launches[0];
+}
+
+async function readUntilT3StartedRun(ownerApi, qaMocks, runId, description) {
+  const run = await readUntil(
+    ownerApi,
+    '/runs/' + runId,
+    (candidate) => ['running', 'verifying'].includes(candidate.state) && Boolean(candidate.attempts[0]?.external_thread_id),
+    description,
+  );
+  const launch = await launchForRun(qaMocks, runId);
+  expect(run.attempts[0].external_thread_id).toBe(launch.response.threadId);
+
+  return run;
 }
 
 test('UI creates a three-phase workflow with project-filtered roles and dispatches each named phase to its own role', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
@@ -314,7 +329,7 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
   const task = (await ownerApi.get('/tasks/' + taskResult.id)).data;
   const instance = await startWorkflow(ownerApi, task, workflow);
   const firstRunId = instance.run_ids[0];
-  const firstRun = await readUntil(ownerApi, '/runs/' + firstRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die Entwurfsphase muss tatsächlich über T3 starten.');
+  const firstRun = await readUntilT3StartedRun(ownerApi, qaMocks, firstRunId, 'Die Entwurfsphase muss tatsächlich über T3 starten.');
   expect(firstRun.stage).toBe(stageIds[0]);
   const afterWorkEntry = await ownerApi.get('/tasks/' + task.id);
   expect(afterWorkEntry.data.status_category).toBe('active');
@@ -346,7 +361,7 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
 
     const afterReviewEntry = await readUntil(ownerApi, '/workflow-instances/' + instance.id, (current) => current.run_ids.length === 2, 'Die angenommene Entwurfsphase muss die Reviewphase starten.');
     const reviewRunId = afterReviewEntry.run_ids[1];
-    const reviewRun = await readUntil(ownerApi, '/runs/' + reviewRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die Redaktionsprüfung muss tatsächlich über T3 starten.');
+    const reviewRun = await readUntilT3StartedRun(ownerApi, qaMocks, reviewRunId, 'Die Redaktionsprüfung muss tatsächlich über T3 starten.');
     expect(reviewRun.stage).toBe(stageIds[1]);
     const afterReviewMove = await ownerApi.get('/tasks/' + task.id);
     expect(afterReviewMove.data.status_category).toBe('review');
@@ -373,7 +388,7 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
     await approvePhaseIfRequired(ownerApi, reviewRunId);
     const withPublishRun = await readUntil(ownerApi, '/workflow-instances/' + instance.id, (current) => current.run_ids.length === 3, 'Die angenommene Reviewphase muss die Ausgabefreigabe starten.');
     const publishRunId = withPublishRun.run_ids[2];
-    const publishRun = await readUntil(ownerApi, '/runs/' + publishRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die Ausgabefreigabe muss tatsächlich über T3 starten.');
+    const publishRun = await readUntilT3StartedRun(ownerApi, qaMocks, publishRunId, 'Die Ausgabefreigabe muss tatsächlich über T3 starten.');
     expect(publishRun.stage).toBe(stageIds[2]);
     const afterPublishMove = await ownerApi.get('/tasks/' + task.id);
     expect(afterPublishMove.data.status_category).toBe('ready');
@@ -526,7 +541,7 @@ test('UI versions a same-role two-phase template into separate work and review r
   const frozenInstance = await startWorkflow(ownerApi, frozenTask, workflowV2, 1);
   expect(frozenInstance).toMatchObject({ workflow_id: workflowV1.id, definition_version: 1 });
   const frozenRunId = frozenInstance.run_ids[0];
-  const frozenRun = await readUntil(ownerApi, '/runs/' + frozenRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Ein expliziter Start der alten Version muss ihre gemeinsame Rolle verwenden.');
+  const frozenRun = await readUntilT3StartedRun(ownerApi, qaMocks, frozenRunId, 'Ein expliziter Start der alten Version muss ihre gemeinsame Rolle verwenden.');
   expect(frozenRun.snapshot).toMatchObject({
     workflow_version: 1,
     agent_profile_id: sameRole.id,
@@ -561,7 +576,7 @@ test('UI versions a same-role two-phase template into separate work and review r
     await readUntil(ownerApi, '/runs/' + frozenRunId, (run) => run.state === 'succeeded', 'Der Lauf aus Version 1 muss abgeschlossen sein, bevor die nächste T3-Phase startet.');
     const withFrozenReview = await readUntil(ownerApi, '/workflow-instances/' + frozenInstance.id, (current) => current.run_ids.length === 2, 'Version 1 muss nach der Bearbeitung ihre Reviewphase starten.');
     const frozenReviewRunId = withFrozenReview.run_ids[1];
-    const frozenReviewRun = await readUntil(ownerApi, '/runs/' + frozenReviewRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die eingefrorene Reviewphase muss abgeschlossen werden, bevor Version 2 startet.');
+    const frozenReviewRun = await readUntilT3StartedRun(ownerApi, qaMocks, frozenReviewRunId, 'Die eingefrorene Reviewphase muss abgeschlossen werden, bevor Version 2 startet.');
     const frozenReviewTask = await ownerApi.get('/tasks/' + frozenTask.id);
     expect(frozenReviewTask.data.status_category).toBe('review');
     expect(frozenReviewRun.snapshot).toMatchObject({
@@ -592,7 +607,7 @@ test('UI versions a same-role two-phase template into separate work and review r
     const instance = await startWorkflow(ownerApi, task, workflowV2);
     expect(instance.definition_version).toBe(2);
     const workRunId = instance.run_ids[0];
-    const workRun = await readUntil(ownerApi, '/runs/' + workRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die neue Workversion muss die Redaktionsrolle starten.');
+    const workRun = await readUntilT3StartedRun(ownerApi, qaMocks, workRunId, 'Die neue Workversion muss die Redaktionsrolle starten.');
     const activeTask = await ownerApi.get('/tasks/' + task.id);
     expect(activeTask.data.status_category).toBe('active');
     expect(workRun.snapshot).toMatchObject({
@@ -613,7 +628,7 @@ test('UI versions a same-role two-phase template into separate work and review r
     await readUntil(ownerApi, '/runs/' + workRunId, (run) => run.state === 'succeeded', 'Der Work-Run der neuen Workflowversion muss erfolgreich enden.');
     const withReview = await readUntil(ownerApi, '/workflow-instances/' + instance.id, (current) => current.run_ids.length === 2, 'Der akzeptierte Work-Report muss die Reviewrolle starten.');
     const reviewRunId = withReview.run_ids[1];
-    const reviewRun = await readUntil(ownerApi, '/runs/' + reviewRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die Reviewrolle muss als eigener T3-Run starten.');
+    const reviewRun = await readUntilT3StartedRun(ownerApi, qaMocks, reviewRunId, 'Die Reviewrolle muss als eigener T3-Run starten.');
     const reviewTask = await ownerApi.get('/tasks/' + task.id);
     expect(reviewTask.data).toMatchObject({ status_category: 'active', version: activeTask.data.version });
     expect(reviewRun.snapshot).toMatchObject({
@@ -796,7 +811,7 @@ test('an archived project blocks the next workflow stage without moving the task
   const workflow = workflowResponse.data.workflow ?? workflowResponse.data;
   const instance = await startWorkflow(ownerApi, task.data, workflow);
   const workRunId = instance.run_ids[0];
-  await readUntil(ownerApi, '/runs/' + workRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Der Arbeitslauf muss vor der Projektarchivierung über T3 starten.');
+  await readUntilT3StartedRun(ownerApi, qaMocks, workRunId, 'Der Arbeitslauf muss vor der Projektarchivierung über T3 starten.');
   const activeTask = await ownerApi.get('/tasks/' + created.id);
   expect(activeTask.data.status_category).toBe('active');
   const projectBeforeArchive = await ownerApi.get('/projects/' + project.id);

@@ -270,12 +270,15 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   const instance = await readUntil(ownerApi, `/workflow-instances/${instanceId}`, (item) => item.id === instanceId && item.run_ids.length === 1, 'Der ausdrückliche Klick muss genau eine Workflowinstanz mit einem Lauf anlegen.');
   expect(instance).toMatchObject({ workflow_id: defaultWorkflow.id, definition_version: defaultWorkflow.definition_version });
   const runId = instance.run_ids[0];
-  const runningRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state) && Boolean(run.attempts[0]?.external_thread_id), 'Der ausdrückliche Workflowstart muss den Lauf an T3 übergeben.');
-  expect(runningRun.attempts[0].external_thread_id).toBeTruthy();
+  const startedRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state) && Boolean(run.attempts[0]?.external_thread_id), 'Der ausdrückliche Workflowstart muss den Lauf an T3 übergeben.');
   await expect.poll(async () => {
     const journal = await qaMocks.t3Journal();
-    return journal.accepted_launches.some((launch) => launch.payload.message.includes(`Run-ID: ${runId}\n`));
-  }, { timeout: 45_000, message: 'Der T3-Mock muss den ausdrücklichen Workflowstart annehmen.' }).toBe(true);
+    return journal.accepted_launches.filter((launch) => launch.payload.message.includes(`Run-ID: ${runId}\n`)).length;
+  }, { timeout: 45_000, message: 'Der T3-Mock muss den ausdrücklichen Workflowstart annehmen.' }).toBe(1);
+  const launchJournal = await qaMocks.t3Journal();
+  const acceptedLaunches = launchJournal.accepted_launches.filter((launch) => launch.payload.message.includes(`Run-ID: ${runId}\n`));
+  expect(acceptedLaunches).toHaveLength(1);
+  expect(startedRun.attempts[0].external_thread_id).toBe(acceptedLaunches[0].response.threadId);
   await closeTaskSheet(sheet);
 
   const manualTaskTitle = `Manuelles Ticket mit Route ${setup.suffix}`;
