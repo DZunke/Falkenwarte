@@ -25,6 +25,17 @@ async function readUntil(ownerApi, route, matches, description, timeout = 45_000
   return current;
 }
 
+async function reopenTicketFromBoard(ownerPage, title) {
+  const sheet = ownerPage.getByRole('dialog', { name: title, exact: true });
+  await expect(sheet).toBeVisible();
+  await sheet.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(sheet).toBeHidden();
+  const card = ownerPage.locator('[aria-roledescription="Ticketkarte"]').filter({ hasText: title });
+  await expect(card).toHaveCount(1);
+  await card.getByRole('button').first().click();
+  await expect(sheet).toBeVisible();
+}
+
 test('A01 A21 owner creates a project and completes a ticket in the browser', async ({ ownerPage }) => {
   test.info().annotations.push({ type: 'expected', description: 'Der Eigentümer legt Projekt, Board, Label und Ticket bei mobiler Breite und 200 Prozent Grundschrift an, bearbeitet Links und Ticket, nutzt Tastatursteuerung und schließt das Ticket ohne Agentenlauf ab.' });
   const projectSuffix = randomUUID().slice(0, 8);
@@ -336,8 +347,7 @@ test('an owner links an existing run report to both criteria, confirms them, and
   expect(assignedEvidence.task_revision).toBeLessThan(completedTask.version);
   expect(unassignedRunEvidence.task_revision).not.toBe(completedTask.version);
 
-  await ownerPage.keyboard.press('Escape');
-  await ownerPage.getByText('Vorhandenen Nachweis abnehmen', { exact: true }).click();
+  await reopenTicketFromBoard(ownerPage, 'Vorhandenen Nachweis abnehmen');
   await expect(ownerPage.getByRole('heading', { name: 'Vorhandenen Nachweis abnehmen', exact: true })).toBeVisible();
   const reopenedDetails = ownerPage.getByRole('tabpanel', { name: 'Details' });
   const assignedCard = reopenedDetails.locator('div.rounded-lg.border.p-3').filter({ hasText: evidenceLabel });
@@ -374,9 +384,7 @@ test('an owner links an existing run report to both criteria, confirms them, and
   const changedManualEvidence = afterDescriptionChange.data.items.find((item) => item.label === manualStaleLabel);
   expect(changedManualEvidence).toMatchObject({ run_id: null, current_for_task: false, task_revision: completedTask.version });
 
-  await ownerPage.keyboard.press('Escape');
-  await ownerPage.getByText('Vorhandenen Nachweis abnehmen', { exact: true }).click();
-  await expect(ownerPage.getByRole('heading', { name: 'Vorhandenen Nachweis abnehmen', exact: true })).toBeVisible();
+  await reopenTicketFromBoard(ownerPage, 'Vorhandenen Nachweis abnehmen');
   const finalDetails = ownerPage.getByRole('tabpanel', { name: 'Details' });
   const actuallyStaleCard = finalDetails.locator('div.rounded-lg.border.p-3').filter({ hasText: manualStaleLabel });
   await expect(actuallyStaleCard.getByText('Veraltet', { exact: true })).toBeVisible();

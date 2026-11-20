@@ -62,6 +62,12 @@ test('MCP result reports map evidence to selected criteria and keep human review
   const checkRecord = await ownerApi.get(`/connections/${connection.id}/check`);
   expect(checkRecord.response.status(), JSON.stringify(checkRecord.data)).toBe(200);
   expect([checkRecord.data.network, checkRecord.data.authentication, checkRecord.data.mcp_handshake, checkRecord.data.capabilities]).toEqual(['ok', 'ok', 'ok', 'ok']);
+  const binding = await ownerApi.put(`/projects/${project.id}/binding`, {
+    connection_id: connection.id,
+    external_project_id: 'qa-t3-project-1',
+    max_active_runs: 1,
+  }, { version: (await ownerApi.get(`/projects/${project.id}`)).data.version });
+  expect(binding.response.status(), JSON.stringify(binding.data)).toBe(200);
 
   const board = await ownerApi.ensureDefaultBoard(project.id);
   const statuses = await ownerApi.get(`/projects/${project.id}/statuses`);
