@@ -424,13 +424,16 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                     {evidenceQuery.isPending ? <p className="text-sm text-muted-foreground">Meldungen werden geladen…</p> : evidenceQuery.isError ? <p role="alert" className="text-sm text-destructive">Meldungen konnten nicht geladen werden: {formatError(evidenceQuery.error)}</p> : evidenceItems.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Meldungen. Ein Nachweis bleibt als menschliche oder Agentenmeldung gekennzeichnet.</p> : <div className="space-y-2">{evidenceItems.map((item) => {
                       const linkedCriteria = task.criteria.filter((criterion) => criterion.evidence_ids.includes(item.id))
                       const openCriteria = task.criteria.filter((criterion) => ['pending', 'reported'].includes(criterion.state) && !criterion.evidence_ids.includes(item.id))
-                      const stale = item.task_revision !== task.version
-                      const canAssign = item.review_status !== 'rejected' && !stale && openCriteria.length > 0
+                      const linkedToCurrentCriterion = item.review_status !== 'rejected'
+                        && linkedCriteria.some((criterion) => criterion.state === 'human_confirmed' || (item.run_id !== null && criterion.state === 'reported'))
+                      const stale = item.task_revision !== task.version && !linkedToCurrentCriterion
+                      const canAssign = item.review_status !== 'rejected' && item.task_revision === task.version && openCriteria.length > 0
 
                       return <div key={item.id} className="rounded-lg border p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{item.label}</p><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{item.review_status === 'human_confirmed' ? 'Menschlich bestätigt' : item.review_status === 'rejected' ? 'Zurückgewiesen' : 'Gemeldet'}</Badge>{stale && <Badge variant="destructive">Veraltet</Badge>}</div></div>
                         {item.text && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{item.text}</p>}
                         {linkedCriteria.length > 0 ? <p className="mt-2 text-xs text-muted-foreground">Bereits zugeordnet: {linkedCriteria.map((criterion) => criterion.text).join(' · ')}</p> : <p className="mt-2 text-xs text-muted-foreground">Noch keinem Erfolgskriterium zugeordnet.</p>}
+                        {linkedToCurrentCriterion && item.task_revision !== task.version && <p className="mt-2 text-xs text-muted-foreground">Nachweis aus Ticketversion {item.task_revision}.</p>}
                         {item.review_status === 'rejected' && <p className="mt-2 text-xs text-destructive">Zurückgewiesene Nachweise lassen sich nicht zuordnen.</p>}
                         {stale && <p className="mt-2 text-xs text-destructive">Dieser Nachweis bezieht sich auf Ticketversion {item.task_revision}, aktuell ist Version {task.version}. Er lässt sich nicht zuordnen.</p>}
                         {item.review_status !== 'rejected' && !stale && openCriteria.length === 0 && <p className="mt-2 text-xs text-muted-foreground">Keine offenen Kriterien ohne diese Zuordnung verfügbar.</p>}

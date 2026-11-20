@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { test, expect, recordEvidence } from '../support/fixtures.mjs';
+import { createAgentSimulator, test, expect, recordEvidence } from '../support/fixtures.mjs';
 
 const apiPrefix = process.env.FALKENWARTE_API_PREFIX ?? '/api/v1';
 
@@ -12,6 +12,17 @@ async function expectWithinMobileViewport(locator, label) {
   expect(bounds, `${label} has no rendered bounds`).toBeTruthy();
   expect(bounds.x, `${label} starts left of the viewport`).toBeGreaterThanOrEqual(0);
   expect(bounds.x + bounds.width, `${label} extends past the right edge`).toBeLessThanOrEqual(391);
+}
+
+async function readUntil(ownerApi, route, matches, description, timeout = 45_000) {
+  let current;
+  await expect.poll(async () => {
+    const result = await ownerApi.get(route);
+    if (result.response.status() !== 200) return false;
+    current = result.data;
+    return matches(current);
+  }, { timeout, message: description }).toBe(true);
+  return current;
 }
 
 test('A01 A21 owner creates a project and completes a ticket in the browser', async ({ ownerPage }) => {
@@ -179,30 +190,111 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
   );
 });
 
-test('an owner links an existing report to both criteria before closing a ticket', async ({ ownerApi, ownerPage }) => {
+test('an owner links an existing run report to both criteria, confirms them, and preserves its current evidence status after closing the ticket', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+  test.setTimeout(180_000);
   const project = await ownerApi.createProject({ name: 'Prüfbericht zuordnen' });
   const board = await ownerApi.ensureDefaultBoard(project.id);
   const criteria = ['Abhängigkeiten installiert', 'Tests erfolgreich'];
+  const statuses = await ownerApi.get(`/projects/${project.id}/statuses`);
+  expect(statuses.response.status()).toBe(200);
+  const readyStatus = statuses.data.items.find((status) => status.category === 'ready');
+  expect(readyStatus).toBeTruthy();
   const task = await ownerApi.createTask(project.id, {
     title: 'Vorhandenen Nachweis abnehmen',
+    status_id: readyStatus.id,
     criteria: criteria.map((text) => ({ text, is_required: true })),
   });
   const taskPath = `/tasks/${task.id}`;
   const current = await ownerApi.get(taskPath);
-  const evidence = await ownerApi.post(`${taskPath}/evidence`, {
-    task_id: task.id,
+  const connectionResult = await ownerApi.post('/connections', {
+    name: `Prüfbericht T3 ${randomUUID().slice(0, 6)}`,
+    bridge_id: 't3.mcp.v0_1_10',
+    canonical_url: qaMocks.t3URL,
+  });
+  expect(connectionResult.response.status(), JSON.stringify(connectionResult.data)).toBe(201);
+  const connection = connectionResult.data;
+  const callback = new URL('/auth/t3/callback', baseURL).toString();
+  const oauth = await ownerApi.post(`/connections/${connection.id}/oauth/start`, { redirect_uri: callback }, { version: connection.version });
+  expect(oauth.response.status(), JSON.stringify(oauth.data)).toBe(200);
+  await ownerPage.goto(oauth.data.authorization_url);
+  const authorized = await readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.auth_status === 'valid', 'Die Browserautorisierung muss die T3-Verbindung freigeben.');
+  const check = await ownerApi.post(`/connections/${connection.id}/check`, {}, { version: authorized.version });
+  expect(check.response.status(), JSON.stringify(check.data)).toBe(202);
+  await readUntil(ownerApi, `/connections/${connection.id}`, (item) => item.health === 'ready' && item.auth_status === 'valid', 'Die T3-Verbindung muss ihren MCP-Handshake abschließen.');
+  const binding = await ownerApi.put(`/projects/${project.id}/binding`, {
+    connection_id: connection.id,
+    external_project_id: 'qa-t3-project-1',
+    max_active_runs: 1,
+  }, { version: (await ownerApi.get(`/projects/${project.id}`)).data.version });
+  expect(binding.response.status(), JSON.stringify(binding.data)).toBe(200);
+
+  const profileResult = await ownerApi.post('/agent-profiles', {
+    name: 'Prüfbericht Agentenrolle',
+    icon_key: 'bot',
+    role: 'Implementierung',
+    connection_id: connection.id,
+    allowed_project_ids: [project.id],
+    max_parallel_runs: 1,
+    prompt_template: 'Melde den tatsächlichen Abschluss der Installation und Tests.',
+    enabled: true,
+    default_run_completion_policy: {
+      require_external_settled: true,
+      required_evidence_kinds: [],
+      required_criterion_ids: [],
+      require_human_phase_decision: false,
+      require_human_confirmed_evidence: false,
+    },
+    execution_target: { mode: 't3_project_default' },
+  });
+  expect(profileResult.response.status(), JSON.stringify(profileResult.data)).toBe(201);
+  const started = await ownerApi.post(`/tasks/${task.id}/runs`, {
+    agent_profile_id: profileResult.data.id,
+    stage: 'implementation',
     task_revision: current.data.version,
-    run_id: null,
-    attempt_no: null,
-    artifact: { kind: 'test_report', label: 'Installation und Tests', text: 'Installation erfolgreich.\nTests bestanden.' },
-    criterion_ids: [],
   }, { version: current.data.version });
-  expect(evidence.response.status()).toBe(201);
+  expect(started.response.status(), JSON.stringify(started.data)).toBe(202);
+  const runId = started.data.run_id ?? started.data.resource?.id;
+  expect(runId).toBeTruthy();
+  const run = await readUntil(ownerApi, `/runs/${runId}`, (item) => item.state === 'verifying', 'Der Testlauf muss seine agentengemeldeten Nachweise annehmen können.');
+
+  const reportToken = await ownerApi.createTechnicalToken({
+    label: `Prüfbericht ${randomUUID().slice(0, 8)}`,
+    projectIds: [project.id],
+    capabilities: ['runs.report'],
+  });
+  const reporter = await createAgentSimulator(baseURL, reportToken.token);
+  const reportId = randomUUID();
+  const evidenceLabel = 'Agentenbericht Installation und Tests';
+  const staleEvidenceLabel = 'Unzugeordneter älterer Prüfbericht';
+  try {
+    const report = await reporter.agent.call('runs_report_result', {
+      run_id: run.id,
+      report_id: reportId,
+      attempt_no: run.attempt_no,
+      task_revision: current.data.version,
+      outcome: 'reported_success',
+      summary: 'Installation und Tests wurden abgeschlossen.',
+      artifacts: [
+        { kind: 'test_report', label: evidenceLabel, text: 'Installation erfolgreich. Tests bestanden.' },
+        { kind: 'test_report', label: staleEvidenceLabel, text: 'Zusätzlicher Bericht aus derselben älteren Ticketversion.' },
+      ],
+      client_request_id: randomUUID(),
+      expected_version: run.version,
+    });
+    expect(report.isError, JSON.stringify(report.structuredContent)).toBe(false);
+    const storedReport = await readUntil(ownerApi, `/runs/${runId}/result-reports/${reportId}`, (item) => item.id === reportId, 'Der echte Ergebnisbericht muss lesbar sein.');
+    expect(storedReport.evidence_ids).toHaveLength(2);
+  } finally {
+    await reporter.close();
+  }
 
   await ownerPage.goto(`/#/project/${project.id}/board`);
   await ownerPage.getByRole('button', { name: board.name, exact: true }).click();
   await ownerPage.getByText('Vorhandenen Nachweis abnehmen', { exact: true }).click();
-  await ownerPage.getByRole('button', { name: 'Kriterien zuordnen', exact: true }).click();
+  const details = ownerPage.getByRole('tabpanel', { name: 'Details' });
+  const assignableEvidence = details.locator('div.rounded-lg.border.p-3').filter({ hasText: evidenceLabel });
+  await expect(assignableEvidence).toContainText('Gemeldet');
+  await assignableEvidence.getByRole('button', { name: 'Kriterien zuordnen', exact: true }).click();
   const dialog = ownerPage.getByRole('dialog', { name: 'Kriterien zuordnen' });
   for (const criterion of criteria) {
     await dialog.getByRole('checkbox', { name: criterion, exact: true }).check();
@@ -212,7 +304,6 @@ test('an owner links an existing report to both criteria before closing a ticket
   await expect.poll(async () => (await ownerApi.get(taskPath)).data.criteria.map((item) => [item.state, item.evidence_ids]))
     .toEqual(criteria.map(() => ['reported', [evidence.data.id]]));
 
-  const details = ownerPage.getByRole('tabpanel', { name: 'Details' });
   for (const criterion of criteria) {
     await details.getByRole('button', { name: 'Bestätigen', exact: true }).first().click();
     await ownerPage.getByLabel('Begründung').fill(`Der Prüfbericht belegt: ${criterion}.`);
@@ -223,5 +314,39 @@ test('an owner links an existing report to both criteria before closing a ticket
   await ownerPage.getByRole('option', { name: 'Erledigt', exact: true }).click();
   await expect.poll(async () => (await ownerApi.get(taskPath)).data.status_category).toBe('done');
   const evidenceList = await ownerApi.get(`/evidence?task_id=${task.id}`);
-  expect(evidenceList.data.items.map((item) => item.id)).toEqual([evidence.data.id]);
+  expect(evidenceList.response.status(), JSON.stringify(evidenceList.data)).toBe(200);
+  expect(evidenceList.data.items).toHaveLength(2);
+  const assignedEvidence = evidenceList.data.items.find((item) => item.label === evidenceLabel);
+  const unassignedEvidence = evidenceList.data.items.find((item) => item.label === staleEvidenceLabel);
+  expect(assignedEvidence).toMatchObject({ run_id: runId, review_status: 'reported', task_revision: current.data.version });
+  expect(unassignedEvidence).toMatchObject({ run_id: runId, review_status: 'reported', task_revision: current.data.version });
+  const completedTask = (await ownerApi.get(taskPath)).data;
+  expect(completedTask.status_category).toBe('done');
+  expect(completedTask.criteria).toEqual(criteria.map((text, index) => expect.objectContaining({
+    text,
+    state: 'human_confirmed',
+    evidence_ids: [assignedEvidence.id],
+  })));
+  expect(assignedEvidence.task_revision).not.toBe(completedTask.version);
+  expect(unassignedEvidence.task_revision).not.toBe(completedTask.version);
+
+  await ownerPage.keyboard.press('Escape');
+  await ownerPage.getByText('Vorhandenen Nachweis abnehmen', { exact: true }).click();
+  await expect(ownerPage.getByRole('heading', { name: 'Vorhandenen Nachweis abnehmen', exact: true })).toBeVisible();
+  const reopenedDetails = ownerPage.getByRole('tabpanel', { name: 'Details' });
+  const assignedCard = reopenedDetails.locator('div.rounded-lg.border.p-3').filter({ hasText: evidenceLabel });
+  await expect(assignedCard).toContainText('Bereits zugeordnet: Abhängigkeiten installiert · Tests erfolgreich');
+  await expect(assignedCard).toContainText(`Nachweis aus Ticketversion ${current.data.version}.`);
+  await expect(assignedCard.getByText('Gemeldet', { exact: true })).toBeVisible();
+  await expect(assignedCard.getByText('Veraltet', { exact: true })).toHaveCount(0);
+  await expect(assignedCard.getByText(/Dieser Nachweis bezieht sich auf Ticketversion/)).toHaveCount(0);
+  await expect(assignedCard.getByRole('button', { name: 'Kriterien zuordnen', exact: true })).toHaveCount(0);
+  const actuallyStaleCard = reopenedDetails.locator('div.rounded-lg.border.p-3').filter({ hasText: staleEvidenceLabel });
+  await expect(actuallyStaleCard.getByText('Veraltet', { exact: true })).toBeVisible();
+  await expect(actuallyStaleCard.getByText(/Dieser Nachweis bezieht sich auf Ticketversion .* Er lässt sich nicht zuordnen\./)).toBeVisible();
+  await expect(actuallyStaleCard.getByRole('button', { name: 'Kriterien zuordnen', exact: true })).toHaveCount(0);
+  recordEvidence(
+    'Ein gemeldeter Run-Nachweis bleibt nach manueller Zuordnung zu zwei bestätigten Kriterien verwendbar und erhält bei abweichender Ticketrevision nur einen Herkunftshinweis; ein nicht zugeordneter Nachweis derselben älteren Version bleibt sichtbar veraltet.',
+    `Der Browserlauf erzeugte einen echten T3-Run und Ergebnisbericht mit zwei Nachweisen der Ticketrevision ${current.data.version}. Einer wurde manuell beiden Kriterien zugeordnet und beide wurden fachlich bestätigt. Nach dem Statuswechsel Bereit→Erledigt und erneutem Öffnen standen beide Kriterien auf human_confirmed. Die zugeordnete Run-Evidenz blieb ohne Badge „Veraltet“ und ohne veraltete Zuordnungswarnung sichtbar, zeigte aber „Nachweis aus Ticketversion ${current.data.version}.“; eine Neuzuordnung war nicht angeboten. Der zweite, unzugeordnete Nachweis derselben älteren Version wurde weiterhin mit „Veraltet“ und dem Hinweis, dass er sich nicht zuordnen lässt, angezeigt.`,
+  );
 });
