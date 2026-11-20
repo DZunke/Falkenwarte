@@ -146,18 +146,12 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   const { project, connection } = await configureBoundT3Project(ownerApi, ownerPage, baseURL, qaMocks, { name: 'Providerziel' });
   const inventory = await ownerApi.get(`/connections/${connection.id}/providers`);
   expect(inventory.response.status(), JSON.stringify(inventory.data)).toBe(200);
-  expect(inventory.data.providers).toContainEqual(expect.objectContaining({
-    provider_instance_id: 'codex_general',
-    display_name: 'Codex Allgemein',
-    available: true,
-    models: [expect.objectContaining({ id: 'qa-general-model' })],
-  }));
-  expect(inventory.data.providers).toContainEqual(expect.objectContaining({
-    provider_instance_id: 'codex_review',
-    display_name: 'Codex Review',
-    available: true,
-    models: [expect.objectContaining({ id: 'qa-review-model' })],
-  }));
+  const generalProvider = inventory.data.providers.find((provider) => provider.provider_instance_id === 'codex_general');
+  const reviewProvider = inventory.data.providers.find((provider) => provider.provider_instance_id === 'codex_review');
+  expect(generalProvider).toMatchObject({ display_name: 'Codex Allgemein', available: true });
+  expect(generalProvider.models.map((model) => model.id)).toEqual(['qa-general-model', 'qa-general-fast']);
+  expect(reviewProvider).toMatchObject({ display_name: 'Codex Review', available: true });
+  expect(reviewProvider.models.map((model) => model.id)).toEqual(['qa-review-featured', 'qa-review-model']);
 
   await openRoles(ownerPage);
   await selectRoleConnectionAndProject(ownerPage, connection.name, project.name);
@@ -165,8 +159,8 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   await ownerPage.getByRole('option', { name: 'T3-Providerinstanz', exact: true }).click();
 
   const targets = [
-    { label: 'Codex Allgemein · codex_general', providerInstanceId: 'codex_general', model: 'qa-general-model', roleName: 'Codex Allgemein Rolle' },
-    { label: 'Codex Review · codex_review', providerInstanceId: 'codex_review', model: 'qa-review-model', roleName: 'Codex Review Rolle' },
+    { label: 'Codex Allgemein · codex_general', providerInstanceId: 'codex_general', model: 'qa-general-model', modelOption: 'QA General Model · qa-general-model', roleName: 'Codex Allgemein Rolle' },
+    { label: 'Codex Review · codex_review', providerInstanceId: 'codex_review', model: 'qa-review-model', modelOption: 'QA Review Model · qa-review-model', roleName: 'Codex Review Rolle' },
   ];
 
   for (const target of targets) {
@@ -178,10 +172,17 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
     await providerOption.click();
     const modelPicker = ownerPage.getByLabel('Modell aus T3');
     await expect(modelPicker).toBeVisible();
-    await expect(modelPicker).toContainText(target.model);
-
+    await expect(modelPicker).toContainText('Modell wählen');
+    await ownerPage.getByLabel('Name').fill(target.roleName);
     await ownerPage.getByLabel(project.name, { exact: true }).check();
-    await createRoleFromForm(ownerPage, target.roleName);
+    const createButton = ownerPage.getByRole('button', { name: 'Rolle anlegen', exact: true });
+    await expect(createButton).toBeDisabled();
+    await modelPicker.click();
+    await ownerPage.getByRole('option', { name: target.modelOption, exact: true }).click();
+    await expect(modelPicker).toContainText(target.model);
+    await expect(createButton).toBeEnabled();
+    await createButton.click();
+    await expect(ownerPage.getByText('Rolle angelegt', { exact: true })).toBeVisible();
     const profile = await roleByName(ownerApi, target.roleName);
     expect(profile).toBeTruthy();
     expect(profile.execution_target).toEqual({
@@ -189,7 +190,7 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
       provider_instance_id: target.providerInstanceId,
       model: target.model,
     });
-    await expect(ownerPage.getByRole('article').filter({ hasText: target.roleName })).toContainText(`${target.providerInstanceId} · ${target.model}`);
+    await expect(ownerPage.getByRole('article').filter({ hasText: target.roleName })).toContainText(`Providerinstanz ${target.providerInstanceId} · Modell ${target.model}`);
   }
 
   const capabilityCalls = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities' && entry.outcome === 'success');
@@ -204,13 +205,18 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   await generalArticle.getByRole('button', { name: 'Ausführungsziel ändern', exact: true }).click();
   const editor = ownerPage.getByTestId(`profile-target-editor-${generalProfile.id}`);
   await expect(editor).toBeVisible();
-  await editor.getByLabel('Ausführungsziel in T3').click();
-  await ownerPage.getByRole('option', { name: 'T3-Providerinstanz', exact: true }).click();
   const providerPicker = editor.getByLabel('Providerinstanz aus T3');
   await providerPicker.click();
   await ownerPage.getByRole('option', { name: targets[1].label, exact: true }).click();
-  await expect(editor.getByLabel('Modell aus T3')).toContainText(targets[1].model);
-  await editor.getByRole('button', { name: 'Ausführungsziel speichern', exact: true }).click();
+  const editedModelPicker = editor.getByLabel('Modell aus T3');
+  await expect(editedModelPicker).toContainText('Modell wählen');
+  const saveTargetButton = editor.getByRole('button', { name: 'Ausführungsziel speichern', exact: true });
+  await expect(saveTargetButton).toBeDisabled();
+  await editedModelPicker.click();
+  await ownerPage.getByRole('option', { name: targets[1].modelOption, exact: true }).click();
+  await expect(editedModelPicker).toContainText(targets[1].model);
+  await expect(saveTargetButton).toBeEnabled();
+  await saveTargetButton.click();
   await expect.poll(async () => (await roleByName(ownerApi, targets[0].roleName))?.execution_target, {
     timeout: 45_000,
     message: 'Die vorhandene Rolle muss auf die zweite T3-Providerinstanz umgestellt werden.',
@@ -255,6 +261,8 @@ test('gekürzte T3-Modelllisten lassen sich gezielt durchsuchen, bevor eine Roll
   await expect(modelPicker).toContainText('Modell wählen');
   await expect(ownerPage.getByRole('status').filter({ hasText: 'nur einen Teil der Modelle' })).toBeVisible();
   await ownerPage.getByLabel(project.name, { exact: true }).check();
+  const roleName = 'Gezielte Modellrolle';
+  await ownerPage.getByLabel('Name').fill(roleName);
   const createButton = ownerPage.getByRole('button', { name: 'Rolle anlegen', exact: true });
   await expect(createButton).toBeDisabled();
 
@@ -262,9 +270,11 @@ test('gekürzte T3-Modelllisten lassen sich gezielt durchsuchen, bevor eine Roll
   await search.fill('qa-review-model');
   await ownerPage.getByRole('button', { name: 'Modelle suchen', exact: true }).click();
   await expect(modelPicker).toContainText('qa-review-model');
+  await modelPicker.click();
+  await ownerPage.getByRole('option', { name: 'QA Review Model · qa-review-model', exact: true }).click();
   await expect(createButton).toBeEnabled();
-  const roleName = 'Gezielte Modellrolle';
-  await createRoleFromForm(ownerPage, roleName);
+  await createButton.click();
+  await expect(ownerPage.getByText('Rolle angelegt', { exact: true })).toBeVisible();
   const profile = await roleByName(ownerApi, roleName);
   expect(profile.execution_target).toEqual({ mode: 't3_provider_instance', provider_instance_id: 'codex_review', model: 'qa-review-model' });
 
@@ -280,7 +290,7 @@ test('gekürzte T3-Modelllisten lassen sich gezielt durchsuchen, bevor eine Roll
   expect(t3.unexpected).toEqual([]);
   recordEvidence(
     'Bei einem gekürzten T3-Modellkatalog wählt Falkenwarte kein möglicherweise falsches Modell automatisch aus; eine gezielte Suche kann die gewünschte Modell-ID laden.',
-    'Die Browseransicht zeigte qa-review-featured zunächst als gekürzte Modellliste mit ausgelassenen Treffern, ließ das Speichern ohne Auswahl gesperrt und lud nach Suche nach qa-review-model den gezielten Treffer. Die Agentrollen-API speicherte codex_review und qa-review-model; der T3-Mock protokollierte den weitergereichten Suchbegriff und den Treffer.',
+    'Die Browseransicht zeigte qa-review-featured zunächst als gekürzte Modellliste mit ausgelassenen Treffern, ließ das Speichern ohne Auswahl gesperrt und lud nach Suche nach qa-review-model den gezielten Treffer. Das Modell wurde ausdrücklich im Auswahlfeld gewählt; die Agentrollen-API speicherte codex_review und qa-review-model. Der T3-Mock protokollierte den weitergereichten Suchbegriff und den Treffer.',
     { t3 },
   );
 });
