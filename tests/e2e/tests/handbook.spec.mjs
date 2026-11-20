@@ -48,6 +48,10 @@ test('A23 A32 handbook navigation, repository links and anchors work in the stat
   const retiredResponses = await Promise.all(retiredPages.map((name) => ownerPage.request.get(`/docs/${name}.html`)));
   expect(retiredResponses.map((response) => response.status())).toEqual(retiredPages.map(() => 404));
 
+  await ownerPage.goto('/docs/DECISIONS.html');
+  await staticArticle.getByRole('link', { name: 'ADR-0002', exact: true }).click();
+  await expect(staticArticle.getByRole('heading', { name: /ADR-0002.*SQLite/, level: 1 })).toBeVisible();
+
   await ownerPage.goto('/docs/DOCUMENTATION.html');
   const sourceHref = await ownerPage.locator('main article').getByRole('link', { name: 'Build-Skript' }).getAttribute('href');
   expect(sourceHref).toBe(`https://github.com/DZunke/Falkenwarte/blob/${manifest.revision}/scripts/build-docs.php`);
@@ -106,14 +110,13 @@ test('A23 A32 handbook navigation, repository links and anchors work in the stat
   await expect(appArticle.locator(`[id="${sectionId}"]`)).toBeVisible();
 
   await ownerPage.goto('/#/docs/USER_GUIDE.md');
-  const appOperationsLink = ownerPage.locator('main article a[href^="#/docs/OPERATIONS.md"]');
+  const appOperationsLink = appArticle.getByRole('link', { name: 'Anleitung zur Statusprüfung' });
   await expect(appOperationsLink).toHaveCount(1);
   await appOperationsLink.click();
   const appAnchor = ownerPage.locator('main article #status-prüfen');
   await expect(appAnchor).toBeVisible();
-  const anchorPosition = await appAnchor.evaluate((element) => element.getBoundingClientRect().top);
-  expect(anchorPosition).toBeGreaterThanOrEqual(0);
-  expect(anchorPosition).toBeLessThan(1000);
+  await expect(ownerPage).toHaveURL(/\/#\/docs\/OPERATIONS\.md$/);
+  await expect(appAnchor).toBeInViewport();
 
   recordEvidence('Das Handbuch ordnet veröffentlichte Benutzer-, Betriebs-, Entwickler- und Fachmodellseiten ein und hält Schema-, Quellen- und Abschnittslinks im statischen und eingebetteten Leser funktionsfähig.', 'Chromium prüfte die aktuelle Navigationsstruktur, ausgeblendete historische HTML-Seiten, Release-Commit-Links zum Repository, lokal ausgelieferte Schemas und Medien sowie einen Umlaut-Anker über beide Handbuchansichten.');
 });
