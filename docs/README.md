@@ -6,6 +6,7 @@ In Falkenwarte bündelt ein Ticket die Arbeit an einer Aufgabe. Es gehört zu ei
 
 - [Ein Projekt und das erste Ticket anlegen](user/PROJECTS_AND_TICKETS.md)
 - [Eine Agentenmeldung einordnen und Rückfragen klären](user/INTAKE_AND_DECISIONS.md)
+- [Den Falkenwarte-Skill für Agents im eigenen Projekt installieren](user/AGENT_SKILL.md)
 - [Eine Agentrolle einsetzen und einen Workflow begleiten](user/AGENTS_AND_WORKFLOWS.md)
 - [Metriken und ihre Herkunft lesen](user/METRICS.md)
 - [Alle Bedienungsanleitungen](USER_GUIDE.md)

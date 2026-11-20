@@ -15,6 +15,8 @@ Wähle unter **Technische Principals** beim betreffenden Zugang **Widerrufen**. 
 
 Das Token gewährt einem Agenten Rechte in Falkenwarte. Den Zugang von Falkenwarte zu T3 richtest du an der T3-Verbindung ein. [T3-Verbindungen und Agentrollen](../user/AGENTS_AND_WORKFLOWS.md)
 
+Für eine Reviewrolle kannst du zusätzlich **Nachweise lesen** (`evidence.read`) auswählen. Damit kann sie die einzelnen Nachweise zu den IDs aus ihrer Übergabe über `evidence_get` lesen. **Nachweise melden** (`evidence.report`) erlaubt eigenständige Nachweismeldungen. Für die Belege innerhalb eines gewöhnlichen Ergebnisberichts reicht `runs.report`. [Agent-Skill und MCP-Zugang einrichten](../user/AGENT_SKILL.md)
+
 ## Das Eigentümerpasswort ändern
 
 Gib unter **Passwort ändern** das aktuelle und ein neues Passwort mit mindestens zwölf Zeichen ein und wähle **Passwort aktualisieren**. Deine aktuelle Sitzung bleibt gültig. Andere aktive Eigentümersitzungen werden beendet. Die einmalige Ersteinrichtung und das Einrichtungstoken beschreibt die [Installationsanleitung](DEPLOYMENT_AND_CONFIGURATION.md).

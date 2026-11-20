@@ -18,6 +18,7 @@ import DecisionSettingsPanel from '@/features/settings/DecisionSettingsPanel'
 const capabilityOptions = [
   ['tasks.read', 'Tickets lesen'], ['tasks.write', 'Tickets bearbeiten'], ['tasks.links.write', 'Ticketlinks melden'],
   ['runs.read', 'Aufträge lesen'], ['runs.report', 'Ergebnismeldungen senden'], ['tasks.intake.read', 'Intake lesen'],
+  ['evidence.read', 'Nachweise lesen'], ['evidence.report', 'Nachweise melden'],
 ] as const
 
 const jobLabels: Record<string, string> = { queued: 'Wartet', running: 'Wird erstellt', ready: 'Bereit', failed: 'Fehlgeschlagen', restoring: 'Wird wiederhergestellt' }

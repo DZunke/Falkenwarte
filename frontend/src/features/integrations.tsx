@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUpRight, Cable, CircleCheck, CircleHelp, RefreshCw, ShieldAlert } from 'lucide-react'
+import { ArrowUpRight, BookOpen, Cable, CircleCheck, CircleHelp, Download, RefreshCw, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request } from '@/lib/api'
@@ -77,7 +77,14 @@ export default function IntegrationsView() {
 
   return (
     <main className="space-y-6">
-      <header><p className="text-sm text-muted-foreground">Externe Ausführung</p><h1 className="text-2xl font-semibold tracking-tight">T3-Verbindung</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Falkenwarte verwaltet die Verbindung und Rollenreferenzen. Ausführungsziele, Modelle und Provider bleiben in T3.</p></header>
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">T3-Verbindung</h1>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Verbinde Falkenwarte mit T3, um Aufträge zu starten. Installiere den Agent-Skill in deinem Arbeitsprojekt, damit die Agents ihre Übergaben und Ergebnisse am Ticket melden können.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm"><a href="#/docs/user/AGENT_SKILL.md"><BookOpen />Agent-Skill einrichten</a></Button>
+          <Button asChild variant="ghost" size="sm"><a href="/skills/falkenwarte/SKILL.md" download="SKILL.md"><Download />Skill herunterladen</a></Button>
+        </div>
+      </header>
 
       <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
         <Card>

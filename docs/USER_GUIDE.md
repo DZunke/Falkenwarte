@@ -19,6 +19,7 @@ Mit **Ctrl+K** oder **⌘K** suchst du Projekte, Ticketkennungen und Titel. Die 
 | Du möchtest … | Anleitung |
 | --- | --- |
 | Projekte, Boards, Tickets und Verlauf pflegen | [Projekte und Tickets](user/PROJECTS_AND_TICKETS.md) |
+| Einen T3-Agenten im eigenen Projekt mit Falkenwarte arbeiten lassen | [Agent-Skill installieren](user/AGENT_SKILL.md) |
 | T3-Verbindungen, Rollen und Workflows einrichten | [Agents und Workflows](user/AGENTS_AND_WORKFLOWS.md) |
 | Rückfragen, Einordnungen und Freigaben bearbeiten | [Eingänge und Entscheidungen](user/INTAKE_AND_DECISIONS.md) |
 | Laufzeiten und Metriken verstehen | [Metriken](user/METRICS.md) |
