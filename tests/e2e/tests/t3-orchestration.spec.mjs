@@ -479,7 +479,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
       reason: 'Veralteten T3-Lauf nach der Revisionsänderung beenden.',
     }, { version: oldRun.version });
     expect(cancelled.response.status(), JSON.stringify(cancelled.data)).toBe(202);
-    await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'cancelled');
+    const cancelledOldRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'cancelled');
 
     task = (await ownerApi.get(`/tasks/${task.id}`)).data;
     const freshRunId = await requestRun(ownerApi, task, profile, 'work');
@@ -501,18 +501,32 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     }, { version: freshApproval.version });
     expect(decision.response.status(), JSON.stringify(decision.data)).toBe(200);
     expect(decision.data.status).toBe('approved');
-    await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => run.state === 'succeeded');
+    const completedFreshRun = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => run.state === 'succeeded');
     task = (await ownerApi.get(`/tasks/${task.id}`)).data;
     expect(task.human_attention).toEqual({ required: false, reasons: [] });
     expect(task.label_ids).not.toContain(approvalLabel.id);
     expect(task.label_ids).not.toContain(routingLabel.id);
     await expectDashboardAttention(ownerApi, ownerPage, 0);
 
+    const firstFlowPage = await ownerApi.get(`/tasks/${task.id}/flow?limit=1`);
+    expect(firstFlowPage.response.status(), JSON.stringify(firstFlowPage.data)).toBe(200);
+    expect(firstFlowPage.data).toMatchObject({ task_id: task.id, project_id: project.id, has_more: true });
+    expect(firstFlowPage.data.items).toHaveLength(1);
+    expect(firstFlowPage.data.next_cursor).toEqual(expect.any(String));
+    expect(firstFlowPage.data.items[0]).toMatchObject({ kind: 'run', run: { id: freshRunId, state: completedFreshRun.state } });
+
+    const secondFlowPage = await ownerApi.get(`/tasks/${task.id}/flow?limit=1&cursor=${encodeURIComponent(firstFlowPage.data.next_cursor)}`);
+    expect(secondFlowPage.response.status(), JSON.stringify(secondFlowPage.data)).toBe(200);
+    expect(secondFlowPage.data).toMatchObject({ task_id: task.id, project_id: project.id, has_more: false, next_cursor: null });
+    expect(secondFlowPage.data.items).toHaveLength(1);
+    expect(secondFlowPage.data.items[0]).toMatchObject({ kind: 'run', run: { id: runId, state: cancelledOldRun.state } });
+    expect(secondFlowPage.data.items[0].run.id).not.toBe(firstFlowPage.data.items[0].run.id);
+
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);
     recordEvidence(
       'A27: Routingentscheidung und Laufzeitfreigabe bleiben als getrennte Gründe sichtbar; die alte Freigabe ist revisionsgebunden und die neue schließt nur den aktuellen Grund.',
-      `Nach der zweiten Intakebewertung bestanden approval_pending und routing_ambiguous gleichzeitig samt beider Systemlabels. Das Auslassen des Routinglabels änderte keinen Grund. Die Ownerentscheidung entfernte routing_ambiguous; die erste Approval für Ergebnisdigest ${awaitingApproval.result_digest} wurde wegen Revisionsabweichung invalidiert. Der frische Run ${freshRunId} mit Ergebnisdigest ${freshResult.result_digest} und passender Revision wurde anschließend ausdrücklich freigegeben und löste approval_pending auf.`,
+      `Nach der zweiten Intakebewertung bestanden approval_pending und routing_ambiguous gleichzeitig samt beider Systemlabels. Das Auslassen des Routinglabels änderte keinen Grund. Die Ownerentscheidung entfernte routing_ambiguous; die erste Approval für Ergebnisdigest ${awaitingApproval.result_digest} wurde wegen Revisionsabweichung invalidiert. Der frische Run ${freshRunId} mit Ergebnisdigest ${freshResult.result_digest} und passender Revision wurde anschließend ausdrücklich freigegeben und löste approval_pending auf. Die Ticketablaufseite lieferte den aktuellen succeeded-Einzellauf zuerst und den historischen cancelled-Einzellauf danach auf zwei Cursor-Seiten mit limit=1.`,
       { t3 },
     );
   } finally {

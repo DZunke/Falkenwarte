@@ -1,3 +1,4 @@
+import { text } from 'node:stream/consumers';
 import { test, expect, recordEvidence } from '../support/fixtures.mjs';
 
 test('A23 A32 handbook navigation, repository links and anchors work in the static and in-app readers', async ({ ownerPage }) => {
@@ -117,6 +118,16 @@ test('A23 A32 handbook navigation, repository links and anchors work in the stat
   await expect(appAnchor).toBeVisible();
   await expect(ownerPage).toHaveURL(/\/#\/docs\/OPERATIONS\.md$/);
   await expect(appAnchor).toBeInViewport();
+
+  await ownerPage.goto('/#/agents');
+  const [skill] = await Promise.all([
+    ownerPage.waitForEvent('download'),
+    ownerPage.getByRole('link', { name: 'Skill herunterladen' }).click(),
+  ]);
+  expect(skill.suggestedFilename()).toBe('SKILL.md');
+  expect(await text(await skill.createReadStream())).toMatch(/^name: falkenwarte$/m);
+  await ownerPage.getByRole('link', { name: 'Agent-Skill einrichten' }).click();
+  await expect(ownerPage.locator('main article').getByRole('heading', { level: 1, name: 'Agent-Skill installieren' })).toBeVisible();
 
   recordEvidence('Das Handbuch ordnet veröffentlichte Benutzer-, Betriebs-, Entwickler- und Fachmodellseiten ein und hält Schema-, Quellen- und Abschnittslinks im statischen und eingebetteten Leser funktionsfähig.', 'Chromium prüfte die aktuelle Navigationsstruktur, ausgeblendete historische HTML-Seiten, Release-Commit-Links zum Repository, lokal ausgelieferte Schemas und Medien sowie einen Umlaut-Anker über beide Handbuchansichten.');
 });

@@ -94,6 +94,7 @@ COPY contracts/ contracts/
 COPY docs/ docs/
 COPY migrations/ migrations/
 COPY public/ public/
+COPY skills/falkenwarte/SKILL.md skills/falkenwarte/SKILL.md
 COPY scripts/build-docs.php scripts/render-docs.php scripts/handbuch.css scripts/
 COPY scripts/build-image-inventory.php scripts/
 COPY src/ src/

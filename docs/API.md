@@ -71,6 +71,9 @@ Verbinde den Client mit `<FALKENWARTE_ORIGIN>/mcp` und sende dasselbe technische
 
 | MCP-Tool | HTTP-Zuordnung | Verwendung |
 |---|---|---|
+| `task_handoff_get` | `GET /api/v1/tasks/{task_id}/handoff` | Aktuellen Ticketkontext lesen. Mit `source_run_id` kommen die offenen Fragen des genannten Ausgangslaufs hinzu. |
+| `runs_get` | `GET /api/v1/runs/{run_id}` | Versuch, Startrevision, gespeicherte Übergabe und aktuelle Run-Version lesen |
+| `runs_report_result` | `POST /api/v1/runs/{run_id}/result-reports` | Ergebnis, Prüfnachweise und offene Fragen für den zugewiesenen Versuch melden |
 | `tasks_create` | `POST /api/v1/projects/{project_id}/tasks` | Ticket anlegen und technischen Intake starten |
 | `tasks_intake_get` | `GET /api/v1/tasks/{task_id}/intake` | Intake-Ausgang und offene Rückfragen lesen |
 | `tasks_supply_information` | `POST /api/v1/tasks/{task_id}/intake/information` | Angeforderte Angaben für dasselbe Ticket nachreichen |
@@ -79,6 +82,10 @@ Verbinde den Client mit `<FALKENWARTE_ORIGIN>/mcp` und sende dasselbe technische
 MCP-Argumente werden anhand des jeweiligen `inputSchema` validiert und an die im `operation_id` angegebene Application-Operation geleitet. `client_request_id` übernimmt die Rolle des HTTP-Idempotenzschlüssels. Für versionierte Änderungen übernimmt `expected_version` die Rolle von `If-Match`; `http_mapping.version_resource` sagt, welches Aggregat diese Version bezeichnet.
 
 Die MCP-Eingabe für `tasks_create` benötigt `project_id`, `title` und `client_request_id`. `task_type`, `description`, `priority`, `prefer_wait_ms`, `suggested_label_ids` und `link_collections` entsprechen den Feldern des HTTP-Vertrags. `prefer_wait_ms` bleibt auch bei `tasks_supply_information` und `tasks_reclassify` aus Kompatibilitätsgründen gültig, löst aktuell aber in keinem dieser Aufrufe ein Warten aus. Lies den neuen Intake-Ausgang danach über `tasks_intake_get`.
+
+## Den Ticketablauf lesen
+
+Die Eigentümersitzung kann über `GET /api/v1/tasks/{task_id}/flow` die Workflowdurchläufe und Einzelläufe eines Tickets abrufen. Die Antwort enthält die beim Start gültigen Phasen, zugehörige Versuche, Ergebnisberichte und Phasenentscheidungen. Das Übergabeprotokoll stammt aus dem gespeicherten Stand des empfangenden Laufs. Weitere Durchläufe lassen sich mit `next_cursor` und dem Abfrageparameter `cursor` laden. [Ablauf im Ticket](user/AGENTS_AND_WORKFLOWS.md#den-ablauf-eines-tickets-lesen)
 
 ## Wiederholungen und Versionen
 

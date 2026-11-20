@@ -167,6 +167,8 @@ test('A02 scoped principals cannot read or mutate foreign tasks, intakes, links,
     const intakeBefore = await ownerApi.get(`/tasks/${taskId}/intake`);
     expect(intakeBefore.response.status()).toBe(200);
     expect(intakeBefore.data.outcome).toBe('needs_information');
+    const agentFlowRead = await agentB.context.get(`${apiPrefix}/tasks/${taskId}/flow`);
+    expect(agentFlowRead.status()).toBe(403);
     const collectionCreate = await ownerApi.post(`/tasks/${taskId}/link-collections`, {
       name: 'B Eigentümerreferenzen',
       kind: 'reference',

@@ -73,6 +73,8 @@ Eine Workflowdefinition enthält versionierte Phasen, Bedingungen, Übergänge u
 
 `RunHandler` verwaltet Workflowinstanzen in den Zuständen `running`, `paused`, `succeeded` und `cancelled`. Die Automation-Regel wählt den Übergang anhand des Run-Outcomes. Offene Bedingungen und erreichte Wiederholungs- oder Laufzeitgrenzen pausieren die Instanz.
 
+Ein gewählter Phasenübergang hält die Ausgangsphase, die Zielphase und den auslösenden Lauf fest. Die nächste Rolle erhält bei ihrer Beauftragung den gespeicherten Übergabestand mit Bericht, Versuch, Ticketrevision, offenen Fragen und registrierten Referenzen. Die Ablaufansicht kann deshalb auch nach einer Ticketänderung zeigen, womit das Review begonnen hat. Für ältere Instanzen kennzeichnet sie fehlende oder unvollständige Übergangshistorien.
+
 Die TaskCompletionPolicy für die gesamte Aufgabe bleibt von einer RunCompletionPolicy für eine einzelne Workflowphase getrennt.
 
 ## Actions, Hintergrundarbeit und Plugins

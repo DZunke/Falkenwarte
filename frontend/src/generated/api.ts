@@ -501,6 +501,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{task_id}/flow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Ticketablauf lesen
+         * @description Owner-only Projektion aus gespeicherten Workflowdefinitionen, Runs, Meldungen, Freigaben und eingefrorenen Übergaben. Instanzen und Einzelläufe werden gemeinsam paginiert.
+         */
+        get: operations["task_flow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{task_id}/handoff": {
         parameters: {
             query?: never;
@@ -3318,6 +3340,149 @@ export interface components {
             limits: components["schemas"]["WorkflowLimits"];
             enabled: boolean;
         };
+        TaskFlowPage: {
+            task_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            items: components["schemas"]["TaskFlowItem"][];
+            next_cursor: string | null;
+            has_more: boolean;
+        };
+        TaskFlowItem: components["schemas"]["TaskFlowWorkflowInstance"] | components["schemas"]["TaskFlowRunItem"];
+        TaskFlowRunItem: {
+            /** @constant */
+            kind: "run";
+            run: components["schemas"]["TaskFlowRun"];
+        };
+        TaskFlowWorkflowInstance: {
+            /** @constant */
+            kind: "workflow_instance";
+            id: components["schemas"]["Id"];
+            workflow_id: components["schemas"]["Id"];
+            workflow_name: string | null;
+            definition_version: number;
+            definition_available: boolean;
+            /** @enum {string} */
+            state: "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            ended_at: string | null;
+            current_stage_id: string | null;
+            repair_round: number | null;
+            pause_reason: string | null;
+            /** @enum {string} */
+            branch_history_status: "complete" | "partial" | "not_recorded";
+            phases: components["schemas"]["TaskFlowPhase"][];
+            candidate_transitions: components["schemas"]["TaskFlowCandidateTransition"][];
+            selected_transitions: components["schemas"]["TaskFlowSelectedTransition"][] | null;
+            runs: components["schemas"]["TaskFlowRun"][];
+        };
+        TaskFlowPhase: {
+            id: string;
+            position: number;
+            name: string;
+            kind: string;
+            agent_profile_id: components["schemas"]["Id"] | null;
+            entry_conditions: components["schemas"]["WorkflowCondition"][];
+            run_completion_policy: components["schemas"]["RunCompletionPolicy"];
+            /** @enum {string} */
+            status: "completed" | "current" | "open" | "blocked" | "skipped" | "unknown";
+            blocker_reason: string | null;
+        };
+        TaskFlowCandidateTransition: {
+            from_stage_id: string;
+            to_stage_id: string;
+            /** @enum {string} */
+            on: "accepted" | "needs_changes" | "blocked" | "failed";
+            conditions: components["schemas"]["WorkflowCondition"][];
+            /** @enum {string} */
+            selection_status: "selected" | "possible" | "not_selected" | "unknown";
+        };
+        TaskFlowSelectedTransition: {
+            from_stage_id: string;
+            to_stage_id: string;
+            /** @enum {string} */
+            outcome: "accepted" | "needs_changes" | "blocked" | "failed";
+            source_run_id: components["schemas"]["Id"];
+            report_id: components["schemas"]["Id"] | null;
+            /** Format: date-time */
+            selected_at: string;
+        };
+        TaskFlowRun: {
+            id: components["schemas"]["Id"];
+            stage: string;
+            state: components["schemas"]["RunState"];
+            task_revision: number | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            attempt_no: number | null;
+            attempts: components["schemas"]["TaskFlowAttempt"][];
+            reports: components["schemas"]["TaskFlowReport"][];
+            approvals: components["schemas"]["TaskFlowApproval"][];
+            handoff: components["schemas"]["TaskFlowHandoff"] | null;
+            status_reason: string | null;
+        };
+        TaskFlowAttempt: {
+            attempt_no: number | null;
+            external_thread_id: string | null;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            ended_at: string | null;
+            /** Format: date-time */
+            last_observed_at: string | null;
+            remote_status: string | null;
+        };
+        TaskFlowReport: {
+            id: components["schemas"]["Id"];
+            attempt_no: number;
+            task_revision: number;
+            /** @enum {string} */
+            outcome: "reported_success" | "needs_changes" | "blocked" | "failed";
+            summary: string;
+            evidence_ids: components["schemas"]["Id"][];
+            open_questions: string[];
+            /** Format: date-time */
+            received_at: string;
+            rejection_reason: string | null;
+            accepted_for_reconciliation: boolean;
+        };
+        TaskFlowApproval: {
+            id: components["schemas"]["Id"];
+            attempt_no: number;
+            task_revision: number;
+            /** @enum {string} */
+            kind: "completion" | "review";
+            /** @enum {string} */
+            status: "pending" | "approved" | "rejected" | "invalidated";
+            /** Format: date-time */
+            requested_at: string;
+            /** Format: date-time */
+            decided_at: string | null;
+            decided_by: components["schemas"]["actor"] | null;
+            reason: string | null;
+        };
+        TaskFlowHandoff: {
+            source_run_id: components["schemas"]["Id"] | null;
+            source_report_id: components["schemas"]["Id"] | null;
+            source_attempt_no: number | null;
+            task_revision: number | null;
+            external_thread_id: string | null;
+            summary: string | null;
+            outcome: string | null;
+            context_summary: string | null;
+            open_questions: string[];
+            reported_evidence_ids: components["schemas"]["Id"][];
+            link_collections: components["schemas"]["TaskLinkCollection"][];
+            source_agent_profile_id: components["schemas"]["Id"] | null;
+            target_agent_profile_id: components["schemas"]["Id"] | null;
+        };
         WorkflowStart: {
             workflow_id: components["schemas"]["Id"];
             definition_version: number;
@@ -4638,6 +4803,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["TaskHandoff"];
+            };
+        };
+        /** @description Owner-only TaskFlowPage-Darstellung. */
+        TaskFlowPage: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["TaskFlowPage"];
             };
         };
         /** @description BoardView-Darstellung. */
@@ -6082,6 +6256,26 @@ export interface operations {
             409: components["responses"]["Conflict"];
             412: components["responses"]["PreconditionFailed"];
             428: components["responses"]["PreconditionRequired"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    task_flow_get: {
+        parameters: {
+            query?: {
+                /** @description Opaque nächste Seite. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Höchstens 100 Einträge. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                task_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["TaskFlowPage"];
             default: components["responses"]["Problem"];
         };
     };

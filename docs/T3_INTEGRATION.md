@@ -76,6 +76,8 @@ Ein beobachteter Lauf erhält dieselbe gespeicherte Thread-/Runreferenz. Ein neu
 
 ## Verträge und Quellen
 
+Wie du den Falkenwarte-Skill im Zielprojekt installierst und den MCP-Zugang für deinen Agenten einrichtest, erklärt [Agent-Skill installieren](user/AGENT_SKILL.md).
+
 - [OpenAPI-Vertrag](../contracts/openapi.yaml): Verbindungen, OAuth-Callback, Projektbindungen und Run-/Recovery-Operationen.
 - [T3-MCP-Bridge](../src/Orchestration/Infrastructure/T3McpBridge.php), [RunHandler](../src/Orchestration/Application/RunHandler.php) und [Bridge-Manifest](../packages/t3-mcp-bridge/manifest.json).
 - [T3-MCP-Verträge, v0.1.10](https://github.com/pingdotgg/t3code/blob/v0.1.10/packages/contracts/src/orchestratorMcp.ts) und [T3-OAuth-Implementierung, v0.1.10](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/auth/McpOAuth.ts).

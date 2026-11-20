@@ -68,7 +68,7 @@ async function createReportingAgent(ownerApi, project, baseURL) {
   const token = await ownerApi.createTechnicalToken({
     label: `M4 Workflow ${randomUUID().slice(0, 8)}`,
     projectIds: [project.id],
-    capabilities: ['runs.report'],
+    capabilities: ['tasks.read', 'runs.read', 'runs.report'],
   });
   const simulator = await createAgentSimulator(baseURL, token.token);
   return { token, ...simulator };
@@ -109,8 +109,12 @@ async function startWorkflow(ownerApi, task, workflow) {
   return await readUntil(ownerApi, `/workflow-instances/${instanceId}`, (instance) => instance.run_ids.length >= 1, 'Der erste Workflow-Run muss angelegt werden.');
 }
 
-async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'reported_success', summary, label, text }) {
-  const run = await readUntil(ownerApi, `/runs/${runId}`, (item) => ['running', 'verifying'].includes(item.state) && Boolean(item.attempts[0]?.external_thread_id), 'Der zugehörige T3-Run muss gestartet und beobachtbar sein.');
+async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'reported_success', summary, label, text, openQuestions = [] }) {
+  const observed = await readUntil(ownerApi, `/runs/${runId}`, (item) => ['running', 'verifying'].includes(item.state) && Boolean(item.attempts[0]?.external_thread_id), 'Der zugehörige T3-Run muss gestartet und beobachtbar sein.');
+  const currentRunResult = await agent.call('runs_get', { run_id: runId });
+  expect(currentRunResult.isError, JSON.stringify(currentRunResult.structuredContent)).toBe(false);
+  const run = currentRunResult.structuredContent;
+  expect(run).toMatchObject({ id: runId, project_id: observed.project_id, task_id: observed.task_id });
   expect(run.snapshot.task_revision).toBe(taskRevision);
   const taskId = run.task_id;
   const attemptIdentity = run.attempts.map((attempt) => ({ attempt_no: attempt.attempt_no, dispatch_id: attempt.dispatch_id }));
@@ -123,13 +127,14 @@ async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'r
     task_revision: taskRevision,
     outcome,
     summary,
+    open_questions: openQuestions,
     artifacts: [{ kind: 'note', label, text }],
-    client_request_id: clientRequestId,
   });
   let reportResult;
   let expectedVersion = run.version;
+  let expectedClientRequestId = clientRequestId;
   for (let submission = 0; submission < 3; submission += 1) {
-    reportResult = await agent.call('runs_report_result', { ...payload, expected_version: expectedVersion });
+    reportResult = await agent.call('runs_report_result', { ...payload, expected_version: expectedVersion, client_request_id: expectedClientRequestId });
     if (!reportResult?.isError) break;
 
     const problem = reportResult.structuredContent;
@@ -139,9 +144,9 @@ async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'r
     expect(isRunVersionConflict, JSON.stringify(problem)).toBe(true);
     expect(submission, 'Der Report darf höchstens zweimal nach einem konkreten Versionskonflikt erneut gelesen und gesendet werden.').toBeLessThan(2);
 
-    const latestResponse = await ownerApi.get(`/runs/${runId}`);
-    expect(latestResponse.response.status(), JSON.stringify(latestResponse.data)).toBe(200);
-    const latest = latestResponse.data;
+    const latestResponse = await agent.call('runs_get', { run_id: runId });
+    expect(latestResponse.isError, JSON.stringify(latestResponse.structuredContent)).toBe(false);
+    const latest = latestResponse.structuredContent;
     expect(latest.id).toBe(run.id);
     expect(latest.project_id).toBe(run.project_id);
     expect(latest.task_id).toBe(taskId);
@@ -161,6 +166,7 @@ async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'r
     const existingReport = await ownerApi.get(`/runs/${runId}/result-reports/${reportId}`);
     expect(existingReport.response.status(), JSON.stringify(existingReport.data)).toBe(404);
     expectedVersion = latest.version;
+    expectedClientRequestId = randomUUID();
   }
   expect(reportResult?.isError, JSON.stringify(reportResult?.structuredContent)).toBe(false);
 
@@ -220,10 +226,12 @@ test('M4 implementation hands a frozen report to review and the owner completes 
   try {
     const implementationSummary = 'Umsetzung meldet die angeforderte Änderung und hinterlässt eine eigene Agentennotiz.';
     const implementationText = 'Agentennotiz Umsetzung: Das Ergebnis wurde erstellt und zur getrennten Reviewrolle übergeben.';
+    const implementationQuestions = ['Umsetzung: Welche Abnahmestelle belegt den fertigen Stand?'];
     const implementationResult = await submitReport(ownerApi, reporter.agent, firstRunId, task.version, {
       summary: implementationSummary,
       label: 'Umsetzungsbericht',
       text: implementationText,
+      openQuestions: implementationQuestions,
     });
     const implementationRun = await readUntil(ownerApi, `/runs/${firstRunId}`, (run) => run.state === 'succeeded', 'Die Umsetzungsphase muss nach T3-Ende und Agentmeldung erfolgreich sein.');
     expect(implementationRun.stage).toBe('implementation');
@@ -234,6 +242,12 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     const withReviewRun = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.run_ids.length === 2, 'Der akzeptierte Umsetzungsbericht muss genau eine getrennte Reviewphase starten.');
     const reviewRunId = withReviewRun.run_ids[1];
     const reviewRun = await readUntil(ownerApi, `/runs/${reviewRunId}`, (run) => run.stage === 'review' && run.snapshot.agent_profile_id === reviewer.id, 'Die zweite Phase muss das eigene Reviewprofil eingefroren haben.');
+    const reporterTools = (await reporter.agent.listTools()).map(({ name }) => name);
+    expect(reporterTools).toContain('task_handoff_get');
+    expect(reporterTools).toContain('runs_get');
+    expect(reporterTools).toContain('runs_report_result');
+    expect(reporterTools).not.toContain('runs_request');
+    expect(reporterTools).not.toContain('approvals_decide');
     expect(reviewRun.snapshot).toMatchObject({
       handoff_source_run_id: firstRunId,
       handoff_snapshot: {
@@ -245,7 +259,7 @@ test('M4 implementation hands a frozen report to review and the owner completes 
         summary: implementationSummary,
         outcome: 'reported_success',
         context_summary: expect.stringContaining(taskTitle),
-        open_questions: [],
+        open_questions: implementationQuestions,
         reported_evidence_ids: [implementationEvidenceId],
         link_collections: [expect.objectContaining({ name: 'Freigegebene Quelle', task_version: task.version })],
       },
@@ -255,13 +269,22 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     expect(handoff.data.source_run_id).toBe(firstRunId);
     expect(handoff.data.reported_evidence_ids).toContain(implementationEvidenceId);
     expect(handoff.data.link_collections[0].links[0].title).toBe('Abnahmequelle');
+    const agentHandoff = await reporter.agent.call('task_handoff_get', { task_id: task.id, source_run_id: firstRunId });
+    expect(agentHandoff.isError, JSON.stringify(agentHandoff.structuredContent)).toBe(false);
+    expect(agentHandoff.structuredContent).toMatchObject({
+      task: { id: task.id, project_id: project.id },
+      source_run_id: firstRunId,
+      reported_evidence_ids: expect.arrayContaining([implementationEvidenceId]),
+    });
 
     const reviewSummary = 'Review meldet die Übergabe anhand des eingefrorenen Umsetzungsberichts als angenommen.';
     const reviewText = 'Agentennotiz Review: Die gemeldete Übergabe wurde anhand des eingefrorenen Quellenstands geprüft.';
+    const reviewQuestions = ['Review: Welche Folgebeobachtung bleibt noch offen?'];
     const reviewResult = await submitReport(ownerApi, reporter.agent, reviewRunId, task.version, {
       summary: reviewSummary,
       label: 'Reviewbericht',
       text: reviewText,
+      openQuestions: reviewQuestions,
     });
     expect(reviewResult.report.evidence_ids).toHaveLength(1);
     const reviewEvidenceId = reviewResult.report.evidence_ids[0];
@@ -281,6 +304,40 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     await readUntil(ownerApi, `/runs/${reviewRunId}`, (run) => run.state === 'succeeded', 'Die Reviewphase muss unabhängig von der Ticketentscheidung abschließen.');
     const succeededWorkflow = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.state === 'succeeded', 'Der zweiphasige Workflow muss nach der Reviewentscheidung enden.');
     expect(succeededWorkflow.run_ids).toEqual([firstRunId, reviewRunId]);
+    const workflowFlowPage = await readUntil(ownerApi, `/tasks/${task.id}/flow`, (page) => page.items?.some((item) => item.id === instance.id && item.runs?.length === 2), 'Der Ticketablauf muss beide beendeten Workflowphasen enthalten.');
+    const workflowFlow = workflowFlowPage.items.find((item) => item.id === instance.id);
+    expect(workflowFlow).toMatchObject({
+      kind: 'workflow_instance',
+      workflow_name: workflow.name,
+      definition_version: workflow.definition_version,
+      state: 'succeeded',
+      branch_history_status: 'complete',
+      phases: [
+        expect.objectContaining({ id: 'implementation', name: 'Umsetzung', status: 'completed' }),
+        expect.objectContaining({ id: 'review', name: 'Review', status: 'completed' }),
+      ],
+      selected_transitions: [expect.objectContaining({
+        from_stage_id: 'implementation',
+        to_stage_id: 'review',
+        outcome: 'accepted',
+        source_run_id: firstRunId,
+        report_id: implementationResult.reportId,
+      })],
+    });
+    expect(workflowFlow.runs.map((run) => run.id)).toEqual([firstRunId, reviewRunId]);
+    expect(workflowFlow.runs[1].handoff).toMatchObject({
+      source_run_id: firstRunId,
+      source_report_id: implementationResult.reportId,
+      source_attempt_no: implementationRun.attempt_no,
+      source_agent_profile_id: implementer.id,
+      target_agent_profile_id: reviewer.id,
+      task_revision: task.version,
+      summary: implementationSummary,
+      open_questions: implementationQuestions,
+      link_collections: [expect.objectContaining({ name: 'Freigegebene Quelle', links: [expect.objectContaining({ title: 'Abnahmequelle' })] })],
+    });
+    expect(workflowFlow.runs[0].reports[0].open_questions).toEqual(implementationQuestions);
+    expect(workflowFlow.runs[1].reports[0].open_questions).toEqual(reviewQuestions);
 
     const stillOpenTask = (await ownerApi.get(`/tasks/${task.id}`)).data;
     expect(stillOpenTask.status_category).toBe('ready');
@@ -308,6 +365,38 @@ test('M4 implementation hands a frozen report to review and the owner completes 
 
     await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}`);
     await expect(ownerPage.getByRole('heading', { name: taskTitle })).toBeVisible();
+    await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
+    const flow = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
+    await expect(flow.getByText(`Workflow: ${workflow.name} · Version ${workflow.definition_version}`, { exact: true })).toBeVisible();
+    await expect(flow.getByRole('heading', { name: 'Umsetzung', exact: true })).toBeVisible();
+    await expect(flow.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
+    const actualTransitions = flow.getByRole('heading', { name: 'Tatsächliche Übergänge' }).locator('..');
+    await expect(actualTransitions.getByText('Umsetzung → Review', { exact: true })).toBeVisible();
+    await expect(flow.getByText('Bereit', { exact: true })).toBeVisible();
+    await expect(flow.getByText('Erledigt', { exact: true })).toHaveCount(2);
+    const flowRunDetails = flow.locator('summary').filter({ hasText: /^Laufdetails ansehen · Lauf \d+ ·/ });
+    await expect(flowRunDetails).toHaveCount(2);
+    const reviewRunList = flow.getByRole('list', { name: 'Läufe der Phase Review' });
+    const reviewRunDetails = reviewRunList.locator(':scope > li > details');
+    await expect(reviewRunDetails).toHaveCount(1);
+    await reviewRunDetails.locator(':scope > summary').click();
+    const reviewReport = reviewRunDetails.locator('article').filter({ hasText: reviewSummary });
+    await expect(reviewReport.getByText('Offene Fragen aus dieser Meldung', { exact: true })).toBeVisible();
+    await expect(reviewReport.getByText(reviewQuestions[0], { exact: true })).toBeVisible();
+    const handoffProtocol = reviewRunDetails.locator('details').filter({ hasText: 'Übergabeprotokoll ansehen' });
+    await expect(handoffProtocol).toHaveCount(1);
+    await handoffProtocol.locator(':scope > summary').click();
+    const handoffSummary = handoffProtocol.getByRole('heading', { name: 'Zusammenfassung der Übergabe' }).locator('..');
+    await expect(handoffSummary.getByText(implementationSummary, { exact: true })).toBeVisible();
+    const sourceReport = handoffProtocol.getByText(/^Übernommene Agentenmeldung/).locator('..');
+    await expect(sourceReport.getByText(implementationSummary, { exact: true })).toBeVisible();
+    const originalQuestions = handoffProtocol.getByText('Offene Fragen der ursprünglichen Agentenmeldung', { exact: true }).locator('..');
+    await expect(originalQuestions.getByText(implementationQuestions[0], { exact: true })).toBeVisible();
+    const frozenQuestions = handoffProtocol.getByRole('heading', { name: 'Für den Folgelauf übernommene offene Fragen' }).locator('..');
+    await expect(frozenQuestions.getByText(implementationQuestions[0], { exact: true })).toBeVisible();
+    await expect(handoffProtocol.getByText(`Absender: ${implementer.name}`, { exact: true })).toBeVisible();
+    await expect(handoffProtocol.getByText(`Empfänger: ${reviewer.name}`, { exact: true })).toBeVisible();
+    await expect(handoffProtocol.getByRole('link', { name: 'Abnahmequelle' })).toHaveAttribute('href', 'https://example.test/m4/handoff');
     await ownerPage.getByRole('tab', { name: 'Ausführung' }).click();
     const execution = ownerPage.getByRole('tabpanel', { name: 'Ausführung' });
     await execution.getByRole('button', { name: /^review · Versuch 1/ }).click();
@@ -324,6 +413,8 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     const completedTask = await readUntil(ownerApi, `/tasks/${task.id}`, (item) => item.status_category === 'done', 'Erst nach Ownerbestätigung von Reviewnachweis und Pflichtkriterium darf das Ticket erledigt werden.');
     await expect(ownerPage.getByRole('combobox', { name: 'Ticketstatus' })).toContainText('Erledigt');
     expect(completedTask.criteria[0]).toMatchObject({ state: 'human_confirmed', reviewed_by: { kind: 'owner' } });
+    await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
+    await expect(ownerPage.getByRole('tabpanel', { name: 'Ablauf' }).getByText('Erledigt', { exact: true })).toHaveCount(3);
     const evidencePage = await ownerApi.get(`/evidence?task_id=${encodeURIComponent(task.id)}&limit=100`);
     expect(evidencePage.response.status(), JSON.stringify(evidencePage.data)).toBe(200);
     expect(evidencePage.data.items).toEqual(expect.arrayContaining([
@@ -333,8 +424,25 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);
     expect(t3.accepted_launches).toHaveLength(2);
+    const implementationLaunch = t3.accepted_launches.find((launch) => launch.payload.message.includes(`Run-ID: ${firstRunId}\n`));
+    expect(implementationLaunch).toBeTruthy();
+    expect(implementationLaunch.payload.message).toContain(`Projekt-ID: ${project.id}`);
+    expect(implementationLaunch.payload.message).toContain(`Ticket-ID: ${task.id}`);
+    expect(implementationLaunch.payload.message).toContain(`Ticket-Key: ${task.key}`);
+    expect(implementationLaunch.payload.message).toContain(`Phase-ID: ${implementationRun.stage}`);
+    expect(implementationLaunch.payload.message).toContain(`Workflowversion: ${implementationRun.snapshot.workflow_version}`);
+    expect(implementationLaunch.payload.message).toContain('falkenwarte');
+    expect(implementationLaunch.payload.message).toContain('andernfalls');
+    expect(implementationLaunch.payload.message).toContain(`task_handoff_get(task_id=${task.id})`);
+    expect(implementationLaunch.payload.message).toContain(`runs_get(run_id=${firstRunId})`);
+    expect(implementationLaunch.payload.message).toContain('runs_report_result');
+    expect(implementationLaunch.payload.message).toContain(`attempt_no=${implementationRun.attempt_no}`);
+    expect(implementationLaunch.payload.message).toContain(`task_revision=${implementationRun.snapshot.task_revision}`);
+    expect(implementationLaunch.payload.message).toContain('tasks.read');
+    expect(implementationLaunch.payload.message).toContain('runs.read');
+    expect(implementationLaunch.payload.message).toContain('runs.report');
     const reviewerLaunch = t3.accepted_launches.find((launch) => launch.payload.message.includes('Übergabe aus Lauf'));
-    expect(reviewerLaunch?.payload.message).toContain(firstRunId);
+    expect(reviewerLaunch?.payload.message).toContain(`task_handoff_get(task_id=${task.id}, source_run_id=${firstRunId})`);
     expect(reviewerLaunch?.payload.message).toContain(implementationResult.reportId);
     expect(reviewerLaunch?.payload.message).toContain(implementationSummary);
     expect(reviewerLaunch?.payload.message).toContain(implementationEvidenceId);
@@ -398,10 +506,54 @@ test('M4 stops the configured repair loop at its limit without launching another
     const reports = await Promise.all(paused.run_ids.map((runId, index) => ownerApi.get(`/runs/${runId}/result-reports/${reportIds[index]}`)));
     expect(reports.map((result) => result.data.id)).toEqual(reportIds);
     expect(reports.map((result) => result.data.outcome)).toEqual(['needs_changes', 'needs_changes']);
+    const flowPage = await readUntil(ownerApi, `/tasks/${task.id}/flow`, (page) => page.items?.some((item) => item.id === instance.id && item.runs?.length === 2), 'Der Ticketablauf muss beide Besuche der Reparaturphase enthalten.');
+    const flowInstance = flowPage.items.find((item) => item.id === instance.id);
+    expect(flowPage).toMatchObject({ task_id: task.id, project_id: project.id });
+    expect(flowInstance).toMatchObject({
+      kind: 'workflow_instance',
+      workflow_name: workflow.name,
+      definition_version: workflow.definition_version,
+      state: 'paused',
+      branch_history_status: 'complete',
+      selected_transitions: [expect.objectContaining({
+        from_stage_id: 'implementation',
+        to_stage_id: 'implementation',
+        outcome: 'needs_changes',
+        source_run_id: paused.run_ids[0],
+        report_id: reportIds[0],
+      })],
+      phases: [expect.objectContaining({ id: 'implementation', name: 'Bearbeitung', status: 'blocked', blocker_reason: paused.pause_reason })],
+    });
+    expect(flowInstance.runs.map((run) => run.id)).toEqual(paused.run_ids);
+    expect(flowInstance.runs.map((run) => run.reports.map((report) => report.summary))).toEqual([
+      ['Die Implementierungsrolle meldet Änderungsbedarf 1.'],
+      ['Die Implementierungsrolle meldet Änderungsbedarf 2.'],
+    ]);
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);
     expect(t3.accepted_launches).toHaveLength(2);
     expect(paused.run_ids).toHaveLength(t3.accepted_launches.length);
+    await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}`);
+    await expect(ownerPage.getByRole('heading', { name: task.title })).toBeVisible();
+    await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
+    const flow = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
+    await expect(flow.getByText(`Workflow: ${workflow.name} · Version ${workflow.definition_version}`, { exact: true })).toBeVisible();
+    await expect(flow.getByRole('heading', { name: 'Bearbeitung', exact: true })).toBeVisible();
+    const actualTransitions = flow.getByRole('heading', { name: 'Tatsächliche Übergänge' }).locator('..');
+    await expect(actualTransitions.getByText('Bearbeitung → Bearbeitung', { exact: true })).toBeVisible();
+    await expect(flow.getByText('Blockiert', { exact: true })).toBeVisible();
+    const pausedStatus = flow.getByRole('status').filter({ hasText: 'Warum pausiert' });
+    await expect(pausedStatus.getByText('Warum pausiert', { exact: true })).toBeVisible();
+    await expect(pausedStatus).toContainText(paused.pause_reason);
+    const runList = flow.getByRole('list', { name: 'Läufe der Phase Bearbeitung' });
+    const runDetails = runList.locator(':scope > li > details > summary');
+    await expect(runDetails).toHaveCount(2);
+    await runDetails.nth(0).click();
+    const firstRepairRun = runList.locator(':scope > li > details').nth(0);
+    await expect(firstRepairRun.getByText('Die Implementierungsrolle meldet Änderungsbedarf 1.', { exact: true })).toBeVisible();
+    await runDetails.nth(1).click();
+    const secondRepairRun = runList.locator(':scope > li > details').nth(1);
+    await expect(secondRepairRun.getByText('Die Implementierungsrolle meldet Änderungsbedarf 2.', { exact: true })).toBeVisible();
     recordEvidence(
       'M4: `max_repair_rounds=1` erlaubt genau einen Reparatur-Folgelauf und stoppt vor einem dritten T3-Launch.',
       `Workflow ${instance.id} speicherte zwei unterschiedliche needs_changes-Reports und zwei T3-Launches. repair_round blieb bei 1; die Instanz pausierte mit workflow_repair_limit, ohne dritten Run oder externe Zusatzarbeit anzulegen.`,

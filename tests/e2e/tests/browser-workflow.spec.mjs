@@ -87,6 +87,16 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
   await expectWithinMobileViewport(ownerPage.getByRole('heading', { name: 'Ein menschlicher Browserablauf' }), 'Ticket heading');
   await expect(ownerPage.getByRole('heading', { name: 'Ein menschlicher Browserablauf' })).toBeVisible();
   await expect(ownerPage.getByText('Die Änderung wird im Board sichtbar.', { exact: true })).toBeVisible();
+  await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
+  const initialFlow = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
+  await expect(initialFlow.getByRole('heading', { name: 'Ticketstand' })).toBeVisible();
+  await expect(initialFlow.getByRole('heading', { name: 'Erfolgskriterien des Tickets' })).toBeVisible();
+  await expect(initialFlow.getByRole('heading', { name: 'Workflows und Agentenläufe' })).toBeVisible();
+  await expect(initialFlow.getByText('Für dieses Ticket gibt es noch keinen Workflow oder Einzellauf.', { exact: true })).toBeVisible();
+  await expect(initialFlow.getByRole('button', { name: 'Ausführung öffnen' })).toBeVisible();
+  await expect(initialFlow.getByText('Die Änderung wird im Board sichtbar.', { exact: true })).toBeVisible();
+  await expect(initialFlow.getByText('Offen', { exact: true })).toBeVisible();
+  await ownerPage.getByRole('tab', { name: 'Details' }).click();
 
   await ownerPage.getByRole('button', { name: 'Link hinzufügen' }).click();
   await ownerPage.getByLabel('Sammlung', { exact: true }).fill('Browserablauf');
@@ -117,6 +127,10 @@ test('A01 A21 owner creates a project and completes a ticket in the browser', as
   await ownerPage.getByLabel('Begründung').fill('Die gemeldete Darstellung entspricht dem vereinbarten Kriterium.');
   await ownerPage.getByRole('button', { name: 'Fachlich bestätigen' }).click();
   await expect(ownerPage.getByText('Menschlich bestätigt')).toBeVisible();
+  await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
+  const completedFlow = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
+  await expect(completedFlow.getByText('Bestätigt', { exact: true })).toBeVisible();
+  await expect(completedFlow.getByText('Die Änderung wird im Board sichtbar.', { exact: true })).toBeVisible();
 
   await ownerPage.getByRole('combobox').first().click();
   await ownerPage.getByRole('option', { name: 'Erledigt', exact: true }).click();
