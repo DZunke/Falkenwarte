@@ -11,7 +11,7 @@ Dieser Skill dient allein der Arbeit am beauftragten Zielprojekt. Falkenwarte ve
 
 Nutze Projekt-ID, Ticket-ID, Phase-ID, Run-ID, Versuch und Aufgabenrevision aus dem Startauftrag als feste Referenz (`project_id`, `task_id`, `stage`, `run_id`, `attempt_no`, `task_revision`). Lies die Anweisungen des Zielprojekts und bleibe in der zugewiesenen Phase und Rolle.
 
-Für einen ausdrücklich angeforderten Lesetest ohne Run-ID verwende nur die mitgeteilte `task_id` und `task_handoff_get`; lege dabei weder ein Ticket noch einen Lauf oder Bericht an.
+Für einen ausdrücklich angeforderten Verbindungstest vor dem ersten Ticket rufe `tasks_list` mit der mitgeteilten `project_id` und `limit: 1` auf. Auch eine erfolgreiche leere Liste bestätigt den Zugriff. Bei einem Lesetest mit einer konkreten `task_id` verwende `task_handoff_get`. Melde das tatsächliche Ergebnis oder den Verbindungsfehler. Diese Tests verwenden ausschließlich lesende Werkzeuge.
 
 Rufe `task_handoff_get` mit der gelieferten `task_id` und dem im Startauftrag genannten vorherigen `source_run_id` auf, wenn eines angegeben ist. Ohne `source_run_id` liefert das Werkzeug Ticket, Kriterien, Nachweise und Link-Collections; offene Fragen des vorherigen Laufs sind nur mit diesem optionalen Argument enthalten. Der eingefrorene Run-Snapshot und der Startauftrag gehören zu deinem Lauf; ersetze sie nicht durch einen späteren Ticketstand.
 

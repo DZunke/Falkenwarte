@@ -1,89 +1,119 @@
-# Agents und Workflows
+# Von der Einrichtung zur ersten Aufgabe
 
-Falkenwarte verwaltet T3-Verbindungen, Projektfreigaben, Rollen und den Status der Aufträge. Modelle, Provider, Arbeitsverzeichnisse und Toolberechtigungen bleiben in T3. Falkenwarte zeigt Meldungen und beobachtete Zustände, führt aber keine eigene externe Agentenumgebung aus.
+Am Ende dieser Anleitung siehst du im Ticket, wie ein Agent deinen Auftrag in T3 bearbeitet und was er an Falkenwarte zurückmeldet. Du brauchst eine laufende Falkenwarte und ein T3-Projekt mit einem aktivierten Provider. Das Beispiel verwendet Codex. Für Pi und Claude Code findest du die passenden Einstellungen in Schritt 7.
 
-Richte den Skill im Arbeitsprojekt oder für den von T3 verwendeten Agenten ein. Er erklärt, wie der Agent den Ticketkontext liest und sein Ergebnis für die nächste Phase meldet. [Agent-Skill installieren](AGENT_SKILL.md)
+## 1. In Falkenwarte anmelden
 
-## T3-Verbindung einrichten
+Öffne Falkenwarte im Browser. Bei der ersten Einrichtung gibst du das einmalige Einrichtungstoken ein und legst das Eigentümerpasswort fest. Melde dich mit deinem Passwort an. Jetzt siehst du die Hauptnavigation mit **Agents & T3**. [Falkenwarte installieren](../OPERATIONS.md)
 
-1. Öffne **Agents & T3** und gib unter **Verbindung hinzufügen** einen Namen und die HTTPS-Basisadresse des T3-Diensts ein, zum Beispiel `https://t3.example.net`. Hänge kein `/mcp` an. Falkenwarte ergänzt diesen Pfad beim Zugriff selbst.
+## 2. T3 verbinden und Projekte laden
 
-   Bei der Windows-App mit WSL-Backend braucht Falkenwarte eine HTTPS-Adresse, unter der sein Container den T3-Server erreicht. Ein bereits eingerichtetes T3-Relay liefert eine solche Adresse. `localhost` bezeichnet im Container den Container selbst.
+Öffne **Agents & T3**. Trage unter **Verbindung hinzufügen** einen Namen und die HTTPS-Adresse deines T3-Servers ein, etwa `https://t3.example.net`. Falkenwarte ergänzt `/mcp` selbst. Klicke auf **Verbindung speichern**.
 
-2. Wähle **Verbindung speichern**. Wenn bei der Verbindung **Autorisierung fehlt**, **Zugang abgelaufen** oder **Widerrufen** steht, wähle **Bei T3 anmelden**, schließe die Anmeldung beim T3-Dienst ab und kehre zu **Agents & T3** zurück. Bei mehreren Verbindungen wähle die gewünschte Verbindung aus.
-3. Starte **Verbindung testen** erst, wenn die Verbindung als **Autorisiert** angezeigt wird. Die Prüfung läuft im Hintergrund. **Prüfung läuft** wechselt automatisch zum endgültigen Ergebnis. Starte sie nicht erneut, während sie läuft.
-4. Mit **Projekte laden** rufst du die Projekte dieser T3-Verbindung ab.
+Klicke auf **Bei T3 anmelden** und schließe die Anmeldung ab. Sobald die Verbindung in Falkenwarte **Autorisiert** anzeigt, klicke einmal auf **Verbindung testen**. Warte, bis du das Ergebnis für Netzwerk, Autorisierung, MCP und Fähigkeiten siehst. Klicke bei erfolgreicher Prüfung auf **Projekte laden**. In der Liste sollte dein T3-Projekt erscheinen.
 
-Eine Verbindung mit **Eingeschränkt**, **Nicht erreichbar** oder **Protokoll prüfen** ist nicht startbereit. Lies die Diagnose zu Netzwerk, Autorisierung, MCP-Verbindung und Fähigkeiten. Bei einem Netzwerkfehler prüfe, ob der Backend-Container die eingetragene HTTPS-Adresse erreicht. Tickets und Boards kannst du währenddessen weiterverwenden.
+**Windows-App mit WSL-Backend:** Du kannst die Windows-App weiterverwenden. Trage in Falkenwarte die HTTPS-Adresse ein, über die sein Container den T3-Server erreicht, etwa die Adresse deines eingerichteten T3-Relays. `localhost` bezeichnet im Falkenwarte-Container den Container selbst. [T3 anbinden](../operations/DEPLOYMENT_AND_CONFIGURATION.md)
 
-## T3-Projekt einem Falkenwarte-Projekt zuordnen
+## 3. Das Projekt zuordnen
 
-Wähle nach dem Laden in der gewünschten T3-Projektzeile **Projekt verbinden**. Im Dialog **T3-Projekt verbinden** kannst du unter **Vorhandenes Projekt wählen** ein Falkenwarte-Projekt auswählen oder unter **Neues Falkenwarte-Projekt anlegen** ein neues Projekt mit **Projektname** und **Kurzname** anlegen. Mit **Projekt anlegen und verbinden** legt Falkenwarte das Projekt an und speichert anschließend seine Zuordnung. Falls die Zuordnung fehlschlägt, zeigt der Dialog das bereits angelegte Projekt an. Du kannst die Bindung dort erneut speichern.
+Klicke in der Zeile deines T3-Projekts auf **Projekt verbinden**. Wenn du noch kein Falkenwarte-Projekt dafür hast, wähle **Neues Falkenwarte-Projekt anlegen**, fülle **Projektname** und **Kurzname** aus und klicke auf **Projekt anlegen und verbinden**. Hast du das Projekt in Falkenwarte schon angelegt, verwende **Vorhandenes Projekt wählen**.
 
-Die aktive Zuordnung bleibt in Falkenwarte gespeichert. Nach dem Laden der Seite öffnet **{Projektname} öffnen** in der T3-Projektzeile das zugeordnete Falkenwarte-Projekt. Ein Falkenwarte-Projekt hat jeweils eine aktive T3-Projektbindung.
+Nach dem Speichern siehst du in der Projektzeile **{Projektname} öffnen**. Über diesen Link kommst du später zum Board. Falls das Projekt bereits angelegt wurde und die Zuordnung fehlgeschlagen ist, kannst du im selben Dialog die Verbindung für dieses Projekt erneut speichern.
 
-Nach der Zuordnung kannst du über **Agentrolle einrichten** direkt eine Rolle für dieses Falkenwarte-Projekt und die verwendete T3-Verbindung anlegen.
+## 4. Eine Agentrolle auswählen oder anlegen
 
-## Agentrollen verwalten
+Klicke in der verbundenen Projektzeile auf **Agentrolle einrichten**. Projekt und T3-Verbindung sind dann vorausgewählt. Wenn du für dieses Projekt bereits eine aktivierte Rolle mit der richtigen Verbindung, dem gewünschten Ziel und **Konfiguration bereit** hast, merke dir ihren Namen und gehe zu Schritt 5.
 
-Öffne **Agentrollen** in der Hauptnavigation und lege dort eine Rolle mit Name, Aufgabenrolle, T3-Verbindung und mindestens einem erlaubten Falkenwarte-Projekt an. **Agentrolle einrichten** aus einer Projektzeile übernimmt das Projekt und die T3-Verbindung. Das Ausführungsziel **T3-Projektstandard** überlässt T3 die Auswahl anhand der im gebundenen T3-Projekt eingerichteten Standardkonfiguration.
+1. Gib unter **Rolle hinzufügen** einen **Namen** ein, den du später im Ticket wiedererkennst. Unter **Rolle** beschreibst du die Aufgabe, etwa `Entwicklung`.
+2. Prüfe **T3-Verbindung** und **Erlaubte Projekte**. Wähle dein Projekt oder **Alle Projekte**, wenn die Rolle auch für künftige Projekte verfügbar sein soll. Ein Agent kann für ein Projekt starten, wenn es an dieselbe T3-Verbindung gebunden ist.
+3. Wähle unter **Ausführungsziel in T3** den Eintrag **T3-Providerinstanz**. Wähle unter **Providerinstanz aus T3** deine Instanz und unter **Modell aus T3** ihr Modell. Der Slug neben dem Namen unterscheidet auch zwei Varianten desselben Providers. Ist nur ein Modell verfügbar, kann es schon ausgewählt sein.
+4. Klicke auf **Rolle anlegen**. Prüfe in der Rollenliste den Namen, das Ziel und die Anzeige **Konfiguration bereit**.
 
-| Ausführungsziel | Wann es passt |
+## 5. Das Board einrichten
+
+Öffne dein Projekt. Klicke auf **Board einrichten**, lass den vorgeschlagenen Namen **Projektboard** stehen und klicke auf **Board erstellen**. Jetzt siehst du das Board mit seinen Spalten. Bei einem neuen Projekt beginnt es mit **Backlog** und **Bereit**. Hast du schon ein Board, öffne es direkt. [Board und Status anpassen](PROJECTS_AND_TICKETS.md)
+
+## 6. Ein Token für den Agenten ausstellen
+
+Falkenwarte hat jetzt Zugang zu T3. Damit dein Agent in die andere Richtung Tickets lesen und Ergebnisse melden kann, stellst du ihm in Falkenwarte ein Token aus.
+
+1. Öffne **Einstellungen → Technische Principals**. Gib unter **Tokenname** einen frei gewählten Namen ein, etwa `Entwicklung – Projekt A`.
+2. Wähle unter **Projektzugriff** dein Projekt. **Alle Projekte** gibt diesem Token auch Zugriff auf künftig angelegte Projekte. Hier bestimmst du, welche Daten der Agent lesen oder bearbeiten darf. Die Projektfreigabe der Rolle aus Schritt 4 bestimmt, wo du sie starten kannst.
+3. Wähle **Tickets lesen**, **Aufträge lesen** und **Ergebnismeldungen senden**. Diese drei Rechte reichen für die erste Aufgabe. Prüfe die **Gültigkeit (Tage)** und klicke auf **Token ausstellen**.
+4. Kopiere den einmal angezeigten Wert in deinen Passwortmanager. Du brauchst ihn im nächsten Schritt bei der Providerinstanz.
+
+## 7. Skill und MCP im Zielprojekt einrichten
+
+Öffne in Falkenwarte **Agents & T3 → Skill herunterladen**. Öffne dann in deinem Editor genau das Projekt, das du in T3 gebunden hast. Läuft dein Provider in WSL, arbeite im Projektordner in WSL. Für Codex legst du darin den Ordner `.agents/skills/falkenwarte` an und kopierst die heruntergeladene `SKILL.md` hinein. So findet der Agent die Anleitung, wie er Aufträge lesen und Ergebnisse melden soll. [Installationspfade nach Provider](AGENT_SKILL.md#im-zielprojekt-installieren)
+
+**Für Codex:** Lege im selben Projekt den Ordner `.codex` und darin die Datei `config.toml` an, falls sie fehlen. Ergänze den folgenden Abschnitt. Falls es bereits einen Abschnitt mit diesem Namen gibt, aktualisiere ihn und behalte die übrigen Einstellungen. Speichere die Datei. Das Beispiel passt, wenn der T3-Provider Falkenwarte in derselben WSL-Umgebung unter Port 8443 erreicht. Bei einer anderen Installation nimm deren erreichbare HTTPS-Adresse und hänge `/mcp` an.
+
+```toml
+[mcp_servers.falkenwarte]
+url = "https://localhost:8443/mcp"
+bearer_token_env_var = "FALKENWARTE_MCP_TOKEN"
+```
+
+Öffne in der T3-App **Settings → Providers** und klicke auf dieselbe Codex-Instanz, die du in der Falkenwarte-Rolle gewählt hast. Klicke unter **Environment → Variables** auf **Add variable**. Trage als Namen `FALKENWARTE_MCP_TOKEN` ein und als Wert das Token aus Schritt 6. Übernimm die Änderung.
+
+Für die lokale Standardinstallation braucht Codex auch das öffentliche CA-Zertifikat deiner Falkenwarte. Klicke bei derselben Instanz erneut auf **Add variable**. Verwende den Namen `CODEX_CA_CERTIFICATE` und als Wert den vollständigen Pfad zur Zertifikatsdatei in der Providerumgebung. Wenn du die Datei noch nicht hast, zeigt dir das Rezept, wie du sie aus deiner laufenden Falkenwarte kopierst und den Pfad abliest. Bei einem öffentlich vertrauenswürdigen Zertifikat genügt die Tokenvariable. [Zertifikat kopieren und Codex einrichten](AGENT_SKILL.md#codex)
+
+**Für Pi oder Claude Code:** Lege die Serverdatei und den Skill am Pfad für deinen Provider an und setze das Token in dessen Umgebung. Kehre danach für denselben Lesetest zu Schritt 8 zurück. [Pi einrichten](AGENT_SKILL.md#pi) · [Claude Code einrichten](AGENT_SKILL.md#claude-code)
+
+## 8. Den Zugang prüfen, solange das Board noch leer ist
+
+Öffne dein Board in Falkenwarte. Kopiere aus der Adresse die Projekt-ID zwischen `/project/` und `/board`. Öffne in T3 einen **neuen Thread** in diesem Projekt mit deiner ausgewählten Providerinstanz. Ersetze im folgenden Text `<Projekt-ID>` durch die kopierte ID und sende die Nachricht.
+
+```text
+Rufe beim MCP-Server falkenwarte das Werkzeug tasks_list mit project_id <Projekt-ID> und limit 1 auf. Zeige mir das Ergebnis des Werkzeugaufrufs. Ändere nichts.
+```
+
+Bei einem leeren Board siehst du `isError: false` und `items: []`. Das ist die erwartete Antwort. Gibt es bereits Tickets, kann unter `items` ein Ticket stehen. Bei einem Fehler prüfe zuerst die Serverdatei, bei einem Zertifikatsfehler den CA-Pfad und bei abgewiesenem Zugriff die Tokenvariable, die Projektfreigabe und **Tickets lesen**. [Verbindung im Zielprojekt prüfen](AGENT_SKILL.md#verbindung-im-zielprojekt-prüfen)
+
+## 9. Das erste Ticket anlegen
+
+Klicke auf deinem Board auf **Neues Ticket**. Wähle eine Aufgabe, die zu deinem Projekt passt. Für ein Python-Projekt mit Ruff und pytest kannst du dieses Beispiel übernehmen.
+
+| Feld | Beispiel |
 | --- | --- |
-| **T3-Projektstandard** | T3 soll die im gebundenen Projekt eingerichtete Standardkonfiguration verwenden. |
-| **T3-Providerinstanz** | Du willst eine bestimmte von T3 gemeldete Providerinstanz und ein Modell auswählen; dafür ist kein Referenzthread nötig. |
-| **Vorhandener Referenzthread** | Du willst Routingwerte eines bestehenden Threads aus dem gebundenen T3-Projekt als Vorlage verwenden. |
+| **Titel** | Python-Abhängigkeiten aktualisieren |
+| **Beschreibung** | Aktualisiere die Laufzeit- und Entwicklungsabhängigkeiten auf die neuesten stabilen Versionen, die mit dem Projekt kompatibel sind. Gleiche die Abhängigkeitsdateien und die CI-Installation ab. Begründe verbleibende Versionsgrenzen. |
+| **Erfolgskriterien** | Erste Zeile: `Die aktualisierten Abhängigkeiten lassen sich installieren.` Zweite Zeile: `ruff check src tests scripts sowie pytest -q laufen erfolgreich.` |
 
-Unter **Providerinstanz aus T3** siehst du die Instanzen, die T3 als ausführbar meldet. Neben dem Anzeigenamen steht der eindeutige Instanz-Slug. Daran erkennst du auch mehrere Varianten desselben Providers. Wähle unter **Modell aus T3** das gewünschte Modell. Meldet T3 genau ein Modell und ist die Liste vollständig, wählt Falkenwarte es vor. Bei einer gekürzten Liste kannst du über **Modellsuche in T3** nach Modell-ID oder Name suchen.
+Klicke auf **Ticket anlegen**. Du siehst die Karte im Standardstatus des Projekts, bei einem neuen Board in **Backlog**. Für ein von dir angelegtes Ticket brauchst du mit den Standardeinstellungen keinen OpenAI-Zugang. [Optionale Einordnung für manuelle Tickets](INTAKE_AND_DECISIONS.md)
 
-Zugangsdaten, Argumente, Umgebungsvariablen, Arbeitsverzeichnisse und Berechtigungen verwaltest du in T3. Falkenwarte speichert den Instanz-Slug und die Modell-ID. Nach Änderungen in T3 klickst du auf **Provider neu laden**. Beim Start prüft T3 außerdem, ob die Instanz für das jeweilige Projekt aktiviert ist.
+## 10. Das Ticket auf Bereit setzen
 
-Wenn eine gespeicherte Providerinstanz nicht mehr angeboten wird, kannst du die vorhandene Rolle über **Ausführungsziel ändern** auf ein anderes T3-Ziel umstellen. Die Änderung gilt für spätere Starts; bereits gespeicherte Runs behalten ihren eingefrorenen Ziel-Snapshot.
+Öffne die Karte. Unter dem Titel siehst du ein Auswahlfeld mit **Backlog**. Klicke darauf und wähle **Bereit**. Wenn das Feld **Bereit** anzeigt, lass das Ticket geöffnet.
 
-Wenn du ein bestehendes T3-Threadziel weiterverwenden möchtest, wähle **Vorhandener Referenzthread**. Unter **Referenzthread aus T3** kannst du einen angebotenen Thread wählen oder mit **ID manuell eingeben** eine bekannte Thread-ID eintragen. T3 muss für diesen Thread die Provider- und Modellreferenz liefern, und der Thread muss zum gebundenen T3-Projekt gehören.
+## 11. Den Agenten starten
 
-Für zwei aufeinanderfolgende Rollen wie **Bearbeitung** und **Review** kannst du in T3 im gebundenen Projekt je einen Referenzthread mit passendem Provider und Modell auswählen und speichern. Benenne die Threads so, dass ihre Aufgabe erkennbar ist, und weise jeder Falkenwarte-Rolle im Modus **Vorhandener Referenzthread** den entsprechenden Thread zu. Alternativ wählst du bei jeder Rolle direkt **T3-Providerinstanz**; dafür ist kein Referenzthread nötig. Ein Referenzthread überträgt nur die von T3 gelieferten Routingwerte. Jeder neue Auftrag startet einen neuen T3-Thread und übernimmt weder den Gesprächsverlauf noch Skills oder Berechtigungen des Referenzthreads. Läufe für dasselbe gebundene T3-Projekt werden nacheinander ausgeführt.
+Öffne den Reiter **Ausführung**. Wähle im Abschnitt **Einzellauf anfordern** unter **Rollenprofil** deine Rolle. Lass **Phase** auf `task`. Unter **Startbedingungen** sollte jetzt „Für Ticket und Projekt sind keine bekannten Startblockaden offen.“ stehen. Steht dort eine Sperre, behebe den genannten Grund, bevor du fortfährst.
 
-Die Projektbindung ordnet das Falkenwarte-Projekt einem T3-Projekt zu. Das Ausführungsziel der Rolle legt fest, ob T3 seinen Projektstandard, das Provider-/Modellziel aus einem Referenzthread oder eine ausdrücklich gewählte Providerinstanz mit Modell erhält. Falkenwarte speichert diese Auswahl mit der Rolle und friert sie für einen Start ein.
+Klicke einmal auf **Einzellauf anfordern**. Schau im selben Reiter unter **Ausführungen** auf den neuen Lauf. Auf **Start wird übertragen** folgt bei erfolgreicher Übergabe **Läuft in T3**. Bei einem schnellen Start siehst du unter Umständen direkt den zweiten Status. Mit **Aktualisieren** kannst du den Stand neu laden.
 
-Die Projektbindung und das Ausführungsziel benötigen weder einen lokalen Provider in Falkenwarte noch einen MCP-Zugang des Agents. Richte Provider und Instanzoptionen in T3 ein. Stelle den technischen MCP-Zugang separat für Agents bereit, die Ticketkontext lesen oder Ergebnisse an Falkenwarte melden sollen. [Agent-Skill und MCP-Zugang einrichten](AGENT_SKILL.md)
+Wartet der Auftrag auf eine Antwort, öffne **Eingabe an den laufenden Auftrag**. Steht dort **Antwort über Falkenwarte möglich**, kannst du dort antworten. Eine Berechtigungsanfrage des Providers bestätigst du direkt im zugehörigen T3-Thread.
 
-Eine Rolle lässt sich nur starten, wenn sie aktiviert, korrekt konfiguriert und für das aktuelle Projekt freigegeben ist. Pro Rolle ist höchstens ein gleichzeitiger Auftrag vorgesehen.
+## 12. Das Ergebnis prüfen
 
+Öffne im Ticket **Ausführung**, wähle den Lauf und lies unter **Ergebnisberichte**, was der Agent geändert und geprüft hat. Prüfe seine Angaben anhand deiner Erfolgskriterien. Wenn eine menschliche Freigabe aussteht, findest du sie unter **Entscheidungen**. Den Ticketabschluss bestätigst du gesondert. [Kriterien und Ticketabschluss](PROJECTS_AND_TICKETS.md)
 
-## Einzellauf starten und verfolgen
+### Den Ablauf eines Tickets lesen
 
-1. Öffne ein Ticket und wechsle zu **Ausführung**.
-2. Lies **Startbedingungen** und löse alle dort genannten Sperren auf. Falkenwarte prüft Ticketstand, Rolle, T3-Verbindung und freien Ausführungsplatz beim Start erneut.
-3. Wähle startbereites **Rollenprofil** und **Phase**, dann **Einzellauf anfordern**.
-4. Verfolge den Auftrag unter **Ausführungen**. Wähle **Aktualisieren**, wenn du den Stand sofort neu laden möchtest.
+Klicke im Ticket auf **Ablauf**. Unter **Ticketstand** siehst du den Status, offene Erfolgskriterien und Gründe für eine Blockade. Über **Details öffnen** kommst du zu den Kriterien. Bei einem Workflow siehst du zusätzlich die Phasen der beim Start gespeicherten Version und die bisherigen Ergebnisse.
 
-**Warteschlange**, **Läuft in T3** und **Wartet auf eine Antwort** zeigen, dass ein Auftrag wartet oder läuft. Bei **T3-Anmeldung fehlt** meldest du dich im T3-Dienst an. Bei **T3-Status wird abgeglichen** wartest du auf den bestätigten externen Zustand. Fordere denselben Auftrag nicht erneut an.
+Öffne für eine Übergabe den Lauf der empfangenden Phase und klicke auf **Übergabeprotokoll ansehen**. Du siehst den Bericht, die offenen Fragen und die Links, die diese Rolle zu Beginn erhalten hat. Versuch und Ticketrevision zeigen, auf welchen Stand sich die Übergabe bezieht.
 
-Wenn der laufende Auftrag eine Frage an dich richtet, kannst du sie unter **Eingabe an den laufenden Auftrag** beantworten. Das geht nur, wenn **Antwort über Falkenwarte möglich** angezeigt wird.
+## Weitere Ausführungsziele und Workflows
 
-Eine T3-Berechtigungsanfrage musst du direkt in T3 freigeben. Eine Nachricht in Falkenwarte ersetzt diese Freigabe nicht.
+Unter **Agentrollen** kannst du eine gespeicherte Rolle **Aktivieren**, ihre **Projektfreigaben ändern** oder ihr **Ausführungsziel ändern**. Bereits gestartete Läufe behalten das beim Start gespeicherte Ziel. Nach Änderungen in T3 kannst du **Provider neu laden** oder über **Modellsuche in T3** nach einem Modell suchen.
 
-## Workflows verwenden
+| Ausführungsziel der Rolle | Wann es passt |
+| --- | --- |
+| **T3-Projektstandard** | T3 soll das für dieses Projekt eingerichtete Standardziel wählen. |
+| **T3-Providerinstanz** | Du möchtest einen bestimmten Instanz-Slug und ein Modell auswählen. T3 prüft beim Start, ob die Instanz in dem Projekt aktiviert ist. |
+| **Vorhandener Referenzthread** | Ein Thread im gebundenen Projekt liefert Provider- und Modellreferenz. Wähle ihn unter **Referenzthread aus T3** oder nutze **ID manuell eingeben**. Der neue Auftrag startet in einem eigenen Thread mit eigener Unterhaltung. |
 
-Öffne **Workflows**, lege bei Bedarf einen **Zwei-Phasen-Workflow** an und wähle Projekt sowie optionale Agentrolle. Dieser Ablauf enthält eine Bearbeitungs- und eine Reviewphase. Nach einer angenommenen Meldung folgt das Review. Bei **Änderungen nötig** kehrt der Ablauf zur Bearbeitung zurück.
+Für regelmäßig wiederkehrende Bearbeitung mit anschließendem Review kannst du unter **Workflows** einen **Zwei-Phasen-Workflow** anlegen. **Agentrolle für beide Phasen** weist Bearbeitung und Review dieselbe Rolle zu. Das Formular bietet aktivierte Rollen mit passender Projektfreigabe und T3-Verbindung an. Pro Rolle kann höchstens ein Auftrag gleichzeitig laufen.
 
-Unter **Workflowlabels zuordnen** verbindest du ein Workflowlabel mit einem aktiven Workflow. Die Route fixiert eine Workflowversion für neue Starts. Sie erteilt keine Startfreigabe. Eine fehlende oder mehrdeutige Route erfordert eine menschliche Entscheidung.
-
-Ein **Manueller Trigger** richtet einen ausdrücklich angeforderten Start ein. Er führt keinen Code aus und startet keine Aufträge im Hintergrund.
-
-## Den Ablauf eines Tickets lesen
-
-Öffne das Ticket auf dem Board und wähle **Ablauf**. Unter **Ticketstand** siehst du den aktuellen Status, den Grund für eine Blockade und welche Erfolgskriterien noch offen sind. Das funktioniert auch bei rein manuellen Tickets. Über **Details öffnen** kannst du die Kriterien bearbeiten.
-
-Bei einem gestarteten Workflow siehst du die Phasen seiner beim Start gespeicherten Version. Welche Phase als Nächstes beginnt, hängt vom Ergebnis der laufenden Phase und den Bedingungen des Übergangs ab. Wenn das Review Änderungen verlangt, kannst du die erneute Bearbeitung von der ersten Runde unterscheiden.
-
-Öffne den Lauf der empfangenden Phase und wähle **Übergabeprotokoll ansehen**. Du siehst, welchen Bericht, welche Fragen und welche registrierten Links diese Rolle beim Start erhalten hat. Versuch und Ticketrevision geben an, auf welchen Stand sich die Übergabe bezieht. Im selben Lauf kannst du anschließend die eigene Meldung der Rolle und eine spätere menschliche Entscheidung nachlesen.
-
-Um einen Auftrag zu starten oder auf eine Frage im laufenden Auftrag zu antworten, wechsle zu **Ausführung**.
-
-## Ergebnisse richtig einordnen
-
-Ein Agentenbericht ist eine Meldung, keine automatische Bestätigung. Prüfe Bericht, Ticketrevision und verknüpfte Nachweise unter **Ausführung** und **Entscheidungen**. Eine Annahme bestätigt die fachliche Phasenmeldung, schließt aber nicht automatisch das Ticket.
-
-Weitere Hilfe: [Eingänge und Entscheidungen](INTAKE_AND_DECISIONS.md) und [Projekte und Tickets](PROJECTS_AND_TICKETS.md).
+Wähle im Ticket unter **Ausführung** den **Workflow** und klicke auf **Workflow starten**. Nach einer angenommenen Meldung aus der Bearbeitung folgt die Reviewphase. Meldet das Review **Änderungen nötig**, kehrt der Ablauf zur Bearbeitung zurück. Unter **Workflowlabels zuordnen** kannst du eine Workflowversion für passende Tickets festlegen. Der Start wird weiterhin im Ticket angefordert. Ein **Manueller Trigger** wird ebenfalls ausdrücklich ausgelöst.

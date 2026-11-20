@@ -67,10 +67,11 @@ Im MCP sind solche Intake-Ausgänge fachliche Ergebnisse im `structuredContent` 
 
 ## MCP-Tools verwenden
 
-Verbinde den Client mit `<FALKENWARTE_ORIGIN>/mcp` und sende dasselbe technische Bearer-Token wie bei einer technischen HTTP-Integration. `tools/list` zeigt nur die Tools, die für die Projekt- und Fähigkeitsbindung des Tokens sowie aktive Plugins verfügbar sind.
+Verbinde den Client mit `<FALKENWARTE_ORIGIN>/mcp` und sende dasselbe technische Bearer-Token wie bei einer technischen HTTP-Integration. `tools/list` zeigt Tools entsprechend den Fähigkeiten des Tokens und aktiven Plugins. Die Projektberechtigung wird beim jeweiligen Toolaufruf geprüft.
 
 | MCP-Tool | HTTP-Zuordnung | Verwendung |
 |---|---|---|
+| `tasks_list` | `GET /api/v1/tasks` | Ticketliste durchsuchen. `tasks.read` ist erforderlich. Bei `project_id` wird die Projektberechtigung für dieses Projekt geprüft. |
 | `task_handoff_get` | `GET /api/v1/tasks/{task_id}/handoff` | Aktuellen Ticketkontext lesen. Mit `source_run_id` kommen die offenen Fragen des genannten Ausgangslaufs hinzu. |
 | `runs_get` | `GET /api/v1/runs/{run_id}` | Versuch, Startrevision, gespeicherte Übergabe und aktuelle Run-Version lesen |
 | `runs_report_result` | `POST /api/v1/runs/{run_id}/result-reports` | Ergebnis, Prüfnachweise und offene Fragen für den zugewiesenen Versuch melden |

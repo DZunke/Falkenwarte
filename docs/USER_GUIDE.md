@@ -4,6 +4,10 @@ Falkenwarte ordnet Projekte und Tickets an einem Ort und hält Änderungen, offe
 
 ## Dein erster Arbeitsablauf
 
+Möchtest du deinen ersten Auftrag an einen T3-Agenten vergeben? Die Anleitung führt dich durch Projektbindung, Board, MCP-Lesetest und Start des Agenten. [Von der Einrichtung zur ersten Aufgabe](user/AGENTS_AND_WORKFLOWS.md)
+
+Für ein Board, auf dem du deine Tickets selbst bearbeitest, genügen diese Schritte.
+
 1. Melde dich mit dem Eigentümerpasswort an. Beim ersten Aufruf richtest du das Eigentümerkonto mit dem Einrichtungstoken ein.
 2. Öffne **Projekte**, wähle **Projekt anlegen** und gib Name, Kurzname, Symbol, Beschreibung und Farbe an.
 3. Öffne das Projekt und richte mit **Board einrichten** das erste Board ein.
@@ -20,7 +24,7 @@ Mit **Ctrl+K** oder **⌘K** suchst du Projekte, Ticketkennungen und Titel. Die 
 | --- | --- |
 | Projekte, Boards, Tickets und Verlauf pflegen | [Projekte und Tickets](user/PROJECTS_AND_TICKETS.md) |
 | Einen T3-Agenten im eigenen Projekt mit Falkenwarte arbeiten lassen | [Agent-Skill installieren](user/AGENT_SKILL.md) |
-| T3-Verbindungen, Rollen und Workflows einrichten | [Agents und Workflows](user/AGENTS_AND_WORKFLOWS.md) |
+| T3 verbinden, Projektboard und Agentenzugang prüfen, erste Aufgabe starten | [Von der Einrichtung zur ersten Aufgabe](user/AGENTS_AND_WORKFLOWS.md) |
 | Rückfragen, Einordnungen und Freigaben bearbeiten | [Eingänge und Entscheidungen](user/INTAKE_AND_DECISIONS.md) |
 | Laufzeiten und Metriken verstehen | [Metriken](user/METRICS.md) |
 | Falkenwarte auf Linux starten oder aktualisieren | [Betrieb](OPERATIONS.md) |

@@ -17,7 +17,7 @@ Importiere das Zertifikat in den Vertrauensspeicher deines Browsers. Öffne ansc
 docker compose exec -T app cat /data/setup-token
 ```
 
-Nach der Einrichtung kannst du dein erstes Projekt und Ticket anlegen. Die Konfiguration beginnt mit den eingecheckten Standardwerten in `.env`. Persönliche Einstellungen gehören in `.env.local`. [Erste Schritte und Bedienung](docs/USER_GUIDE.md) · [Betrieb und Konfiguration](docs/OPERATIONS.md)
+Nach der Einrichtung kannst du dein erstes Projekt und Ticket anlegen. Die Konfiguration beginnt mit den eingecheckten Standardwerten in `.env`. Persönliche Einstellungen gehören in `.env.local`. [Erste Schritte und Bedienung](docs/USER_GUIDE.md) · [Von der Einrichtung zur ersten Aufgabe](docs/user/AGENTS_AND_WORKFLOWS.md) · [Betrieb und Konfiguration](docs/OPERATIONS.md)
 
 ## Im Projekt arbeiten
 
