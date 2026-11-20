@@ -4,7 +4,17 @@ declare(strict_types=1);
 
 namespace App\Shared\Infrastructure;
 
+use App\AgentCatalog\Application\AgentCatalogHandler;
+use App\Classification\Application\IntakeHandler;
+use App\Extensions\Application\PluginHandler;
+use App\Metrics\Application\MetricsHandler;
+use App\Operations\Application\BackupHandler;
+use App\Operations\Application\JournalHandler;
+use App\Orchestration\Application\RunHandler;
 use App\Shared\Application\Actor;
+use Psr\Container\ContainerInterface;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use Symfony\Component\DependencyInjection\Attribute\AutowireLocator;
 use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 use Symfony\Component\Messenger\Event\WorkerRunningEvent;
@@ -12,8 +22,26 @@ use Symfony\Component\Messenger\Event\WorkerRunningEvent;
 #[AsMessageHandler]
 final readonly class Consumer
 {
-    public function __construct(private DbalStoreAccess $store, private iterable $workers)
-    {
+    public function __construct(
+        private DbalStoreAccess $store,
+        #[AutowireLocator([
+            'intake' => IntakeHandler::class,
+            'connection' => AgentCatalogHandler::class,
+            'recovery' => RunHandler::class,
+            'run' => RunHandler::class,
+            'workflow' => RunHandler::class,
+            'plugin' => PluginHandler::class,
+            'metrics' => MetricsHandler::class,
+            'export' => JournalHandler::class,
+            'backup' => BackupHandler::class,
+            'restore' => BackupHandler::class,
+        ])]
+        private ContainerInterface $workers,
+        #[Autowire('%kernel.environment%')]
+        private string $appEnvironment,
+        #[Autowire('%env(FALKENWARTE_TEST_STOP_BEFORE_INBOX)%')]
+        private string $stopBeforeInboxCommandId,
+    ) {
     }
 
     #[AsEventListener]
@@ -31,7 +59,8 @@ final readonly class Consumer
         }
         $this->store->context(new Actor('system', false), $command['action_id']);
         $kind = $command['kind'];
-        $handler = $this->workers[strtok($kind, '.')] ?? null;
+        $worker = strtok($kind, '.') ?: '';
+        $handler = $this->workers->has($worker) ? $this->workers->get($worker) : null;
         try {
             if (null === $handler) {
                 throw new \LogicException('Unbekannter Hintergrundauftrag '.$kind);
@@ -39,7 +68,7 @@ final readonly class Consumer
             $payload = json_decode($command['payload'], true, flags: JSON_THROW_ON_ERROR);
             $payload['__command_id'] = $job->id;
             $acknowledge = function () use ($db, $command): void {
-                if ('test' === getenv('APP_ENV') && getenv('FALKENWARTE_TEST_STOP_BEFORE_INBOX') === $command['id']) {
+                if ('test' === $this->appEnvironment && $this->stopBeforeInboxCommandId === $command['id']) {
                     // Process-level fault injection for the isolated Messenger recovery fixture.
                     exit(92);
                 }
@@ -47,7 +76,7 @@ final readonly class Consumer
                 $db->update('commands', ['complete' => 1], ['id' => $command['id']]);
                 $this->finish($command, null);
             };
-            if (in_array(strtok($kind, '.'), ['plugin', 'metrics'], true)) {
+            if (in_array($worker, ['plugin', 'metrics'], true)) {
                 $this->store->atomic(function () use ($handler, $kind, $payload, $acknowledge, $db, $command) {
                     if ($db->fetchOne('SELECT 1 FROM inbox WHERE command_id=?', [$command['id']])) {
                         return;

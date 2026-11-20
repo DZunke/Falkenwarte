@@ -98,6 +98,8 @@ test('A06 plugin-owned field history remains readable and restorable after plugi
     reason: 'A06 prüft die Lesbarkeit historischer Pluginfelder.',
   }, { version: plugin.version });
   expect(drain.response.status(), JSON.stringify(drain.data)).toBe(202);
+  expect(drain.data.action_url).toBe(`${ownerApi.apiPrefix}/actions/${drain.data.action_id}`);
+  await ownerApi.waitForSucceededAction(drain.data.action_id, 'Der Plugin-Drain muss abgeschlossen sein, bevor die historischen Felder gelesen werden.');
   plugin = await readUntil(ownerApi, `/plugins/${linkNotesPluginId}`, (item) => item.state === 'disabled', 'Der Plugin-Drain ohne aktive Arbeit muss abschließen.');
   const deactivate = await ownerApi.post(`/plugins/${linkNotesPluginId}/deactivate`, {
     reason: 'A06 prüft den Zustand nach Plugin-Deaktivierung.',

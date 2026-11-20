@@ -11,11 +11,12 @@ use App\Orchestration\Domain\RunCompletionEvaluator;
 use App\Orchestration\Domain\RunDelegationPolicy;
 use App\Orchestration\Domain\RunDelegationViolation;
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\CanonicalData;
 use App\Shared\Domain\Problem;
 
-final class RunHandler
+final class RunHandler implements OperationHandler
 {
     private const ACTIVE_RUN_STATES = ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'cancel_requested', 'result_reported', 'verifying'];
 
@@ -255,7 +256,12 @@ final class RunHandler
         }
         foreach (['task_id', 'agent_profile_id', 'state'] as $filter) {
             if (isset($p[$filter])) {
-                $items = array_values(array_filter($items, static fn (array $run): bool => ('agent_profile_id' === $filter ? ($run['snapshot']['agent_profile_id'] ?? null) : $run[$filter] ?? null) === $p[$filter]));
+                $items = array_values(array_filter(
+                    $items,
+                    static fn (array $run): bool => ('agent_profile_id' === $filter
+                        ? ($run['snapshot']['agent_profile_id'] ?? null)
+                        : $run[$filter] ?? null) === $p[$filter],
+                ));
             }
         }
         usort($items, static fn (array $a, array $b): int => strcmp((string) $b['created_at'], (string) $a['created_at']));
@@ -341,7 +347,12 @@ final class RunHandler
             $workflowInstance = null;
             if (isset($body['workflow_instance_id'])) {
                 $workflowInstance = $this->record('workflow_instances', (string) $body['workflow_instance_id']);
-                if ($workflowInstance['task_id'] !== $task['id'] || $workflowInstance['project_id'] !== $projectId || 'running' !== $workflowInstance['state'] || $workflowInstance['current_stage_id'] !== $body['stage']) {
+                if (
+                    $workflowInstance['task_id'] !== $task['id']
+                    || $workflowInstance['project_id'] !== $projectId
+                    || 'running' !== $workflowInstance['state']
+                    || $workflowInstance['current_stage_id'] !== $body['stage']
+                ) {
                     throw new Problem(409, 'run_context_mismatch', 'Der Workflow-Auftrag gehört nicht zur aktuellen Phase dieser Aufgabe.');
                 }
             }
@@ -1229,7 +1240,11 @@ final class RunHandler
             return;
         }
         $attempt = $this->attempt($run, (int) $run['attempt_no']);
-        if (in_array($run['state'], ['verifying', 'result_reported'], true) && null !== ($attempt['ended_at'] ?? null) && in_array(strtolower((string) $attempt['remote_status']), ['completed', 'succeeded', 'success'], true)) {
+        if (
+            in_array($run['state'], ['verifying', 'result_reported'], true)
+            && null !== ($attempt['ended_at'] ?? null)
+            && in_array(strtolower((string) $attempt['remote_status']), ['completed', 'succeeded', 'success'], true)
+        ) {
             // T3 has settled this attempt. Only local reports, evidence and decisions can advance it.
             $this->store->atomic(function () use ($runId, $run): void {
                 $current = $this->record('runs', $runId);
@@ -1276,7 +1291,12 @@ final class RunHandler
         }
         $connection = $this->agentCatalog->connection((string) $attempt['connection_id']);
         try {
-            $remote = $this->bridge->readThread($connection, $this->connectionToken($connection), (string) $attempt['external_thread_id'], isset($attempt['external_dispatch_run_id']) ? (string) $attempt['external_dispatch_run_id'] : null);
+            $remote = $this->bridge->readThread(
+                $connection,
+                $this->connectionToken($connection),
+                (string) $attempt['external_thread_id'],
+                isset($attempt['external_dispatch_run_id']) ? (string) $attempt['external_dispatch_run_id'] : null,
+            );
         } catch (T3BridgeException $exception) {
             $this->setRunBridgeFailure($run, $exception);
             if (!$exception->authenticationFailure) {
@@ -1292,7 +1312,11 @@ final class RunHandler
             }
             $attempt = $this->attempt($run, (int) $run['attempt_no']);
             $attempt['remote_status'] = (string) ($remote['status'] ?? $remote['run']['status'] ?? 'unknown');
-            $attempt['external_observed_run_id'] = isset($remote['runId']) ? (string) $remote['runId'] : (isset($remote['run']['id']) ? (string) $remote['run']['id'] : $attempt['external_dispatch_run_id']);
+            $attempt['external_observed_run_id'] = isset($remote['runId'])
+                ? (string) $remote['runId']
+                : (isset($remote['run']['id'])
+                    ? (string) $remote['run']['id']
+                    : $attempt['external_dispatch_run_id']);
             $attempt['last_observed_at'] = $this->store->now();
             $attempts = $run['attempts'];
             $attempts[$attempt['attempt_no'] - 1] = $attempt;
@@ -1568,7 +1592,17 @@ final class RunHandler
         $attempts[$attempt['attempt_no'] - 1] = $attempt;
         $run['attempts'] = $attempts;
         $run = $this->store->save('runs', $run, 'run.phase_succeeded');
-        foreach (['phase_evidence_pending', 'phase_review_pending', 'phase_decision_pending', 'phase_criteria_pending', 'approval_pending', 'reconciliation_required', 'run_permission_in_t3', 'run_input_owner', 'agent_question'] as $reason) {
+        foreach ([
+            'phase_evidence_pending',
+            'phase_review_pending',
+            'phase_decision_pending',
+            'phase_criteria_pending',
+            'approval_pending',
+            'reconciliation_required',
+            'run_permission_in_t3',
+            'run_input_owner',
+            'agent_question',
+        ] as $reason) {
             $this->resolveAttention($run['task_id'], $reason);
         }
         if (null !== $run['workflow_instance_id']) {
@@ -1596,7 +1630,10 @@ final class RunHandler
         if (isset($p['source_run_id']) && (null === $run || $run['task_id'] !== $taskId || $run['project_id'] !== $task['project_id'])) {
             throw new Problem(404, 'resource_not_found', 'Der angeforderte Ausgangslauf gehört nicht zu dieser Aufgabe.');
         }
-        $evidence = array_values(array_filter($this->store->all('evidence', (string) $task['project_id']), static fn (array $item): bool => $item['task_id'] === $taskId && 'rejected' !== $item['review_status']));
+        $evidence = array_values(array_filter(
+            $this->store->all('evidence', (string) $task['project_id']),
+            static fn (array $item): bool => $item['task_id'] === $taskId && 'rejected' !== $item['review_status'],
+        ));
         $collections = array_values(array_filter($this->store->all('link_collections', (string) $task['project_id']), static fn (array $collection): bool => $collection['task_id'] === $taskId));
 
         return [
@@ -1636,10 +1673,17 @@ final class RunHandler
                 $attempt = $run['attempts'][$run['attempt_no'] - 1] ?? [];
                 $entry = $this->store->save('recovery_entries', [
                     'gate_id' => $gate['id'], 'project_id' => $run['project_id'], 'connection_id' => $attempt['connection_id'] ?? null,
-                    'bridge_plugin_id' => $run['snapshot']['bridge_plugin_id'] ?? (is_string($attempt['connection_id'] ?? null) ? $this->agentCatalog->providerIdForConnection($attempt['connection_id']) : null),
-                    'run_id' => $run['id'], 'external_thread_id' => $attempt['external_thread_id'] ?? null,
+                    'bridge_plugin_id' => $run['snapshot']['bridge_plugin_id']
+                        ?? (is_string($attempt['connection_id'] ?? null)
+                            ? $this->agentCatalog->providerIdForConnection($attempt['connection_id'])
+                            : null),
+                    'run_id' => $run['id'],
+                    'external_thread_id' => $attempt['external_thread_id'] ?? null,
                     'external_run_id' => $attempt['external_dispatch_run_id'] ?? null,
-                    'entry_kind' => 'known_run', 'status' => 'pending', 'disposition' => null, 'reason' => null,
+                    'entry_kind' => 'known_run',
+                    'status' => 'pending',
+                    'disposition' => null,
+                    'reason' => null,
                 ], 'recovery.known_run_added');
                 if (is_string($attempt['external_thread_id'] ?? null) && '' !== $attempt['external_thread_id']) {
                     $this->store->enqueue('run.reconcile', ['run_id' => $run['id']]);
@@ -1764,7 +1808,12 @@ final class RunHandler
         }
         $connection = $this->agentCatalog->connection((string) $entry['connection_id']);
         try {
-            $remote = $this->bridge->readThread($connection, $this->connectionToken($connection), (string) $entry['external_thread_id'], isset($entry['external_run_id']) ? (string) $entry['external_run_id'] : null);
+            $remote = $this->bridge->readThread(
+                $connection,
+                $this->connectionToken($connection),
+                (string) $entry['external_thread_id'],
+                isset($entry['external_run_id']) ? (string) $entry['external_run_id'] : null,
+            );
         } catch (T3BridgeException $exception) {
             $entry['last_error'] = $exception->getMessage();
             $this->store->save('recovery_entries', $entry, 'recovery.entry_observation_failed');
@@ -2392,11 +2441,29 @@ final class RunHandler
         foreach ($conditions as $condition) {
             $type = $condition['type'];
             $satisfied = match ($type) {
-                'all_required_criteria_human_confirmed' => array_reduce($task['criteria'] ?? [], static fn (bool $carry, array $criterion): bool => $carry && (empty($criterion['is_required']) || 'human_confirmed' === $criterion['state']), true),
-                'required_evidence_reported' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && 'rejected' !== $item['review_status']),
-                'required_evidence_human_confirmed' => (bool) array_filter($taskEvidence, static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null) && 'human_confirmed' === $item['review_status']),
+                'all_required_criteria_human_confirmed' => array_reduce(
+                    $task['criteria'] ?? [],
+                    static fn (bool $carry, array $criterion): bool => $carry
+                        && (empty($criterion['is_required']) || 'human_confirmed' === $criterion['state']),
+                    true,
+                ),
+                'required_evidence_reported' => (bool) array_filter(
+                    $taskEvidence,
+                    static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null)
+                        && 'rejected' !== $item['review_status'],
+                ),
+                'required_evidence_human_confirmed' => (bool) array_filter(
+                    $taskEvidence,
+                    static fn (array $item): bool => $item['kind'] === ($condition['evidence_kind'] ?? null)
+                        && 'human_confirmed' === $item['review_status'],
+                ),
                 'human_approval_granted' => [] !== $approvals,
-                'review_report_accepted' => (bool) array_filter($runs, fn (array $run): bool => 'succeeded' === $run['state'] && ('review' === $run['stage'] || in_array($run['stage'], $reviewStageIds, true)) && ($this->currentReport($run, false)['outcome'] ?? null) === 'reported_success'),
+                'review_report_accepted' => (bool) array_filter(
+                    $runs,
+                    fn (array $run): bool => 'succeeded' === $run['state']
+                        && ('review' === $run['stage'] || in_array($run['stage'], $reviewStageIds, true))
+                        && ($this->currentReport($run, false)['outcome'] ?? null) === 'reported_success',
+                ),
                 'run_succeeded' => (bool) array_filter($runs, static fn (array $run): bool => 'succeeded' === $run['state']),
                 'intake_ready' => ($task['classification_required'] ?? false) ? ($task['intake_outcome'] ?? null) === 'ready' : true,
                 'no_human_attention' => !$this->hasOpenOwnerAttention((string) $task['id'], (string) $task['project_id']),
@@ -2424,7 +2491,13 @@ final class RunHandler
     private function openAttention(string $taskId, string $projectId, string $code, string $addressedTo): void
     {
         foreach ($this->store->all('attention_reasons', $projectId) as $reason) {
-            if ($reason['task_id'] === $taskId && $reason['code'] === $code && ($reason['source'] ?? null) === 'orchestration' && ($reason['addressed_to'] ?? null) === $addressedTo && !empty($reason['open'])) {
+            if (
+                $reason['task_id'] === $taskId
+                && $reason['code'] === $code
+                && ($reason['source'] ?? null) === 'orchestration'
+                && ($reason['addressed_to'] ?? null) === $addressedTo
+                && !empty($reason['open'])
+            ) {
                 return;
             }
         }

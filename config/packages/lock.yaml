@@ -1,0 +1,4 @@
+framework:
+  lock:
+    resources:
+      default: 'flock://%falkenwarte.data_dir%/locks'

@@ -60,11 +60,8 @@ jobs:
         with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with: {node-version: '24'}
-      - run: composer validate --strict --no-check-publish --no-check-all && composer install --no-interaction --prefer-dist --no-progress
-      - run: php scripts/check-contracts.php && php scripts/check-architecture.php && php bin/console lint:container
-      - run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
-      - run: vendor/bin/php-cs-fixer check --diff
-      - run: npm --prefix frontend ci && npm --prefix frontend run generate:api && git diff --exit-code -- frontend/src/generated && npm --prefix frontend run lint && npm --prefix frontend run build
+      - run: make php-deps frontend-deps
+      - run: make static
 
   docs-quality:
     runs-on: ubuntu-24.04
@@ -73,8 +70,8 @@ jobs:
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
         with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
-      - run: composer install --no-interaction --prefer-dist --no-progress
-      - run: php scripts/check-docs.php && php scripts/build-docs.php && test -s public/docs/index.html
+      - run: make php-deps
+      - run: make docs
 
   background-functional:
     runs-on: ubuntu-24.04
@@ -83,7 +80,8 @@ jobs:
         with: {ref: '${{ env.FALKENWARTE_TEST_COMMIT }}', persist-credentials: false}
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962
         with: {php-version: '8.5', extensions: 'pdo_sqlite,sqlite3,intl,sodium,zip,pcntl', coverage: none}
-      - run: composer install --no-interaction --prefer-dist --no-progress && vendor/bin/phpunit -c phpunit.dist.xml
+      - run: make php-deps
+      - run: make background
 
   build:
     runs-on: ubuntu-24.04
@@ -119,8 +117,12 @@ jobs:
             --build-arg APP_VERSION="$(cat version.txt)" --output "type=docker,name=$FALKENWARTE_IMAGE,dest=app-image.tar,rewrite-timestamp=true" -
           docker load --input app-image.tar
           docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}' | tee image.id
-          docker run --rm --env SOURCE_DATE_EPOCH="$source_date_epoch" --entrypoint php "$FALKENWARTE_IMAGE" -r '
-            $expected = (int) getenv("SOURCE_DATE_EPOCH");
+          docker run --rm --entrypoint php "$FALKENWARTE_IMAGE" -r '
+            $expected = filter_var($argv[1] ?? null, FILTER_VALIDATE_INT);
+            if (false === $expected) {
+              fwrite(STDERR, "source_date_epoch is not a valid integer argument\n");
+              exit(1);
+            }
             $paths = ["/app/composer.lock", "/usr/share/falkenwarte/image-audit/runtime-evidence.json"];
             foreach ($paths as $path) {
               $actual = filemtime($path);
@@ -135,7 +137,7 @@ jobs:
               fwrite(STDERR, "runtime-evidence source_date_epoch does not match the image build argument\n");
               exit(1);
             }
-          '
+          ' -- "$source_date_epoch"
           printf 'verified_image_id=%s\n' "$(cat image.id)"
           bash scripts/export-image-audit.sh "$FALKENWARTE_IMAGE" image-inventory
           jq -e --arg sha "$FALKENWARTE_TEST_COMMIT" --arg version "$(cat version.txt)" '.application.revision == $sha and .application.version == $version' image-inventory/runtime-evidence.json
@@ -170,12 +172,10 @@ jobs:
         run: |
           docker load -i app-image.tar.gz
           test "$(cat image.id)" = "$(docker image inspect "$FALKENWARTE_IMAGE" --format '{{.Id}}')"
-          export FALKENWARTE_IMAGE_REF="$(cat image.id)"
-          bash scripts/ci-e2e.sh
+          FALKENWARTE_IMAGE_REF="$(cat image.id)" make e2e-run
       - name: Verify plugin removal across image upgrades
         run: |
-          export FALKENWARTE_IMAGE_REF="$(cat image.id)"
-          bash scripts/ci-plugin-image-upgrade.sh
+          FALKENWARTE_IMAGE_REF="$(cat image.id)" make plugin-upgrade-run
       - name: Upload redacted acceptance observations
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

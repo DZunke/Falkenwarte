@@ -6,6 +6,7 @@ namespace App\WorkManagement\Application;
 
 use App\Extensions\Application\PluginAvailability;
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\CustomFieldHistory;
 use App\Shared\Domain\Problem;
@@ -13,9 +14,11 @@ use App\WorkManagement\Domain\AttentionLabelCatalog;
 use App\WorkManagement\Domain\BoardWipPolicy;
 use App\WorkManagement\Domain\TaskCompletionPolicy;
 use App\WorkManagement\Domain\TaskLinkPolicy;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Component\Uid\Uuid;
 
-final class WorkHandler implements AttentionLabelReader
+#[AsAlias(AttentionLabelReader::class)]
+final class WorkHandler implements AttentionLabelReader, OperationHandler
 {
     private const TASK_FIELDS = [
         'title', 'description', 'task_type', 'priority', 'due_at', 'custom_fields', 'label_ids',
@@ -608,7 +611,10 @@ final class WorkHandler implements AttentionLabelReader
             if (null !== $selectedColumn && $selectedColumn !== $column['id']) {
                 continue;
             }
-            $tasks = array_values(array_filter($allTasks, fn (array $task): bool => in_array($task['status_id'], $column['status_ids'], true) && $this->matchesBoardFilter($task, $board['config']['filter'])
+            $tasks = array_values(array_filter(
+                $allTasks,
+                fn (array $task): bool => in_array($task['status_id'], $column['status_ids'], true)
+                    && $this->matchesBoardFilter($task, $board['config']['filter']),
             ));
             $this->sortBoardTasks($tasks, $board, $column);
             $total = count($tasks);
@@ -761,7 +767,14 @@ final class WorkHandler implements AttentionLabelReader
     {
         $task = $this->task($taskId, $actor);
 
-        return ['task_id' => $taskId, 'task_version' => $task['version'], 'items' => array_map(fn (array $collection): array => $this->presentCollection($collection, $task['version']), $this->collectionsForTask($taskId))];
+        return [
+            'task_id' => $taskId,
+            'task_version' => $task['version'],
+            'items' => array_map(
+                fn (array $collection): array => $this->presentCollection($collection, $task['version']),
+                $this->collectionsForTask($taskId),
+            ),
+        ];
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */
@@ -1047,7 +1060,14 @@ final class WorkHandler implements AttentionLabelReader
         $index = $this->criterionIndex($task, $criterionId);
         foreach ($body['evidence_ids'] as $evidenceId) {
             $evidence = $this->store->find('evidence', $evidenceId);
-            if (null === $evidence || $evidence['task_id'] !== $taskId || $evidence['project_id'] !== $task['project_id'] || $evidence['task_revision'] !== $task['version'] || 'rejected' === $evidence['review_status'] || !$this->evidenceLinksCurrent($evidence)) {
+            if (
+                null === $evidence
+                || $evidence['task_id'] !== $taskId
+                || $evidence['project_id'] !== $task['project_id']
+                || $evidence['task_revision'] !== $task['version']
+                || 'rejected' === $evidence['review_status']
+                || !$this->evidenceLinksCurrent($evidence)
+            ) {
                 throw new Problem(409, 'evidence_unavailable', 'Die Entscheidung referenziert einen fehlenden, abgelehnten oder veralteten Nachweis.');
             }
             if (!in_array($criterionId, $evidence['criterion_ids'], true) && !in_array($evidenceId, $task['criteria'][$index]['evidence_ids'], true)) {
@@ -1244,7 +1264,10 @@ final class WorkHandler implements AttentionLabelReader
                 ];
             }
         }
-        $task['link_collection_ids'] = array_values(array_filter($task['link_collection_ids'] ?? [], fn (string $collectionId): bool => null !== $this->store->find('link_collections', $collectionId)));
+        $task['link_collection_ids'] = array_values(array_filter(
+            $task['link_collection_ids'] ?? [],
+            fn (string $collectionId): bool => null !== $this->store->find('link_collections', $collectionId),
+        ));
 
         return $task;
     }
@@ -1382,7 +1405,12 @@ final class WorkHandler implements AttentionLabelReader
             throw new Problem(409, 'invalid_position', 'Ein Ticket kann nicht sein eigener Nachbar sein.');
         }
         $neighbor = $this->store->find('tasks', $neighborId);
-        if (null === $neighbor || $neighbor['project_id'] !== $task['project_id'] || !in_array($neighbor['status_id'], $column['status_ids'], true) || !$this->matchesBoardFilter($neighbor, $board['config']['filter'])) {
+        if (
+            null === $neighbor
+            || $neighbor['project_id'] !== $task['project_id']
+            || !in_array($neighbor['status_id'], $column['status_ids'], true)
+            || !$this->matchesBoardFilter($neighbor, $board['config']['filter'])
+        ) {
             throw new Problem(409, 'invalid_position', 'Nachbartickets müssen zur Zielspalte und zum Zielboard gehören.');
         }
     }

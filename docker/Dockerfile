@@ -84,6 +84,7 @@ COPY composer.json composer.lock version.txt ./
 COPY packages/link-notes/ packages/link-notes/
 COPY packages/t3-mcp-bridge/manifest.json packages/t3-mcp-bridge/manifest.json
 RUN composer install --no-dev --no-interaction --no-progress --prefer-dist --no-scripts --no-autoloader
+COPY .env .env
 COPY bin/ bin/
 COPY config/ config/
 COPY contracts/ contracts/
@@ -101,7 +102,7 @@ RUN composer dump-autoload --no-dev --classmap-authoritative --no-scripts \
     && APP_ENV=prod APP_SECRET=falkenwarte-image-build-validation-secret-not-used-at-runtime php bin/console lint:container --no-interaction \
     && rm -rf var/cache/* \
     && mkdir -p /usr/share/falkenwarte/image-audit \
-    && FALKENWARTE_BUILD_REVISION="$VCS_REF" FALKENWARTE_APP_VERSION="$APP_VERSION" FALKENWARTE_DEBIAN_SNAPSHOT="$DEBIAN_SNAPSHOT" FALKENWARTE_SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" FALKENWARTE_FRANKENPHP_IMAGE="$FRANKENPHP_IMAGE" php scripts/build-image-inventory.php /usr/share/falkenwarte/image-audit \
+    && php scripts/build-image-inventory.php --output=/usr/share/falkenwarte/image-audit --revision="$VCS_REF" --app-version="$APP_VERSION" --debian-snapshot="$DEBIAN_SNAPSHOT" --source-date-epoch="$SOURCE_DATE_EPOCH" --frankenphp-image="$FRANKENPHP_IMAGE" \
     && rm -f /tmp/falkenwarte-frontend-sbom.cdx.json \
     && rm -f /usr/local/bin/composer \
     && mkdir -p /data /certs /app/var/cache /app/var/log \

@@ -10,6 +10,7 @@ use App\Shared\Domain\Problem;
 final readonly class MeasurementWindow
 {
     public \DateTimeImmutable $from;
+
     public \DateTimeImmutable $to;
 
     public function __construct(\DateTimeImmutable $from, \DateTimeImmutable $to)

@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 $origin = 'https://localhost:8443';
@@ -23,7 +24,7 @@ $context = stream_context_create([
 
 $response = @file_get_contents($origin.'/healthz', false, $context);
 $statusLine = $http_response_header[0] ?? '';
-if ($response === false || preg_match('/\s200\s/', $statusLine) !== 1) {
+if (false === $response || 1 !== preg_match('/\s200\s/', $statusLine)) {
     exit(1);
 }
 

@@ -6,8 +6,6 @@ namespace App\Tests\Fixtures\Plugins;
 
 use App\Extensions\Application\PluginCapability;
 use App\Extensions\Application\PluginDefinition;
-use JsonException;
-use LogicException;
 
 final readonly class QaBridgeDependentDefinition implements PluginDefinition
 {
@@ -16,11 +14,11 @@ final readonly class QaBridgeDependentDefinition implements PluginDefinition
     {
         try {
             $manifest = json_decode(file_get_contents(__DIR__.'/manifest.json'), true, flags: JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            throw new LogicException('The QA dependent plugin manifest is invalid JSON.', previous: $exception);
+        } catch (\JsonException $exception) {
+            throw new \LogicException('The QA dependent plugin manifest is invalid JSON.', previous: $exception);
         }
         if (!is_array($manifest)) {
-            throw new LogicException('The QA dependent plugin manifest must be an object.');
+            throw new \LogicException('The QA dependent plugin manifest must be an object.');
         }
 
         return $manifest;

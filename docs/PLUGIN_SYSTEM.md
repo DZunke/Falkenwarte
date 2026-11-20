@@ -127,6 +127,8 @@ Vor einem externen Effekt prüft der Worker den aktuellen Zustand erneut. Bereit
 
 Die Pluginverwaltung zeigt aktive Aufträge, wartende Arbeit, ungeklärte externe Aktivitäten und namentlich die aktivierten Abhängigkeiten, die eine Deaktivierung verhindern. Nach Klärung offener Arbeit kann der Eigentümer den Drain erneut prüfen. Bei Linknotizen lässt ein leerer Labelfilter alle Tickets zu. Das Speichern prüft die beim Bearbeiten geladene Pluginrevision und weist veraltete Änderungen mit HTTP 412 zurück.
 
+Der Drain-Auftrag liefert eine Action-ID. Sobald der Worker seine Prüfung abgeschlossen hat, zeigt die Action `succeeded`. Bestätigt er dabei den bereits gespeicherten Zustand und dieselben Arbeitszähler, bleibt die Pluginrevision gültig. Ein Wechsel auf `disabled` oder geänderte Zähler erzeugen eine neue Revision.
+
 ## 6. Frontend-Registrierung
 
 Komplexe React-Beiträge werden beim Frontend-Build aufgenommen. Die Registry enthält stabile component_id-Werte; der Server liefert nur IDs aktivierter und erlaubter Beiträge. Der Client lädt die passende vorinstallierte Komponente.

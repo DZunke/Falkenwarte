@@ -1,0 +1,9 @@
+framework:
+  messenger:
+    transports:
+      async:
+        dsn: 'doctrine://default?queue_name=async&auto_setup=0&redeliver_timeout=90'
+        retry_strategy:
+          max_retries: 3
+    routing:
+      'App\Shared\Infrastructure\Job': async

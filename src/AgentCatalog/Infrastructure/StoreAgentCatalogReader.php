@@ -8,7 +8,9 @@ use App\AgentCatalog\Application\AgentCatalogReader;
 use App\Extensions\Application\PluginRegistry;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+#[AsAlias(AgentCatalogReader::class)]
 final class StoreAgentCatalogReader implements AgentCatalogReader
 {
     public function __construct(private readonly Store $store, private readonly PluginRegistry $plugins)

@@ -1,0 +1,36 @@
+parameters:
+  falkenwarte.mercure.default_public_url: '%falkenwarte.public_origin%/.well-known/mercure'
+  falkenwarte.mercure.public_url: '%env(default:falkenwarte.mercure.default_public_url:resolve:MERCURE_PUBLIC_URL)%'
+  falkenwarte.mercure.issuer: '%env(default:falkenwarte.public_origin:resolve:MERCURE_ISSUER)%'
+  falkenwarte.mercure.internal_url: '%env(default:falkenwarte.mercure.public_url:resolve:MERCURE_INTERNAL_URL)%'
+  falkenwarte.mercure.resource_identifier: '%env(default:falkenwarte.mercure.public_url:resolve:MERCURE_RESOURCE_IDENTIFIER)%'
+
+framework:
+  http_client:
+    scoped_clients:
+      mercure.client:
+        base_uri: '%falkenwarte.mercure.internal_url%'
+        timeout: 2
+        max_duration: 3
+
+mercure:
+  hubs:
+    default:
+      url: '%falkenwarte.mercure.internal_url%'
+      public_url: '%falkenwarte.mercure.public_url%'
+      protocol_version: '1.0'
+      http_client: mercure.client
+      publisher:
+        secret: '%env(MERCURE_PUBLISHER_SECRET)%'
+        claims:
+          iss: '%falkenwarte.mercure.issuer%'
+          aud: '%falkenwarte.mercure.resource_identifier%'
+          sub: outbox
+          client_id: falkenwarte
+      subscriber:
+        secret: '%env(MERCURE_SUBSCRIBER_SECRET)%'
+        claims:
+          iss: '%falkenwarte.mercure.issuer%'
+          aud: '%falkenwarte.mercure.resource_identifier%'
+          sub: owner
+          client_id: falkenwarte

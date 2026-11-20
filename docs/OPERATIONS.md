@@ -4,6 +4,8 @@
 
 Das Produktions-Compose enthält genau den App-Service; FrankenPHP, der Messenger-Consumer und Maintenance laufen als überwachte Prozesse in diesem Container.
 
+Maintenance hält für seine gesamte Laufzeit eine dateibasierte Sperre im `locks`-Verzeichnis des Datenpfads; ein zweiter `app:maintenance`-Aufruf – auch mit `--once` – meldet den bereits laufenden Prozess und endet mit Fehlercode 1.
+
 Der Container verwendet PHP 8.5 und eine aus Quellcode gebaute SQLite-Bibliothek ab Version 3.51.3, damit der WAL-Korruptionsfix aus diesem Releasebereich verfügbar ist.
 
 SQLite liegt im lokalen persistenten Docker-Volume `falkenwarte-data`; dieses Volume gehört nicht auf ein Netzwerkdateisystem.
@@ -43,6 +45,10 @@ Die öffentliche Caddy-Root-CA liegt als `/certs/root.crt` im Zertifikatsvolume;
 Der private Caddy-CA-Schlüssel liegt ausschließlich im Datenvolume unter `/data/caddy/pki`; er wird nicht exportiert.
 
 ## Secrets und lokale Konfiguration
+
+Symfony Runtime lädt für HTTP, Console und Worker die versionierte `.env` mit gemeinsamen Standardwerten. Im Quellcheckout verwendet Symfony das Verzeichnis `var/` für Datenbank und Backups. Für persönliche Einstellungen verwende `.env.local`. Bereits gesetzte Prozessvariablen haben Vorrang. Der Produktionscontainer setzt `APP_ENV=prod` und speichert seine Daten unter `/data`. [Symfony-Konfiguration](https://symfony.com/doc/7.4/configuration.html)
+
+Docker Compose liest die Standarddatei `.env` beim Auflösen von `compose.yaml`. Für lokale Compose-Overrides aus einer zusätzlichen Datei starte beispielsweise `docker compose --env-file .env --env-file .env.local up --build -d --wait`. Das Image enthält nur die versionierten Standardwerte.
 
 `APP_SECRET`, die Mercure-Publisher- und Subscriber-Schlüssel sowie der Bootstrap-Token werden als Secretdateien oder über das geschützte Runtime-Environment eingespielt.
 

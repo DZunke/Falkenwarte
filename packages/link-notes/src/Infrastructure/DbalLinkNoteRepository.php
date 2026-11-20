@@ -31,8 +31,15 @@ final readonly class DbalLinkNoteRepository implements LinkNoteRepository
         return false === $row ? null : $this->view($row);
     }
 
-    public function create(string $id, string $projectId, string $taskId, string $linkId, string $note, array $actor, string $at): array
-    {
+    public function create(
+        string $id,
+        string $projectId,
+        string $taskId,
+        string $linkId,
+        string $note,
+        array $actor,
+        string $at,
+    ): array {
         $this->connection->insert('plg_link_notes_notes', [
             'id' => $id,
             'project_id' => $projectId,
@@ -52,12 +59,19 @@ final readonly class DbalLinkNoteRepository implements LinkNoteRepository
 
     public function update(string $noteId, string $note, array $actor, string $at): array
     {
-        $row = $this->connection->fetchAssociative('SELECT version FROM plg_link_notes_notes WHERE id=? AND deleted_at IS NULL', [$noteId]);
+        $row = $this->connection->fetchAssociative(
+            'SELECT version FROM plg_link_notes_notes WHERE id=? AND deleted_at IS NULL',
+            [$noteId],
+        );
         if (false === $row) {
             throw new \RuntimeException('The link note is no longer editable.');
         }
         $version = (int) $row['version'] + 1;
-        $this->connection->update('plg_link_notes_notes', ['note' => $note, 'updated_at' => $at, 'version' => $version], ['id' => $noteId]);
+        $this->connection->update(
+            'plg_link_notes_notes',
+            ['note' => $note, 'updated_at' => $at, 'version' => $version],
+            ['id' => $noteId],
+        );
         $this->revision($noteId, $version, $note, $actor, $at, 'updated');
 
         return $this->find($noteId) ?? throw new \LogicException('The updated link note could not be read back.');
@@ -65,12 +79,19 @@ final readonly class DbalLinkNoteRepository implements LinkNoteRepository
 
     public function remove(string $noteId, array $actor, string $at): array
     {
-        $row = $this->connection->fetchAssociative('SELECT version FROM plg_link_notes_notes WHERE id=? AND deleted_at IS NULL', [$noteId]);
+        $row = $this->connection->fetchAssociative(
+            'SELECT version FROM plg_link_notes_notes WHERE id=? AND deleted_at IS NULL',
+            [$noteId],
+        );
         if (false === $row) {
             throw new \RuntimeException('The link note is already removed.');
         }
         $version = (int) $row['version'] + 1;
-        $this->connection->update('plg_link_notes_notes', ['deleted_at' => $at, 'updated_at' => $at, 'version' => $version], ['id' => $noteId]);
+        $this->connection->update(
+            'plg_link_notes_notes',
+            ['deleted_at' => $at, 'updated_at' => $at, 'version' => $version],
+            ['id' => $noteId],
+        );
         $this->revision($noteId, $version, null, $actor, $at, 'removed');
 
         return $this->find($noteId) ?? throw new \LogicException('The removed link note could not be read back.');
@@ -89,7 +110,21 @@ final readonly class DbalLinkNoteRepository implements LinkNoteRepository
                 continue;
             }
             $this->connection->executeStatement(
-                'INSERT INTO plg_link_notes_link_projection(task_id, project_id, link_id, collection_id, registered_at, event_id) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(task_id, link_id) DO UPDATE SET project_id=excluded.project_id, collection_id=excluded.collection_id, event_id=excluded.event_id',
+                <<<'SQL'
+                    INSERT INTO plg_link_notes_link_projection (
+                        task_id,
+                        project_id,
+                        link_id,
+                        collection_id,
+                        registered_at,
+                        event_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(task_id, link_id) DO UPDATE SET
+                        project_id = excluded.project_id,
+                        collection_id = excluded.collection_id,
+                        event_id = excluded.event_id
+                    SQL,
                 [$taskId, $projectId, $link['id'], $collectionId, $link['registered_at'] ?? $at, $eventId],
             );
         }
@@ -132,8 +167,14 @@ final readonly class DbalLinkNoteRepository implements LinkNoteRepository
         return $bytes;
     }
 
-    private function revision(string $noteId, int $version, ?string $note, array $actor, string $at, string $change): void
-    {
+    private function revision(
+        string $noteId,
+        int $version,
+        ?string $note,
+        array $actor,
+        string $at,
+        string $change,
+    ): void {
         $this->connection->insert('plg_link_notes_revisions', [
             'id' => Uuid::v7()->toRfc4122(),
             'note_id' => $noteId,

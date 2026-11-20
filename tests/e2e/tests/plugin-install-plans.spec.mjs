@@ -65,6 +65,8 @@ test('Plugin-Pläne lassen sich in der Oberfläche erstellen, prüfen, zurückne
     reason: 'Der gespeicherte Planlauf prüft die Sperre aktiver Fähigkeiten.',
   }, { version: linkNotes.version });
   expect(drain.response.status(), JSON.stringify(drain.data)).toBe(202);
+  expect(drain.data.action_url).toBe(`${ownerApi.apiPrefix}/actions/${drain.data.action_id}`);
+  await ownerApi.waitForSucceededAction(drain.data.action_id, 'Der Linknotizen-Drain muss abgeschlossen sein, bevor das Plugin deaktiviert wird.');
   linkNotes = await readPlugin(ownerApi, LINK_NOTES, 'disabled', 'Linknotizen müssen vor der Entfernung sicher deaktiviert sein.');
   const deactivate = await ownerApi.post(`/plugins/${LINK_NOTES}/deactivate`, {
     reason: 'Der gespeicherte Planlauf stellt den ursprünglichen sicheren Zustand wieder her.',

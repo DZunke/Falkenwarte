@@ -47,6 +47,22 @@ export class OwnerApi {
     return this.send('GET', route, undefined, options);
   }
 
+  async waitForSucceededAction(actionId, message = 'The asynchronous action should succeed.') {
+    let action;
+    await expect.poll(async () => {
+      const result = await this.get(`/actions/${actionId}`);
+      if (result.response.status() !== 200) {
+        return false;
+      }
+      action = result.data;
+
+      return action.status === 'succeeded';
+    }, { timeout: 30_000, message }).toBe(true);
+    expect(action).toMatchObject({ id: actionId, status: 'succeeded' });
+
+    return action;
+  }
+
   post(route, body, options = {}) {
     return this.send('POST', route, body, { ...options, mutation: true });
   }

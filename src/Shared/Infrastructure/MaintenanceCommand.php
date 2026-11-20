@@ -14,13 +14,21 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Messenger\MessageBusInterface;
 
 #[AsCommand(name: 'app:maintenance', description: 'Dauerhafte Commands zustellen und private UI-Updates veröffentlichen')]
 final class MaintenanceCommand extends Command
 {
-    public function __construct(private readonly DbalStoreAccess $store, private readonly MessageBusInterface $bus, private readonly Live $live, private readonly RunHandler $runs, private readonly PluginEventDispatcher $pluginEvents, private readonly PluginHandler $plugins)
-    {
+    public function __construct(
+        private readonly DbalStoreAccess $store,
+        private readonly MessageBusInterface $bus,
+        private readonly Live $live,
+        private readonly RunHandler $runs,
+        private readonly PluginEventDispatcher $pluginEvents,
+        private readonly PluginHandler $plugins,
+        private readonly LockFactory $lockFactory,
+    ) {
         parent::__construct();
     }
 
@@ -30,6 +38,22 @@ final class MaintenanceCommand extends Command
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
+    {
+        $lock = $this->lockFactory->createLock('falkenwarte.maintenance', ttl: null);
+        if (!$lock->acquire()) {
+            $output->writeln('<error>Maintenance läuft bereits; der zweite Prozess wurde nicht gestartet.</error>');
+
+            return Command::FAILURE;
+        }
+
+        try {
+            return $this->runMaintenance($input, $output);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function runMaintenance(InputInterface $input, OutputInterface $output): int
     {
         $db = $this->store->db();
         $nextPublish = 0;

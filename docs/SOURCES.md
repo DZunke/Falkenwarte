@@ -35,6 +35,10 @@ Der tatsächlich benötigte Satz wird aus dem Symfony-Skeleton ergänzt. Für da
 
 Benötigte PHP-Funktionen werden im Image und über Composer-Plattformanforderungen überprüft, insbesondere PDO/SQLite, Fileinfo und die für geordneten Worker-Shutdown verwendete PCNTL-Erweiterung. Die konkrete Erweiterungsliste folgt dem aufgelösten Lockfile; sie wird nicht aus dem Namen des Basisimages abgeleitet.
 
+Im Checkout starten HTTP, Console und Worker über Symfony Runtime und Dotenv. Der Servicecontainer verbindet die Application-Ports mit ihren Infrastrukturadaptern und sammelt die Handler für HTTP und MCP. Die Paketkonfiguration liegt unter `config/packages/`. Mit `php bin/console debug:container --tag=app.operation_handler` lassen sich die registrierten Handler prüfen. Die Standardwerte und ihre Überschreibung beschreibt das [Betriebshandbuch](OPERATIONS.md).
+
+Symfony Security authentifiziert technische Principals am MCP-Endpunkt. Die Owner-Anmeldung verwendet den Symfony PasswordHasher und speichert Sitzungen mit ihren CSRF-Tokens in SQLite. Serializer dekodiert JSON für die anschließende Prüfung gegen den OpenAPI-Vertrag. Symfony Cache hält das aufbereitete OpenAPI-Dokument vor. Symfony Workflow ermittelt die aus der aktuellen Stufe erreichbaren Übergänge anhand der gespeicherten Definitionsversion. Messenger stellt dauerhafte Aufträge zu, die T3- und Decisions-Adapter verwenden getrennte Symfony-HTTP-Clients.
+
 ### Composer-Regeln für diese Auswahl
 
 - `minimum-stability` bleibt `stable`; notwendige Beta-Pakete werden einzeln durch ihre exakte Version zugelassen. Kein globales `dev` als Workaround.

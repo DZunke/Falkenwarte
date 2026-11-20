@@ -11,16 +11,24 @@ use Mcp\Client;
 use Mcp\Client\Transport\HttpTransport;
 use Mcp\Schema\Content\TextContent;
 use Mcp\Schema\Enum\ProtocolVersion;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpClient\Psr18Client;
-use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /** A deliberately small client for the T3 MCP profile selected by the concept. */
+#[AsAlias(AgentExecutionBridge::class)]
+#[AsAlias(AgentCatalogMcpClient::class)]
 final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
 {
     public const PROTOCOL_VERSION = '2025-06-18';
 
-    public function __construct(private readonly HttpClientInterface $httpClient, private readonly string $appVersion)
-    {
+    public function __construct(
+        #[Autowire(service: 'psr18.t3.client')]
+        private readonly Psr18Client $httpClient,
+        private readonly string $appVersion,
+        #[Autowire('%kernel.environment%')]
+        private readonly string $appEnv,
+    ) {
     }
 
     /** @param array<string, mixed> $connection @return array<string, mixed> */
@@ -161,7 +169,6 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         if (!str_starts_with($baseUrl, 'https://') && !$this->allowsTestMock($baseUrl)) {
             throw new T3BridgeException('Die T3-Verbindung benötigt eine kanonische HTTPS-Adresse.');
         }
-        $psr18 = new Psr18Client($this->httpClient);
         $client = Client::builder()
             ->setClientInfo('falkenwarte', $this->appVersion)
             ->setProtocolVersion(ProtocolVersion::V2025_06_18)
@@ -170,7 +177,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
             ->setRequestTimeout(15)
             ->setMaxRetries(0)
             ->build();
-        $transport = new HttpTransport($baseUrl.'/mcp', ['Authorization' => 'Bearer '.$token], $psr18, $psr18, $psr18);
+        $transport = new HttpTransport($baseUrl.'/mcp', ['Authorization' => 'Bearer '.$token], $this->httpClient, $this->httpClient, $this->httpClient);
         try {
             $client->connect($transport);
             if (self::PROTOCOL_VERSION !== $client->getProtocolVersion()?->value) {
@@ -231,7 +238,7 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     {
         $host = parse_url($url, PHP_URL_HOST);
 
-        return 'test' === getenv('APP_ENV') && 'http' === parse_url($url, PHP_URL_SCHEME) && 't3-mock' === $host;
+        return 'test' === $this->appEnv && 'http' === parse_url($url, PHP_URL_SCHEME) && 't3-mock' === $host;
     }
 
     /** @param mixed $providers @return list<array{provider_instance_id: string, display_name: ?string, available: bool}> */

@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace App\Extensions\Application;
 
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
 use Falkenwarte\LinkNotes\Application\LinkNoteRepository;
 
-final class PluginHandler
+final class PluginHandler implements OperationHandler
 {
     private const LINK_NOTES_ID = 'falkenwarte.link-notes';
 
@@ -87,6 +88,7 @@ final class PluginHandler
         }
 
         if ('plugin.drain' === $kind && 'draining' === $plugin['state']) {
+            $previous = $plugin;
             $activeWork = $this->activeWorkCounts($pluginId);
             $plugin['active_run_count'] = $activeWork['runs'];
             $plugin['pending_job_count'] = $activeWork['jobs'];
@@ -97,7 +99,9 @@ final class PluginHandler
                 $plugin['last_safe_state'] = 'disabled';
             }
 
-            $this->store->save('plugins', $plugin, 'PluginActivationChanged');
+            if ($previous !== $plugin) {
+                $this->store->save('plugins', $plugin, 'PluginActivationChanged');
+            }
         }
     }
 
@@ -855,10 +859,25 @@ final class PluginHandler
 
     private function activeWorkCounts(string $pluginId): array
     {
-        $runs = array_filter($this->store->all('runs'), static fn (array $run): bool => (($run['plugin_id'] ?? null) === $pluginId || ($run['snapshot']['bridge_plugin_id'] ?? null) === $pluginId) && !in_array($run['state'] ?? null, ['succeeded', 'failed', 'cancelled'], true));
-        $external = array_filter($this->store->all('recovery_entries'), static fn (array $entry): bool => ($entry['bridge_plugin_id'] ?? null) === $pluginId && !in_array($entry['status'] ?? null, ['stopped', 'resolved'], true) && in_array($entry['entry_kind'] ?? null, ['unlisted_external_activity', 'registered_external_start'], true));
+        $runs = array_filter(
+            $this->store->all('runs'),
+            static fn (array $run): bool => (
+                ($run['plugin_id'] ?? null) === $pluginId
+                || ($run['snapshot']['bridge_plugin_id'] ?? null) === $pluginId
+            ) && !in_array($run['state'] ?? null, ['succeeded', 'failed', 'cancelled'], true),
+        );
+        $external = array_filter(
+            $this->store->all('recovery_entries'),
+            static fn (array $entry): bool => ($entry['bridge_plugin_id'] ?? null) === $pluginId
+                && !in_array($entry['status'] ?? null, ['stopped', 'resolved'], true)
+                && in_array($entry['entry_kind'] ?? null, ['unlisted_external_activity', 'registered_external_start'], true),
+        );
 
-        return ['runs' => count($runs), 'jobs' => $this->extensions->pendingWorkCount($pluginId), 'external' => count($external)];
+        return [
+            'runs' => count($runs),
+            'jobs' => $this->extensions->pendingWorkCount($pluginId),
+            'external' => count($external),
+        ];
     }
 
     private function knownPlugin(string $pluginId): bool

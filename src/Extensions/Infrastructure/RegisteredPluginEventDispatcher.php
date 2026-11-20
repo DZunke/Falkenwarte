@@ -8,15 +8,18 @@ use App\Extensions\Application\PluginEventDispatcher;
 use App\Extensions\Application\PluginEventSubscriber;
 use App\Extensions\Application\PluginRegistry;
 use App\Shared\Infrastructure\DbalStoreAccess;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
+use Symfony\Component\DependencyInjection\Attribute\AutowireIterator;
 
 /** Dispatches declared durable events to package-owned idempotent subscribers. */
+#[AsAlias(PluginEventDispatcher::class)]
 final readonly class RegisteredPluginEventDispatcher implements PluginEventDispatcher
 {
     /** @param iterable<PluginEventSubscriber> $subscribers */
     public function __construct(
         private DbalStoreAccess $store,
         private PluginRegistry $registry,
-        private iterable $subscribers,
+        #[AutowireIterator('app.plugin_event_subscriber')] private iterable $subscribers,
     ) {
     }
 

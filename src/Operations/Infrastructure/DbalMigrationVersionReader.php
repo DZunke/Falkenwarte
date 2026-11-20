@@ -6,7 +6,9 @@ namespace App\Operations\Infrastructure;
 
 use App\Operations\Application\MigrationVersionReader;
 use Doctrine\DBAL\Connection;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+#[AsAlias]
 final readonly class DbalMigrationVersionReader implements MigrationVersionReader
 {
     public function __construct(private Connection $connection)

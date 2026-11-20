@@ -6,11 +6,12 @@ namespace App\Metrics\Application;
 
 use App\Metrics\Domain\MeasurementWindow;
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
 use App\WorkManagement\Application\AttentionLabelReader;
 
-final class MetricsHandler
+final class MetricsHandler implements OperationHandler
 {
     private const ACTIVE_RUN_STATES = ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'cancel_requested', 'result_reported', 'verifying'];
 
@@ -41,7 +42,13 @@ final class MetricsHandler
 
         $computedAt = $this->store->now();
         $projects = $this->store->all('projects');
-        $sourceEvents = array_values(array_filter($this->store->all('events'), static fn (array $event): bool => !str_starts_with((string) ($event['event_type'] ?? ''), 'MetricsProjection')));
+        $sourceEvents = array_values(array_filter(
+            $this->store->all('events'),
+            static fn (array $event): bool => !str_starts_with(
+                (string) ($event['event_type'] ?? ''),
+                'MetricsProjection',
+            ),
+        ));
         $dataThrough = $this->latestTimestamp($sourceEvents, $computedAt);
 
         foreach ($projects as $project) {
@@ -278,7 +285,12 @@ final class MetricsHandler
                 foreach ($task['human_attention']['reasons'] ?? [] as $reason) {
                     if (is_string($reason)) {
                         $open[$taskId][$reason] = $task['updated_at'] ?? $now;
-                    } elseif (is_array($reason) && isset($reason['code']) && null === ($reason['resolved_at'] ?? null) && 'owner' === ($reason['addressed_to'] ?? $reason['addressee'] ?? 'owner')) {
+                    } elseif (
+                        is_array($reason)
+                        && isset($reason['code'])
+                        && null === ($reason['resolved_at'] ?? null)
+                        && 'owner' === ($reason['addressed_to'] ?? $reason['addressee'] ?? 'owner')
+                    ) {
                         $open[$taskId][$reason['code']] = $reason['created_at'] ?? $now;
                     }
                 }
@@ -293,24 +305,56 @@ final class MetricsHandler
                     'run_failed' => 'failure',
                     default => 'classification',
                 };
-                $items[] = ['reason_code' => $code] + $this->attention($kind, $projectId, 'task', $task, $label['name'] ?? 'Entscheidung erforderlich', $label['description'] ?? 'Für dieses Ticket ist eine Entscheidung offen.', $since);
+                $items[] = ['reason_code' => $code] + $this->attention(
+                    $kind,
+                    $projectId,
+                    'task',
+                    $task,
+                    $label['name'] ?? 'Entscheidung erforderlich',
+                    $label['description'] ?? 'Für dieses Ticket ist eine Entscheidung offen.',
+                    $since,
+                );
             }
             $intake = $intakes[$taskId] ?? [];
             $intakeState = $intake['outcome'] ?? $intake['status'] ?? $task['intake_outcome'] ?? $task['intake_status'] ?? null;
             if (in_array($intakeState, ['needs_information', 'waiting_for_requester'], true)) {
-                $items[] = $this->attention('intake_information', $projectId, 'task', $task, 'Rückfrage an Agent', $intake['missing_fields'][0]['question'] ?? 'Ergänzende Angaben werden erwartet.', $intake['updated_at'] ?? $task['updated_at'] ?? $now);
+                $items[] = $this->attention(
+                    'intake_information',
+                    $projectId,
+                    'task',
+                    $task,
+                    'Rückfrage an Agent',
+                    $intake['missing_fields'][0]['question'] ?? 'Ergänzende Angaben werden erwartet.',
+                    $intake['updated_at'] ?? $task['updated_at'] ?? $now,
+                );
             }
         }
 
         if ($includeGlobal) {
             foreach ($this->store->all('connections') as $connection) {
                 if (in_array($connection['health'] ?? null, ['degraded', 'unreachable', 'incompatible'], true)) {
-                    $items[] = $this->attention('auth', null, 'connection', $connection, $connection['name'] ?? 'T3-Verbindung prüfen', $connection['diagnostic'] ?? 'Die Verbindung meldet einen Fehlerzustand.', $connection['updated_at'] ?? $now);
+                    $items[] = $this->attention(
+                        'auth',
+                        null,
+                        'connection',
+                        $connection,
+                        $connection['name'] ?? 'T3-Verbindung prüfen',
+                        $connection['diagnostic'] ?? 'Die Verbindung meldet einen Fehlerzustand.',
+                        $connection['updated_at'] ?? $now,
+                    );
                 }
             }
             foreach ($this->store->all('plugins') as $plugin) {
                 if (($plugin['state'] ?? null) === 'draining') {
-                    $items[] = $this->attention('plugin_drain', null, 'plugin', $plugin, 'Plugin-Deaktivierung läuft', 'Aktive Beiträge und Daten werden weiterhin beobachtet.', $plugin['updated_at'] ?? $now);
+                    $items[] = $this->attention(
+                        'plugin_drain',
+                        null,
+                        'plugin',
+                        $plugin,
+                        'Plugin-Deaktivierung läuft',
+                        'Aktive Beiträge und Daten werden weiterhin beobachtet.',
+                        $plugin['updated_at'] ?? $now,
+                    );
                 }
             }
         }
@@ -461,36 +505,181 @@ final class MetricsHandler
         $routeCorrectionCount = $this->countRoutingCorrections($events, $window);
         $runOutcomes = $this->runOutcomes($events, $window);
         $blockedDurations = $this->durationSamples($events, 'task', 'blocked', static fn (mixed $value): bool => true === $value, $tasks, $window, $computedAt);
-        $waitingDurations = $this->durationSamples($events, 'intake', 'waiting_for', static fn (mixed $value): bool => in_array($value, ['requester', 'owner'], true), $this->forProjects('intakes', $projectIds), $window, $computedAt);
+        $waitingDurations = $this->durationSamples(
+            $events,
+            'intake',
+            'waiting_for',
+            static fn (mixed $value): bool => in_array($value, ['requester', 'owner'], true),
+            $this->forProjects('intakes', $projectIds),
+            $window,
+            $computedAt,
+        );
 
         $eligibleRunOutcomes = $runOutcomes['succeeded'] + $runOutcomes['failed'];
         $successRate = 0 === $eligibleRunOutcomes ? null : $runOutcomes['succeeded'] / $eligibleRunOutcomes;
 
         return [
-            $this->metric('open_tasks', 'Offene Tickets', $open, 'count', count($tasks)),
-            $this->metric('throughput', 'Abgeschlossene Tickets', $completed['count'], 'count', $completed['count'], 'locally_observed'),
-            $this->metric('active_runs', 'Laufende T3-Aufträge', $active, 'count', count($runs)),
-            $this->metric('human_attention', 'Menschliche Entscheidungen offen', $humanAttention, 'count', $humanAttention),
-            $this->metric('waiting_for_requester', 'Rückfragen an Agents', $requesterQuestions, 'count', $requesterQuestions),
-            $this->metric('intake_ready', 'Eingänge fachlich eingeordnet', $intakeOutcomes['ready'], 'count', $intakeOutcomes['ready'], 'locally_observed'),
-            $this->metric('intake_needs_information', 'Eingänge mit Rückfrage', $intakeOutcomes['needs_information'], 'count', $intakeOutcomes['needs_information'], 'locally_observed'),
-            $this->metric('classification_records', 'Klassifikationen erfasst', $classificationCount, 'count', $classificationCount, 'locally_observed'),
-            $this->metric('routing_corrections', 'Korrigierte Routen', $routeCorrectionCount, 'count', $routeCorrectionCount, 'locally_observed'),
-            $this->metric('run_success_rate', 'Erfolgsquote abgeschlossener Runs', $successRate, 'ratio', $eligibleRunOutcomes, 'locally_observed', 'measured', 0 === $eligibleRunOutcomes ? 'Für den gewählten Zeitraum liegen keine abgeschlossenen Runs mit Ergebnis vor.' : null),
-            $this->metric('run_succeeded', 'Erfolgreich abgeschlossene Runs', $runOutcomes['succeeded'], 'count', $runOutcomes['succeeded'], 'locally_observed'),
-            $this->metric('run_failed', 'Fehlgeschlagene Runs', $runOutcomes['failed'], 'count', $runOutcomes['failed'], 'locally_observed'),
-            $this->metric('run_cancelled', 'Abgebrochene Runs', $runOutcomes['cancelled'], 'count', $runOutcomes['cancelled'], 'locally_observed'),
-            $this->metric('lead_time_seconds', 'Median Lead-Time bis Abschluss', $this->median($completed['lead']), 'seconds', count($completed['lead'])),
-            $this->metric('cycle_time_seconds', 'Median Cycle-Time ab Arbeitsbeginn', $this->median($completed['cycle']), 'seconds', count($completed['cycle'])),
-            $this->metric('blocked_time_seconds', 'Median Blockadezeit', $this->median($blockedDurations), 'seconds', count($blockedDurations), 'derived', [] === $blockedDurations ? 'unavailable' : 'estimated'),
-            $this->metric('waiting_time_seconds', 'Median Wartezeit auf Antwort oder Entscheidung', $this->median($waitingDurations), 'seconds', count($waitingDurations), 'derived', [] === $waitingDurations ? 'unavailable' : 'estimated'),
-            $this->metric('provider_cost', 'Anbieterkosten', null, 'currency', 0, 'provider_reported', 'unavailable', 'Es liegen keine verifizierten Anbieterabrechnungsdaten vor; Kosten bleiben unbekannt.'),
+            $this->metric(
+                key: 'open_tasks',
+                label: 'Offene Tickets',
+                value: $open,
+                unit: 'count',
+                sampleSize: count($tasks),
+            ),
+            $this->metric(
+                key: 'throughput',
+                label: 'Abgeschlossene Tickets',
+                value: $completed['count'],
+                unit: 'count',
+                sampleSize: $completed['count'],
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'active_runs',
+                label: 'Laufende T3-Aufträge',
+                value: $active,
+                unit: 'count',
+                sampleSize: count($runs),
+            ),
+            $this->metric(
+                key: 'human_attention',
+                label: 'Menschliche Entscheidungen offen',
+                value: $humanAttention,
+                unit: 'count',
+                sampleSize: $humanAttention,
+            ),
+            $this->metric(
+                key: 'waiting_for_requester',
+                label: 'Rückfragen an Agents',
+                value: $requesterQuestions,
+                unit: 'count',
+                sampleSize: $requesterQuestions,
+            ),
+            $this->metric(
+                key: 'intake_ready',
+                label: 'Eingänge fachlich eingeordnet',
+                value: $intakeOutcomes['ready'],
+                unit: 'count',
+                sampleSize: $intakeOutcomes['ready'],
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'intake_needs_information',
+                label: 'Eingänge mit Rückfrage',
+                value: $intakeOutcomes['needs_information'],
+                unit: 'count',
+                sampleSize: $intakeOutcomes['needs_information'],
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'classification_records',
+                label: 'Klassifikationen erfasst',
+                value: $classificationCount,
+                unit: 'count',
+                sampleSize: $classificationCount,
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'routing_corrections',
+                label: 'Korrigierte Routen',
+                value: $routeCorrectionCount,
+                unit: 'count',
+                sampleSize: $routeCorrectionCount,
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'run_success_rate',
+                label: 'Erfolgsquote abgeschlossener Runs',
+                value: $successRate,
+                unit: 'ratio',
+                sampleSize: $eligibleRunOutcomes,
+                provenance: 'locally_observed',
+                reason: 0 === $eligibleRunOutcomes ? 'Für den gewählten Zeitraum liegen keine abgeschlossenen Runs mit Ergebnis vor.' : null,
+            ),
+            $this->metric(
+                key: 'run_succeeded',
+                label: 'Erfolgreich abgeschlossene Runs',
+                value: $runOutcomes['succeeded'],
+                unit: 'count',
+                sampleSize: $runOutcomes['succeeded'],
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'run_failed',
+                label: 'Fehlgeschlagene Runs',
+                value: $runOutcomes['failed'],
+                unit: 'count',
+                sampleSize: $runOutcomes['failed'],
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'run_cancelled',
+                label: 'Abgebrochene Runs',
+                value: $runOutcomes['cancelled'],
+                unit: 'count',
+                sampleSize: $runOutcomes['cancelled'],
+                provenance: 'locally_observed',
+            ),
+            $this->metric(
+                key: 'lead_time_seconds',
+                label: 'Median Lead-Time bis Abschluss',
+                value: $this->median($completed['lead']),
+                unit: 'seconds',
+                sampleSize: count($completed['lead']),
+            ),
+            $this->metric(
+                key: 'cycle_time_seconds',
+                label: 'Median Cycle-Time ab Arbeitsbeginn',
+                value: $this->median($completed['cycle']),
+                unit: 'seconds',
+                sampleSize: count($completed['cycle']),
+            ),
+            $this->metric(
+                key: 'blocked_time_seconds',
+                label: 'Median Blockadezeit',
+                value: $this->median($blockedDurations),
+                unit: 'seconds',
+                sampleSize: count($blockedDurations),
+                quality: [] === $blockedDurations ? 'unavailable' : 'estimated',
+            ),
+            $this->metric(
+                key: 'waiting_time_seconds',
+                label: 'Median Wartezeit auf Antwort oder Entscheidung',
+                value: $this->median($waitingDurations),
+                unit: 'seconds',
+                sampleSize: count($waitingDurations),
+                quality: [] === $waitingDurations ? 'unavailable' : 'estimated',
+            ),
+            $this->metric(
+                key: 'provider_cost',
+                label: 'Anbieterkosten',
+                value: null,
+                unit: 'currency',
+                sampleSize: 0,
+                provenance: 'provider_reported',
+                quality: 'unavailable',
+                reason: 'Es liegen keine verifizierten Anbieterabrechnungsdaten vor; Kosten bleiben unbekannt.',
+            ),
         ];
     }
 
     private function series(array $events, MeasurementWindow $window, string $grain, ?string $projectId, array $tasks, array $runs, array $projectIds): array
     {
-        $seriesKeys = ['throughput', 'intake_ready', 'intake_needs_information', 'classification_records', 'routing_corrections', 'run_success_rate', 'run_succeeded', 'run_failed', 'run_cancelled', 'lead_time_seconds', 'cycle_time_seconds', 'blocked_time_seconds', 'waiting_time_seconds'];
+        $seriesKeys = [
+            'throughput',
+            'intake_ready',
+            'intake_needs_information',
+            'classification_records',
+            'routing_corrections',
+            'run_success_rate',
+            'run_succeeded',
+            'run_failed',
+            'run_cancelled',
+            'lead_time_seconds',
+            'cycle_time_seconds',
+            'blocked_time_seconds',
+            'waiting_time_seconds',
+        ];
         $points = [];
         foreach ($window->buckets($grain) as $bucket) {
             $values = $this->metricValues($projectId, $events, $this->store->now(), $tasks, $runs, $projectIds, $bucket);
@@ -732,8 +921,16 @@ final class MetricsHandler
         return 1 === count($values) % 2 ? (float) $values[$middle] : ((float) $values[$middle - 1] + (float) $values[$middle]) / 2;
     }
 
-    private function metric(string $key, string $label, float|int|null $value, string $unit, int $sampleSize, string $provenance = 'derived', string $quality = 'measured', ?string $reason = null): array
-    {
+    private function metric(
+        string $key,
+        string $label,
+        float|int|null $value,
+        string $unit,
+        int $sampleSize,
+        string $provenance = 'derived',
+        string $quality = 'measured',
+        ?string $reason = null,
+    ): array {
         return [
             'key' => $key,
             'label' => $label,

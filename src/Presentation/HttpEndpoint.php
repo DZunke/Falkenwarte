@@ -9,17 +9,32 @@ use App\Live\Infrastructure\Live;
 use App\Operations\Application\JournalHandler;
 use App\Shared\Application\Actor;
 use App\Shared\Domain\Problem;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\ResponseHeaderBag;
+use Symfony\Component\HttpKernel\Attribute\AsController;
+use Symfony\Component\Serializer\Encoder\DecoderInterface;
+use Symfony\Component\Serializer\Encoder\JsonDecode;
+use Symfony\Component\Serializer\Exception\NotEncodableValueException;
 
+#[AsController]
 final readonly class HttpEndpoint
 {
-    public function __construct(private Access $access, private Gateway $gateway, private Contract $contract, private Live $live, private McpEndpoint $mcp, private JournalHandler $journal)
-    {
+    public function __construct(
+        private Access $access,
+        private Gateway $gateway,
+        private Contract $contract,
+        private Live $live,
+        private McpEndpoint $mcp,
+        private JournalHandler $journal,
+        private DecoderInterface $serializer,
+        #[Autowire('%kernel.environment%')]
+        private string $environment,
+    ) {
     }
 
     public function health(): Response
@@ -71,15 +86,22 @@ final readonly class HttpEndpoint
                     throw new Problem(413, 'payload_too_large', 'Die Eingabe ist zu groß.');
                 }
                 try {
-                    $wire = json_decode($request->getContent(), false, 128, JSON_THROW_ON_ERROR);
-                } catch (\JsonException) {
+                    $wire = $this->serializer->decode($request->getContent(), 'json', [
+                        JsonDecode::ASSOCIATIVE => false,
+                        JsonDecode::RECURSION_DEPTH => 128,
+                        JsonDecode::OPTIONS => JSON_THROW_ON_ERROR,
+                    ]);
+                } catch (NotEncodableValueException) {
                     throw new Problem(400, 'invalid_json', 'Ungültiges JSON.');
                 }
             }
             if ($schema) {
                 $this->contract->validate($wire, $schema);
             }
-            $body = json_decode(json_encode($wire, JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
+            $body = $this->toArray($wire);
+            if (!is_array($body)) {
+                $body = [];
+            }
             if (in_array($name, ['bootstrap_get', 'owner_setup', 'session_get', 'session_create', 'session_delete'], true)) {
                 $data = $this->access->handleSession($name, $request, $body, $actor);
             } else {
@@ -87,7 +109,7 @@ final readonly class HttpEndpoint
                 if ($actor->owner && !$request->isMethodSafe()) {
                     $this->access->csrf($request);
                 }
-                $failpoint = 'test' === getenv('APP_ENV') && 'before_commit' === $request->headers->get('X-Test-Failpoint');
+                $failpoint = 'test' === $this->environment && 'before_commit' === $request->headers->get('X-Test-Failpoint');
                 $data = $this->gateway->invoke($name, $params, $body, $actor, $request->headers->get('Idempotency-Key'), $request->headers->get('If-Match'), $failpoint);
             }
             $status = $this->contract->status($op, $data);
@@ -127,5 +149,17 @@ final readonly class HttpEndpoint
 
             return new JsonResponse($details, 500, ['Content-Type' => 'application/problem+json', 'Cache-Control' => 'no-store']);
         }
+    }
+
+    private function toArray(mixed $value): mixed
+    {
+        if ($value instanceof \stdClass) {
+            $value = get_object_vars($value);
+        }
+        if (is_array($value)) {
+            return array_map($this->toArray(...), $value);
+        }
+
+        return $value;
     }
 }

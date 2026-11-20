@@ -6,7 +6,9 @@ namespace App\Access\Infrastructure;
 
 use App\Access\Application\AccessPersistence;
 use Doctrine\DBAL\Connection;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+#[AsAlias(AccessPersistence::class)]
 final readonly class DbalAccessPersistence implements AccessPersistence
 {
     public function __construct(private Connection $connection)

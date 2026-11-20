@@ -20,13 +20,10 @@ final class ConsumerRecoveryTest extends TestCase
         $root = dirname(__DIR__, 2);
         $dir = sys_get_temp_dir().'/falkenwarte-worker-'.bin2hex(random_bytes(8));
         mkdir($dir, 0700);
-        $previousDb = getenv('FALKENWARTE_DB');
-        $previousServer = $_SERVER['FALKENWARTE_DB'] ?? null;
-        $previousEnv = $_ENV['FALKENWARTE_DB'] ?? null;
-        $_SERVER['FALKENWARTE_DB'] = $_ENV['FALKENWARTE_DB'] = $dir.'/worker.sqlite';
-        putenv('FALKENWARTE_DB='.$dir.'/worker.sqlite');
+        $previousEnvironmentValue = $_ENV['FALKENWARTE_DB'] ?? null;
+        $_ENV['FALKENWARTE_DB'] = $dir.'/worker.sqlite';
         $env = ['APP_ENV' => 'test', 'FALKENWARTE_DB' => $dir.'/worker.sqlite'];
-        $kernel = new Kernel('test', false);
+        $kernel = new Kernel('test', true);
         try {
             $migration = new Process([PHP_BINARY, 'bin/console', 'doctrine:migrations:migrate', '--no-interaction'], $root, $env);
             $migration->mustRun();
@@ -55,14 +52,11 @@ final class ConsumerRecoveryTest extends TestCase
             self::assertSame($state, $store->get('plugins', $plugin));
         } finally {
             $kernel->shutdown();
-            unset($_SERVER['FALKENWARTE_DB'],$_ENV['FALKENWARTE_DB']);
-            if (null !== $previousServer) {
-                $_SERVER['FALKENWARTE_DB'] = $previousServer;
+            if (null === $previousEnvironmentValue) {
+                unset($_ENV['FALKENWARTE_DB']);
+            } else {
+                $_ENV['FALKENWARTE_DB'] = $previousEnvironmentValue;
             }
-            if (null !== $previousEnv) {
-                $_ENV['FALKENWARTE_DB'] = $previousEnv;
-            }
-            putenv(false === $previousDb ? 'FALKENWARTE_DB' : 'FALKENWARTE_DB='.$previousDb);
             (new Filesystem())->remove($dir);
         }
     }

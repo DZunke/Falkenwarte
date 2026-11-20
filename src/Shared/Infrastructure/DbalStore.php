@@ -6,18 +6,28 @@ namespace App\Shared\Infrastructure;
 
 use App\Shared\Application\Actor;
 use App\Shared\Application\Clock;
+use App\Shared\Application\Store;
 use App\Shared\Domain\CustomFieldHistory;
 use App\Shared\Domain\Problem;
 use Doctrine\DBAL\Connection;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\Uid\Uuid;
 
+#[AsAlias(Store::class)]
+#[AsAlias(DbalStoreAccess::class)]
 final class DbalStore implements DbalStoreAccess
 {
     private Actor $actor;
+
     private string $action;
 
-    public function __construct(private readonly Connection $connection, private readonly Clock $clock)
-    {
+    public function __construct(
+        private readonly Connection $connection,
+        private readonly Clock $clock,
+        #[Autowire('%env(APP_SECRET)%')]
+        private readonly string $appSecret,
+    ) {
         $connection->executeStatement('PRAGMA busy_timeout=10000');
         if ('wal' !== strtolower((string) $connection->fetchOne('PRAGMA journal_mode'))) {
             $connection->fetchOne('PRAGMA journal_mode=WAL');
@@ -80,7 +90,9 @@ final class DbalStore implements DbalStoreAccess
     public function find(string $type, string $id): ?array
     {
         $table = $this->table($type);
-        $data = 'records' === $table ? $this->connection->fetchOne('SELECT data FROM records WHERE type=? AND id=?', [$type, $id]) : $this->connection->fetchOne("SELECT data FROM $table WHERE id=?", [$id]);
+        $data = 'records' === $table
+            ? $this->connection->fetchOne('SELECT data FROM records WHERE type=? AND id=?', [$type, $id])
+            : $this->connection->fetchOne("SELECT data FROM $table WHERE id=?", [$id]);
 
         return false === $data ? null : json_decode($data, true, flags: JSON_THROW_ON_ERROR);
     }
@@ -150,7 +162,10 @@ final class DbalStore implements DbalStoreAccess
             $record['updated_at'] = $now;
             $record['allowed_actions'] ??= [];
             $project = 'projects' === $type ? $id : ($record['project_id'] ?? null);
-            $this->connection->executeStatement('INSERT INTO records(type,id,project_id,data) VALUES (?,?,?,?) ON CONFLICT(type,id) DO UPDATE SET project_id=excluded.project_id,data=excluded.data', [$type, $id, $project, json_encode($record, JSON_THROW_ON_ERROR)]);
+            $this->connection->executeStatement(
+                'INSERT INTO records(type,id,project_id,data) VALUES (?,?,?,?) ON CONFLICT(type,id) DO UPDATE SET project_id=excluded.project_id,data=excluded.data',
+                [$type, $id, $project, json_encode($record, JSON_THROW_ON_ERROR)],
+            );
             $this->journal($type, $project, $old, $record, $event, null === $old ? 'created' : 'updated');
 
             return $record;
@@ -182,38 +197,136 @@ final class DbalStore implements DbalStoreAccess
             $changes[] = ['path' => '/'.$key, 'before' => $this->historyValue($old[$key] ?? null), 'after' => $this->historyValue($value)];
         }
         if (isset(self::PUBLIC_TYPES[$type])) {
-            $revision = ['id' => $this->id(), 'resource' => $resource, 'project_id' => $project, 'actor' => $this->actor->ref(), 'action_id' => $this->action, 'correlation_id' => $this->action, 'recorded_at' => $now, 'schema_version' => 1, 'summary' => $event, 'changes' => $changes, 'restorable' => 'tasks' === $type && 'removed' !== $change, 'allowed_actions' => [], '_snapshot' => $snapshot];
+            $revision = [
+                'id' => $this->id(),
+                'resource' => $resource,
+                'project_id' => $project,
+                'actor' => $this->actor->ref(),
+                'action_id' => $this->action,
+                'correlation_id' => $this->action,
+                'recorded_at' => $now,
+                'schema_version' => 1,
+                'summary' => $event,
+                'changes' => $changes,
+                'restorable' => 'tasks' === $type && 'removed' !== $change,
+                'allowed_actions' => [],
+                '_snapshot' => $snapshot,
+            ];
             if ('tasks' === $type && !empty($snapshot['custom_fields'])) {
                 $labels = array_column($this->all('custom_fields', $project), 'label', 'key');
                 $revision['custom_field_values'] = CustomFieldHistory::snapshot($snapshot['custom_fields'], $labels);
             }
             $this->connection->insert('revisions', ['id' => $revision['id'], 'project_id' => $project, 'data' => json_encode($revision, JSON_THROW_ON_ERROR)]);
         }
-        $envelope = ['event_id' => $this->id(), 'kind' => 'actions' === $type ? 'action' : 'domain', 'event_type' => strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $event)), 'schema_version' => 1, 'occurred_at' => $now, 'project_id' => $project, 'actor' => $this->actor->ref(), 'correlation_id' => $this->action, 'causation_id' => null, 'action_id' => $this->action, 'aggregate' => ['type' => $name, 'id' => $record['id'], 'version' => $record['version']], 'aggregate_sequence' => $record['version'], 'data' => ['change' => $change]];
+        $envelope = [
+            'event_id' => $this->id(),
+            'kind' => 'actions' === $type ? 'action' : 'domain',
+            'event_type' => strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $event)),
+            'schema_version' => 1,
+            'occurred_at' => $now,
+            'project_id' => $project,
+            'actor' => $this->actor->ref(),
+            'correlation_id' => $this->action,
+            'causation_id' => null,
+            'action_id' => $this->action,
+            'aggregate' => [
+                'type' => $name,
+                'id' => $record['id'],
+                'version' => $record['version'],
+            ],
+            'aggregate_sequence' => $record['version'],
+            'data' => ['change' => $change],
+        ];
         if (in_array($type, ['tasks', 'runs', 'intakes', 'classifications', 'approvals'], true)) {
-            $keys = array_flip(['task_id', 'run_id', 'status_id', 'status_category', 'priority', 'blocked', 'state', 'external_state', 'outcome', 'waiting_for', 'origin', 'status', 'workflow_label_id', 'routing_rules_version', 'classification_id', 'primary_topic_label_id', 'label_ids', 'assessment_status', 'policy_version']);
+            $keys = array_flip([
+                'task_id',
+                'run_id',
+                'status_id',
+                'status_category',
+                'priority',
+                'blocked',
+                'state',
+                'external_state',
+                'outcome',
+                'waiting_for',
+                'origin',
+                'status',
+                'workflow_label_id',
+                'routing_rules_version',
+                'classification_id',
+                'primary_topic_label_id',
+                'label_ids',
+                'assessment_status',
+                'policy_version',
+            ]);
             $envelope['data']['transition'] = ['before' => array_intersect_key($old ?? [], $keys), 'after' => array_intersect_key($record, $keys)];
         }
         if ('tasks' === $type && $old && ($old['status_id'] ?? null) !== ($record['status_id'] ?? null) && isset($record['status_id'])) {
             $envelope['event_type'] = 'work.task_moved';
-            $envelope['data'] += ['task_id' => $record['id'], 'from_status_id' => $old['status_id'], 'to_status_id' => $record['status_id'], 'from_category' => $old['status_category'], 'to_category' => $record['status_category'], 'board_id' => null];
+            $envelope['data'] += [
+                'task_id' => $record['id'],
+                'from_status_id' => $old['status_id'],
+                'to_status_id' => $record['status_id'],
+                'from_category' => $old['status_category'],
+                'to_category' => $record['status_category'],
+                'board_id' => null,
+            ];
         }
         if ('actions' === $type) {
             $envelope['aggregate'] = null;
             unset($envelope['aggregate_sequence']);
-            $envelope['data'] = ['command_type' => $record['type'], 'target' => ['type' => 'command', 'id' => $record['id']], 'result_resource' => null, 'error_code' => $record['error']['code'] ?? null, 'redacted_message' => $record['status']];
+            $envelope['data'] = [
+                'command_type' => $record['type'],
+                'target' => ['type' => 'command', 'id' => $record['id']],
+                'result_resource' => null,
+                'error_code' => $record['error']['code'] ?? null,
+                'redacted_message' => $record['status'],
+            ];
             if (isset($record['result']['resource_type'],$record['result']['id'])) {
                 $envelope['data']['result_resource'] = ['type' => $record['result']['resource_type'], 'id' => $record['result']['id']];
             }
         }
-        $uiTypes = ['project', 'task', 'board', 'run', 'evidence', 'approval', 'connection', 'agent_profile', 'plugin', 'action', 'label', 'intake', 'classification', 'link_collection', 'decision_policy'];
-        $ui = in_array($name, $uiTypes, true) ? ['event_id' => $envelope['event_id'], 'occurred_at' => $now, 'resource_type' => $name, 'resource_id' => $record['id'], 'project_id' => $project, 'version' => $record['version'], 'action_id' => $this->action, 'change' => $change] : null;
+        $uiTypes = [
+            'project',
+            'task',
+            'board',
+            'run',
+            'evidence',
+            'approval',
+            'connection',
+            'agent_profile',
+            'plugin',
+            'action',
+            'label',
+            'intake',
+            'classification',
+            'link_collection',
+            'decision_policy',
+        ];
+        $ui = in_array($name, $uiTypes, true)
+            ? [
+                'event_id' => $envelope['event_id'],
+                'occurred_at' => $now,
+                'resource_type' => $name,
+                'resource_id' => $record['id'],
+                'project_id' => $project,
+                'version' => $record['version'],
+                'action_id' => $this->action,
+                'change' => $change,
+            ]
+            : null;
         if (($envelope['aggregate']['id'] ?? null) !== null && !Uuid::isValid($envelope['aggregate']['id'])) {
             $envelope['kind'] = 'integration';
             $envelope['aggregate'] = null;
             unset($envelope['aggregate_sequence']);
         }
-        $this->connection->insert('events', ['id' => $envelope['event_id'], 'project_id' => $project, 'data' => json_encode($envelope, JSON_THROW_ON_ERROR), 'change_json' => null === $ui ? null : json_encode($ui, JSON_THROW_ON_ERROR), 'published' => null === $ui ? 1 : 0]);
+        $this->connection->insert('events', [
+            'id' => $envelope['event_id'],
+            'project_id' => $project,
+            'data' => json_encode($envelope, JSON_THROW_ON_ERROR),
+            'change_json' => null === $ui ? null : json_encode($ui, JSON_THROW_ON_ERROR),
+            'published' => null === $ui ? 1 : 0,
+        ]);
     }
 
     public function redact(array $object): array
@@ -232,7 +345,12 @@ final class DbalStore implements DbalStoreAccess
     private function historyValue(mixed $value): array
     {
         if (is_array($value)) {
-            return ['type' => 'structured_reference', 'schema_id' => 'urn:falkenwarte:history:json', 'summary' => count($value).' Einträge', 'sha256' => hash('sha256', json_encode($value, JSON_THROW_ON_ERROR))];
+            return [
+                'type' => 'structured_reference',
+                'schema_id' => 'urn:falkenwarte:history:json',
+                'summary' => count($value).' Einträge',
+                'sha256' => hash('sha256', json_encode($value, JSON_THROW_ON_ERROR)),
+            ];
         }
 
         return ['type' => match (true) {
@@ -285,11 +403,10 @@ final class DbalStore implements DbalStoreAccess
 
     private function key(): string
     {
-        $secret = getenv('APP_SECRET') ?: '';
-        if (strlen($secret) < 32) {
+        if (strlen($this->appSecret) < 32) {
             throw new Problem(503, 'secret_unavailable', 'APP_SECRET mit mindestens 32 Zeichen konfigurieren.');
         }
 
-        return hash('sha256', $secret, true);
+        return hash('sha256', $this->appSecret, true);
     }
 }

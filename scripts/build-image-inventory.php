@@ -3,15 +3,29 @@
 declare(strict_types=1);
 
 $projectRoot = dirname(__DIR__);
-$outputDirectory = $argv[1] ?? '/usr/share/falkenwarte/image-audit';
-$appVersion = trim((string) (getenv('FALKENWARTE_APP_VERSION') ?: @file_get_contents($projectRoot.'/version.txt')));
-$revision = trim((string) (getenv('FALKENWARTE_BUILD_REVISION') ?: 'unknown'));
-$debianSnapshot = trim((string) (getenv('FALKENWARTE_DEBIAN_SNAPSHOT') ?: 'unknown'));
-$baseImage = trim((string) (getenv('FALKENWARTE_FRANKENPHP_IMAGE') ?: ''));
-$sourceDateEpoch = filter_var(getenv('FALKENWARTE_SOURCE_DATE_EPOCH') ?: '0', FILTER_VALIDATE_INT);
+$options = getopt('', ['output:', 'app-version:', 'revision:', 'debian-snapshot:', 'source-date-epoch:', 'frankenphp-image:']);
+$option = static function (string $name, string $default) use ($options): string {
+    $value = $options[$name] ?? $default;
+    if (!is_string($value)) {
+        throw new InvalidArgumentException(sprintf('The --%s option must be provided once with a string value.', $name));
+    }
 
-if (false === $sourceDateEpoch || '' === $appVersion || '' === $baseImage) {
-    throw new RuntimeException('The application version, source date, and base image must be valid.');
+    return $value;
+};
+$versionFile = file_get_contents($projectRoot.'/version.txt');
+if (false === $versionFile) {
+    throw new RuntimeException('The application version file cannot be read.');
+}
+
+$outputDirectory = trim($option('output', '/usr/share/falkenwarte/image-audit'));
+$appVersion = trim($option('app-version', $versionFile));
+$revision = trim($option('revision', 'unknown'));
+$debianSnapshot = trim($option('debian-snapshot', 'unknown'));
+$baseImage = trim($option('frankenphp-image', ''));
+$sourceDateEpoch = filter_var($option('source-date-epoch', '0'), FILTER_VALIDATE_INT);
+
+if (false === $sourceDateEpoch || '' === $outputDirectory || '' === $appVersion || '' === $baseImage) {
+    throw new RuntimeException('The output directory, application version, source date, and base image must be valid.');
 }
 
 /** @param list<string> $command */

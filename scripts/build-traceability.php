@@ -12,8 +12,21 @@ foreach ($acceptanceHeadings as $heading) {
     $slug = strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', false === $transliterated ? $heading[2] : $transliterated), '-'));
     $acceptanceAnchors[$heading[1]] = strtolower($heading[1]).'---'.$slug;
 }
-$resultPath = getenv('FALKENWARTE_ACCEPTANCE_EVIDENCE') ?: $root.'/var/ci-evidence/acceptance.json';
-$verificationPath = getenv('FALKENWARTE_TRACEABILITY_VERIFICATION') ?: $root.'/var/ci-evidence/verification.json';
+$options = getopt('', ['acceptance:', 'verification:']);
+$resultPath = $options['acceptance'] ?? null;
+if (!is_string($resultPath) || '' === $resultPath) {
+    $resultPath = getenv('FALKENWARTE_ACCEPTANCE_EVIDENCE');
+}
+if (!is_string($resultPath) || '' === $resultPath) {
+    $resultPath = $root.'/var/ci-evidence/acceptance.json';
+}
+$verificationPath = $options['verification'] ?? null;
+if (!is_string($verificationPath) || '' === $verificationPath) {
+    $verificationPath = getenv('FALKENWARTE_TRACEABILITY_VERIFICATION');
+}
+if (!is_string($verificationPath) || '' === $verificationPath) {
+    $verificationPath = $root.'/var/ci-evidence/verification.json';
+}
 $results = is_file($resultPath) ? json_decode((string) file_get_contents($resultPath), true, 512, JSON_THROW_ON_ERROR) : [];
 $verification = is_file($verificationPath) ? json_decode((string) file_get_contents($verificationPath), true, 512, JSON_THROW_ON_ERROR) : [];
 $primary = $verification['primary'] ?? [];

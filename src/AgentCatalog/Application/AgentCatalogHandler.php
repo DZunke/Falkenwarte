@@ -9,10 +9,11 @@ use App\AgentCatalog\Domain\ConnectionChangeImpact;
 use App\AgentCatalog\Domain\ProjectBindingRules;
 use App\AgentCatalog\Domain\T3ConnectionRules;
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
 
-final class AgentCatalogHandler
+final class AgentCatalogHandler implements OperationHandler
 {
     public function __construct(
         private readonly Store $store,
@@ -23,6 +24,8 @@ final class AgentCatalogHandler
         private readonly T3ConnectionRules $connectionRules,
         private readonly AgentProfileRules $profileRules,
         private readonly ProjectBindingRules $bindingRules,
+        private readonly bool $allowTestHttpEndpoint,
+        private readonly string $publicOrigin,
     ) {
     }
 
@@ -98,7 +101,7 @@ final class AgentCatalogHandler
             'name' => trim((string) $body['name']),
             'bridge_id' => $bridgeId,
             'bridge_plugin_id' => $bridgePluginId,
-            'canonical_url' => $this->connectionRules->canonicalEndpoint((string) $body['canonical_url'], 'test' === getenv('APP_ENV')),
+            'canonical_url' => $this->connectionRules->canonicalEndpoint((string) $body['canonical_url'], $this->allowTestHttpEndpoint),
             'health' => 'unconfigured',
             'auth_status' => 'missing',
             'auth_epoch' => 0,
@@ -129,7 +132,7 @@ final class AgentCatalogHandler
             $connection['name'] = trim((string) $body['name']);
         }
         if (isset($body['canonical_url'])) {
-            $connection['canonical_url'] = $this->connectionRules->canonicalEndpoint((string) $body['canonical_url'], 'test' === getenv('APP_ENV'));
+            $connection['canonical_url'] = $this->connectionRules->canonicalEndpoint((string) $body['canonical_url'], $this->allowTestHttpEndpoint);
         }
         if ($connection['canonical_url'] !== $previousUrl) {
             $secretRef = $connection['credential_secret_ref'] ?? null;
@@ -219,8 +222,7 @@ final class AgentCatalogHandler
         $actor->requireOwner();
         $connection = $this->catalog->connection($id);
         $resourceUrl = rtrim((string) $connection['canonical_url'], '/').'/mcp';
-        $publicUrl = getenv('FALKENWARTE_PUBLIC_URL') ?: (getenv('FALKENWARTE_PUBLIC_ORIGIN') ?: 'https://localhost:8443');
-        $callback = (string) ($body['redirect_uri'] ?? (rtrim($publicUrl, '/').'/auth/t3/callback'));
+        $callback = (string) ($body['redirect_uri'] ?? (rtrim($this->publicOrigin, '/').'/auth/t3/callback'));
         if (!$this->connectionRules->permitsOAuthCallback($callback)) {
             throw new Problem(422, 'validation_failed', 'Der OAuth-Callback muss eine HTTPS-Adresse oder Loopback-Adresse verwenden.');
         }

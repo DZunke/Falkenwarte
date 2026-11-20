@@ -5,25 +5,51 @@ declare(strict_types=1);
 namespace App\Live\Infrastructure;
 
 use App\Shared\Application\Actor;
+use App\Shared\Application\OperationHandler;
 use App\Shared\Domain\Problem;
 use App\Shared\Infrastructure\DbalStoreAccess;
-use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use Symfony\Component\DependencyInjection\Attribute\AutowireServiceClosure;
 use Symfony\Component\HttpFoundation\Cookie;
-use Symfony\Component\Mercure\Hub;
 use Symfony\Component\Mercure\Jwt\Grant;
-use Symfony\Component\Mercure\Jwt\LcobucciFactory;
-use Symfony\Component\Mercure\Jwt\StaticTokenProvider;
-use Symfony\Component\Mercure\Update;
+use Symfony\Component\Mercure\Jwt\TokenFactoryInterface;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
 
-final class Live
+final class Live implements OperationHandler
 {
-    public function __construct(private readonly DbalStoreAccess $store)
-    {
-    }
+    /** @var \Closure(): TokenFactoryInterface */
+    private readonly \Closure $publisherTokenFactory;
 
-    private function publicUrl(): string
-    {
-        return getenv('MERCURE_PUBLIC_URL') ?: 'https://localhost:8443/.well-known/mercure';
+    /** @var \Closure(): TokenFactoryInterface */
+    private readonly \Closure $subscriberTokenFactory;
+
+    public function __construct(
+        private readonly DbalStoreAccess $store,
+        #[AutowireServiceClosure('mercure.hub.default.publisher.jwt.factory')]
+        \Closure $publisherTokenFactory,
+        #[AutowireServiceClosure('mercure.hub.default.subscriber.jwt.factory')]
+        \Closure $subscriberTokenFactory,
+        #[Autowire(service: 'mercure.client')]
+        private readonly HttpClientInterface $mercureClient,
+        #[Autowire('%falkenwarte.mercure.internal_url%')]
+        private readonly string $internalUrl,
+        #[Autowire('%falkenwarte.mercure.public_url%')]
+        private readonly string $publicUrl,
+        #[Autowire('%falkenwarte.mercure.issuer%')]
+        private readonly string $issuer,
+        #[Autowire('%falkenwarte.mercure.resource_identifier%')]
+        private readonly string $resourceIdentifier,
+        #[Autowire('%env(MERCURE_PUBLISHER_SECRET)%')]
+        private readonly string $publisherSecret,
+        #[Autowire('%env(MERCURE_SUBSCRIBER_SECRET)%')]
+        private readonly string $subscriberSecret,
+        #[Autowire('%falkenwarte.mercure_subscriber_ttl%')]
+        private readonly int $configuredSubscriberTtl,
+        #[Autowire('%kernel.environment%')]
+        private readonly string $environment,
+    ) {
+        $this->publisherTokenFactory = $publisherTokenFactory;
+        $this->subscriberTokenFactory = $subscriberTokenFactory;
     }
 
     private function topic(?string $project): string
@@ -33,7 +59,7 @@ final class Live
 
     private function subscriberTtl(): int
     {
-        return 'test' === getenv('APP_ENV') ? max(60, min(600, (int) (getenv('MERCURE_SUBSCRIBER_TTL') ?: 600))) : 600;
+        return 'test' === $this->environment ? max(60, min(600, $this->configuredSubscriberTtl)) : 600;
     }
 
     public function handles(string $name): bool
@@ -63,7 +89,7 @@ final class Live
         if ('live_config_get' === $name) {
             $cursor = $this->store->db()->fetchOne('SELECT MAX(seq) FROM events');
 
-            return ['public_url' => $this->publicUrl(), 'topics' => $topics, 'ttl' => $this->subscriberTtl(), 'recovery_url' => '/api/v1/events', 'cursor' => null === $cursor ? null : base64_encode((string) $cursor)];
+            return ['public_url' => $this->publicUrl, 'topics' => $topics, 'ttl' => $this->subscriberTtl(), 'recovery_url' => '/api/v1/events', 'cursor' => null === $cursor ? null : base64_encode((string) $cursor)];
         }
         $cursor = isset($p['cursor']) ? base64_decode($p['cursor'], true) : '0';
         if (false === $cursor || !ctype_digit($cursor)) {
@@ -103,24 +129,51 @@ final class Live
         return Cookie::create('__Secure-mercure_access_token', $token, time() + $this->subscriberTtl(), '/.well-known/mercure', null, true, true, false, 'strict');
     }
 
-    private function token(bool $publisher, array $topics, string $sub): string
+    private function token(bool $publisher, array $topics, string $subject): string
     {
-        $secret = getenv($publisher ? 'MERCURE_PUBLISHER_SECRET' : 'MERCURE_SUBSCRIBER_SECRET');
-        if (!$secret) {
+        $secret = $publisher ? $this->publisherSecret : $this->subscriberSecret;
+        if ('' === $secret) {
             throw new Problem(503, 'live_unavailable', 'Die Mercure-Schlüssel fehlen. Änderungen bleiben gespeichert.');
         }
-        $claims = ['iss' => getenv('MERCURE_ISSUER') ?: 'https://localhost:8443', 'aud' => $this->publicUrl(), 'sub' => $sub, 'client_id' => 'falkenwarte'];
 
-        return (new LcobucciFactory($secret, jwtLifetime: $publisher ? 600 : $this->subscriberTtl()))->create([new Grant([$publisher ? 'publish' : 'subscribe'], $topics)], $claims);
+        try {
+            $factory = ($publisher ? $this->publisherTokenFactory : $this->subscriberTokenFactory)();
+
+            return $factory->create(
+                [new Grant([$publisher ? Grant::ACTION_PUBLISH : Grant::ACTION_SUBSCRIBE], $topics)],
+                [
+                    'iss' => $this->issuer,
+                    'aud' => $this->resourceIdentifier,
+                    'sub' => $subject,
+                    'client_id' => 'falkenwarte',
+                    'exp' => new \DateTimeImmutable('+'.($publisher ? 600 : $this->subscriberTtl()).' seconds'),
+                ],
+            );
+        } catch (\Throwable) {
+            throw new Problem(503, 'live_unavailable', 'Die Mercure-Schlüssel sind ungültig. Änderungen bleiben gespeichert.');
+        }
     }
 
     public function publish(int $limit = 100): void
     {
         $rows = $this->store->db()->fetchAllAssociative('SELECT seq,project_id,change_json FROM events WHERE published=0 ORDER BY seq LIMIT '.(int) $limit);
+        if ([] === $rows) {
+            return;
+        }
+        if ('' === $this->publisherSecret) {
+            throw new Problem(503, 'live_unavailable', 'Die Mercure-Schlüssel fehlen. Änderungen bleiben gespeichert.');
+        }
         foreach ($rows as $row) {
             $topics = array_values(array_unique([$this->topic($row['project_id']), $this->topic(null)]));
-            $hub = new Hub(getenv('MERCURE_INTERNAL_URL') ?: $this->publicUrl(), new StaticTokenProvider($this->token(true, $topics, 'outbox')), publicUrl: $this->publicUrl(), httpClient: HttpClient::create(['timeout' => 2, 'max_duration' => 3]));
-            $hub->publish(new Update($topics, $row['change_json'], true));
+            $token = $this->token(true, $topics, 'outbox');
+            $fields = array_map(static fn (string $topic): string => 'topic='.urlencode($topic), $topics);
+            $fields[] = 'data='.urlencode($row['change_json']);
+            $fields[] = 'private=on';
+            $this->mercureClient->request('POST', $this->internalUrl, [
+                'auth_bearer' => $token,
+                'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
+                'body' => implode('&', $fields),
+            ])->getContent();
             $this->store->db()->update('events', ['published' => 1], ['seq' => $row['seq']]);
         }
     }

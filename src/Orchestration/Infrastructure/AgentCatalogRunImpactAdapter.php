@@ -7,7 +7,9 @@ namespace App\Orchestration\Infrastructure;
 use App\AgentCatalog\Application\RunImpactPort;
 use App\AgentCatalog\Domain\ConnectionChangeImpact;
 use App\Shared\Application\Store;
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 
+#[AsAlias(RunImpactPort::class)]
 final class AgentCatalogRunImpactAdapter implements RunImpactPort
 {
     private const ACTIVE_RUN_STATES = ['queued', 'dispatching', 'running', 'waiting_input', 'auth_blocked', 'reconciling', 'cancel_requested', 'result_reported', 'verifying'];
