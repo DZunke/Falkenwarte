@@ -103,33 +103,36 @@ function apiBoardTarget(target) {
   return { board_id: target.board_id, column_id: target.column_id };
 }
 
-async function chooseRole(page, editor, prefix, stageId, phaseNumber, profile) {
+async function chooseRole(page, editor, prefix, stageId, profile) {
   const select = editor.getByTestId('workflow-' + prefix + '-stage-agent-role-' + stageId);
   await selectOption(page, select, profile.name + ' · ' + profile.role);
   await expect(select).toContainText(profile.name);
 }
 
-async function createWorkflowInUi(ownerPage, ownerApi, { project, name, stages, targets }) {
+async function createWorkflowInUi(ownerPage, ownerApi, { project, name, stages, targets, useTwoStageTemplate = false, repairRoute = null }) {
   await ownerPage.goto('/#/workflows');
   await expect(ownerPage.getByRole('heading', { name: 'Workflows', exact: true })).toBeVisible();
   const editor = ownerPage.getByTestId('workflow-editor-create');
   await expect(editor).toBeVisible();
+  if (useTwoStageTemplate) {
+    await editor.getByRole('button', { name: 'Zwei-Phasen-Vorlage verwenden', exact: true }).click();
+  }
   await selectOption(ownerPage, editor.getByLabel('Projekt'), project.name);
   await editor.getByLabel('Workflowname').fill(name);
 
+  const initialStageCount = useTwoStageTemplate ? 2 : 1;
+
   for (let index = 0; index < stages.length; index += 1) {
-    if (index === 2) await editor.getByRole('button', { name: 'Phase hinzufügen', exact: true }).click();
+    if (index >= initialStageCount) await editor.getByRole('button', { name: 'Phase hinzufügen', exact: true }).click();
     const phaseNumber = index + 1;
     const stage = stages[index];
     await editor.getByLabel('Name der Phase ' + phaseNumber).fill(stage.name);
+    if (stage.kind) {
+      await selectOption(ownerPage, editor.getByLabel('Art der Phase').nth(index), stage.kind === 'review' ? 'Reviewphase' : 'Arbeitsphase');
+    }
     if (stage.profile) {
-      const stageId = index === 0 ? 'work' : index === 1 ? 'review' : null;
-      if (stageId) {
-        await chooseRole(ownerPage, editor, 'create', stageId, phaseNumber, stage.profile);
-      } else {
-        const roleSelect = editor.getByLabel('Agentrolle für Phase ' + phaseNumber);
-        await selectOption(ownerPage, roleSelect, stage.profile.name + ' · ' + stage.profile.role);
-      }
+      const roleSelect = editor.getByLabel('Agentrolle für Phase ' + phaseNumber);
+      await selectOption(ownerPage, roleSelect, stage.profile.name + ' · ' + stage.profile.role);
     }
     const instructions = editor.getByLabel('Auftrag für diese Phase').nth(index);
     await instructions.fill(stage.instructions);
@@ -137,7 +140,19 @@ async function createWorkflowInUi(ownerPage, ownerApi, { project, name, stages, 
     await selectOption(ownerPage, boardTarget, targets[stage.boardCategory].option);
   }
 
-  const firstRole = editor.getByTestId('workflow-create-stage-agent-role-work');
+  if (repairRoute) {
+    const stageRows = editor.locator('article[data-testid^="workflow-create-stage-"]');
+    const stageIds = await stageRows.evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid').replace('workflow-create-stage-', '')));
+    const transitionRows = editor.locator('article[data-testid^="workflow-create-transition-"]');
+    const transitionIndex = await transitionRows.count();
+    await editor.getByRole('button', { name: 'Übergang hinzufügen', exact: true }).click();
+    const transitionRow = editor.getByTestId('workflow-create-transition-' + transitionIndex);
+    await selectOption(ownerPage, transitionRow.getByLabel('Von Phase'), stages[repairRoute.fromStageIndex].name + ' · ' + stageIds[repairRoute.fromStageIndex]);
+    await expect(transitionRow.getByLabel('Ergebnis')).toContainText('Änderungen nötig');
+    await expect(transitionRow.getByLabel('Zu Phase')).toContainText(stages[repairRoute.toStageIndex].name);
+  }
+
+  const firstRole = editor.getByLabel('Agentrolle für Phase 1');
   await firstRole.click();
   await expect(ownerPage.getByRole('option', { name: /Projektfremde Rolle/ })).toHaveCount(0);
   await ownerPage.keyboard.press('Escape');
@@ -259,34 +274,38 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
     project,
     name: 'Redaktion Dreiphasenablauf ' + suffix,
     targets,
+    repairRoute: { fromStageIndex: 2, toStageIndex: 1 },
     stages: [
       { name: 'Entwurf', profile: workRole, instructions: workInstructions, boardCategory: 'active' },
       { name: 'Redaktionsprüfung', profile: reviewRole, instructions: reviewInstructions, boardCategory: 'review' },
-      { name: 'Ausgabefreigabe', profile: publishRole, instructions: publishInstructions, boardCategory: 'ready' },
+      { name: 'Ausgabefreigabe', kind: 'review', profile: publishRole, instructions: publishInstructions, boardCategory: 'ready' },
     ],
   });
 
-  expect(workflow).toMatchObject({ project_id: project.id, definition_version: 1, enabled: true });
+  expect(workflow).toMatchObject({ project_id: project.id, preset_id: 'manual', definition_version: 1, enabled: true });
   expect(workflow.stages).toHaveLength(3);
+  const stageIds = workflow.stages.map((stage) => stage.id);
+  expect(new Set(stageIds).size).toBe(3);
   expect(workflow.stages.map((stage) => ({
     id: stage.id,
+    kind: stage.kind,
     name: stage.name,
     agent_profile_id: stage.agent_profile_id,
     instructions: stage.instructions,
     board_target: stage.board_target,
   }))).toEqual([
-    expect.objectContaining({ id: 'work', name: 'Entwurf', agent_profile_id: workRole.id, instructions: workInstructions, board_target: apiBoardTarget(targets.active) }),
-    expect.objectContaining({ id: 'review', name: 'Redaktionsprüfung', agent_profile_id: reviewRole.id, instructions: reviewInstructions, board_target: apiBoardTarget(targets.review) }),
-    expect.objectContaining({ name: 'Ausgabefreigabe', agent_profile_id: publishRole.id, instructions: publishInstructions, board_target: apiBoardTarget(targets.ready) }),
+    expect.objectContaining({ id: stageIds[0], kind: 'agent_run', name: 'Entwurf', agent_profile_id: workRole.id, instructions: workInstructions, board_target: apiBoardTarget(targets.active) }),
+    expect.objectContaining({ id: stageIds[1], kind: 'agent_run', name: 'Redaktionsprüfung', agent_profile_id: reviewRole.id, instructions: reviewInstructions, board_target: apiBoardTarget(targets.review) }),
+    expect.objectContaining({ id: stageIds[2], kind: 'review', name: 'Ausgabefreigabe', agent_profile_id: publishRole.id, instructions: publishInstructions, board_target: apiBoardTarget(targets.ready) }),
   ]);
-  const finalStage = workflow.stages[2];
   expect(workflow.transitions).toEqual(expect.arrayContaining([
-    expect.objectContaining({ from_stage_id: 'work', to_stage_id: 'review', on: 'accepted' }),
-    expect.objectContaining({ from_stage_id: 'review', to_stage_id: finalStage.id, on: 'accepted' }),
+    expect.objectContaining({ from_stage_id: stageIds[0], to_stage_id: stageIds[1], on: 'accepted' }),
+    expect.objectContaining({ from_stage_id: stageIds[1], to_stage_id: stageIds[2], on: 'accepted' }),
+    expect.objectContaining({ from_stage_id: stageIds[2], to_stage_id: stageIds[1], on: 'needs_changes' }),
   ]));
-  const thirdPresetVersion = await ownerApi.get('/workflows/' + workflow.id + '/versions/1');
-  expect(thirdPresetVersion.response.status(), JSON.stringify(thirdPresetVersion.data)).toBe(200);
-  expect(thirdPresetVersion.data.stages.map((stage) => stage.name)).toEqual(['Entwurf', 'Redaktionsprüfung', 'Ausgabefreigabe']);
+  const versionOne = await ownerApi.get('/workflows/' + workflow.id + '/versions/1');
+  expect(versionOne.response.status(), JSON.stringify(versionOne.data)).toBe(200);
+  expect(versionOne.data.stages.map((stage) => stage.name)).toEqual(['Entwurf', 'Redaktionsprüfung', 'Ausgabefreigabe']);
 
   const taskResult = await createReadyTask(ownerApi, project.id, {
     title: 'Dreiphasenablauf ' + suffix,
@@ -296,6 +315,7 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
   const instance = await startWorkflow(ownerApi, task, workflow);
   const firstRunId = instance.run_ids[0];
   const firstRun = await readUntil(ownerApi, '/runs/' + firstRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die Entwurfsphase muss tatsächlich über T3 starten.');
+  expect(firstRun.stage).toBe(stageIds[0]);
   const afterWorkEntry = await ownerApi.get('/tasks/' + task.id);
   expect(afterWorkEntry.data.status_category).toBe('active');
   expect(firstRun.snapshot).toMatchObject({
@@ -311,9 +331,9 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
   expect(activeFlow.response.status(), JSON.stringify(activeFlow.data)).toBe(200);
   const activeFlowInstance = activeFlow.data.items.find((item) => item.kind === 'workflow_instance' && item.id === instance.id);
   expect(activeFlowInstance?.phases).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: 'work', name: 'Entwurf', agent_profile_id: workRole.id, instructions: workInstructions, board_target: apiBoardTarget(targets.active) }),
-    expect.objectContaining({ id: 'review', name: 'Redaktionsprüfung', agent_profile_id: reviewRole.id, instructions: reviewInstructions, board_target: apiBoardTarget(targets.review) }),
-    expect.objectContaining({ id: workflow.stages[2].id, name: 'Ausgabefreigabe', agent_profile_id: publishRole.id, instructions: publishInstructions, board_target: apiBoardTarget(targets.ready) }),
+    expect.objectContaining({ id: stageIds[0], name: 'Entwurf', kind: 'agent_run', agent_profile_id: workRole.id, instructions: workInstructions, board_target: apiBoardTarget(targets.active) }),
+    expect.objectContaining({ id: stageIds[1], name: 'Redaktionsprüfung', kind: 'agent_run', agent_profile_id: reviewRole.id, instructions: reviewInstructions, board_target: apiBoardTarget(targets.review) }),
+    expect.objectContaining({ id: stageIds[2], name: 'Ausgabefreigabe', kind: 'review', agent_profile_id: publishRole.id, instructions: publishInstructions, board_target: apiBoardTarget(targets.ready) }),
   ]));
   const reporter = await createTechnicalReporter(ownerApi, baseURL, project.id);
   try {
@@ -327,6 +347,7 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
     const afterReviewEntry = await readUntil(ownerApi, '/workflow-instances/' + instance.id, (current) => current.run_ids.length === 2, 'Die angenommene Entwurfsphase muss die Reviewphase starten.');
     const reviewRunId = afterReviewEntry.run_ids[1];
     const reviewRun = await readUntil(ownerApi, '/runs/' + reviewRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die Redaktionsprüfung muss tatsächlich über T3 starten.');
+    expect(reviewRun.stage).toBe(stageIds[1]);
     const afterReviewMove = await ownerApi.get('/tasks/' + task.id);
     expect(afterReviewMove.data.status_category).toBe('review');
     expect(reviewRun.snapshot).toMatchObject({
@@ -353,10 +374,12 @@ test('UI creates a three-phase workflow with project-filtered roles and dispatch
     const withPublishRun = await readUntil(ownerApi, '/workflow-instances/' + instance.id, (current) => current.run_ids.length === 3, 'Die angenommene Reviewphase muss die Ausgabefreigabe starten.');
     const publishRunId = withPublishRun.run_ids[2];
     const publishRun = await readUntil(ownerApi, '/runs/' + publishRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die Ausgabefreigabe muss tatsächlich über T3 starten.');
+    expect(publishRun.stage).toBe(stageIds[2]);
     const afterPublishMove = await ownerApi.get('/tasks/' + task.id);
     expect(afterPublishMove.data.status_category).toBe('ready');
     expect(publishRun.snapshot).toMatchObject({
       agent_profile_id: publishRole.id,
+      stage_kind: 'review',
       task_revision: afterPublishMove.data.version,
       stage_name: 'Ausgabefreigabe',
       stage_instructions: publishInstructions,
@@ -407,7 +430,7 @@ test('UI versions a same-role two-phase template into separate work and review r
   await qaMocks.setT3Scenario('default');
   const suffix = randomUUID().slice(0, 6);
   const project = await ownerApi.createProject({ name: 'Redaktion Versionsprüfung ' + suffix });
-  const { connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, 'Workflowversion', 3);
+  const { connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, 'Workflowversion');
   const { board, targets } = await boardTargets(ownerApi, project.id);
   const sameRole = await createProfile(ownerApi, [project.id], connection, 'Redaktion Allgemein ' + suffix, 'Redaktion', 'Gemeinsames Vorlagenprofil für Umsetzung und Review.');
   const workRole = await createProfile(ownerApi, [project.id], connection, 'Redaktion Umsetzung ' + suffix, 'Implementierung', 'Spezifischer Rollenprompt: Zeitungsauftrag umsetzen.');
@@ -421,6 +444,7 @@ test('UI versions a same-role two-phase template into separate work and review r
     project,
     name: 'Redaktion Vorlage ' + suffix,
     targets,
+    useTwoStageTemplate: true,
     stages: [
       { name: 'Bearbeitung', profile: sameRole, instructions: originalInstructions[0], boardCategory: 'active' },
       { name: 'Review', profile: sameRole, instructions: originalInstructions[1], boardCategory: 'review' },
@@ -438,8 +462,8 @@ test('UI versions a same-role two-phase template into separate work and review r
   const editor = ownerPage.getByTestId('workflow-editor-' + workflowV1.id);
   await expect(editor).toBeVisible();
   await expect(editor.getByLabel('Workflowname')).toHaveValue(workflowV1.name);
-  await chooseRole(ownerPage, editor, workflowV1.id, 'work', 1, workRole);
-  await chooseRole(ownerPage, editor, workflowV1.id, 'review', 2, reviewRole);
+  await chooseRole(ownerPage, editor, workflowV1.id, 'work', workRole);
+  await chooseRole(ownerPage, editor, workflowV1.id, 'review', reviewRole);
   await editor.getByLabel('Automatische Überarbeitungsrunden').fill('0');
   await editor.getByTestId('workflow-' + workflowV1.id + '-stage-instructions-work').fill('Setze den Auftrag als Redaktion um und dokumentiere das konkrete Ergebnis.');
   await editor.getByTestId('workflow-' + workflowV1.id + '-stage-instructions-review').fill('Prüfe den eingefrorenen Umsetzungsbericht unabhängig und begründet.');
@@ -525,29 +549,62 @@ test('UI versions a same-role two-phase template into separate work and review r
     }),
   ]));
 
-  const taskResult = await createReadyTask(ownerApi, project.id, {
-    title: 'Redaktion versionierter Rollenlauf ' + suffix,
-    description: 'Eine getrennte Redaktionsrolle setzt den Auftrag um, anschließend prüft eine zweite Rolle die Übergabe.',
-  });
-  const task = (await ownerApi.get('/tasks/' + taskResult.id)).data;
-  const instance = await startWorkflow(ownerApi, task, workflowV2);
-  expect(instance.definition_version).toBe(2);
-  const workRunId = instance.run_ids[0];
-  const workRun = await readUntil(ownerApi, '/runs/' + workRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die neue Workversion muss die Redaktionsrolle starten.');
-  const activeTask = await ownerApi.get('/tasks/' + task.id);
-  expect(activeTask.data.status_category).toBe('active');
-  expect(workRun.snapshot).toMatchObject({
-    workflow_version: 2,
-    agent_profile_id: workRole.id,
-    stage_name: 'Bearbeitung',
-    stage_instructions: 'Setze den Auftrag als Redaktion um und dokumentiere das konkrete Ergebnis.',
-    stage_board_target: apiBoardTarget(targets.active),
-    task_revision: activeTask.data.version,
-  });
-  expect(await taskOnBoardColumn(ownerApi, board.id, targets.active.column_id, task.id)).toBe(true);
-
   const reporter = await createTechnicalReporter(ownerApi, baseURL, project.id);
   try {
+    const frozenActiveTask = await ownerApi.get('/tasks/' + frozenTask.id);
+    expect(frozenActiveTask.data.status_category).toBe('active');
+    const frozenWorkReport = await submitReport(ownerApi, reporter.agent, frozenRunId, frozenActiveTask.data.version, {
+      summary: 'Die eingefrorene Bearbeitungsphase ist abgeschlossen.',
+      label: 'Vorlagenbericht',
+      text: 'Version 1 behält den gemeinsamen Ausgangsauftrag.',
+    });
+    await readUntil(ownerApi, '/runs/' + frozenRunId, (run) => run.state === 'succeeded', 'Der Lauf aus Version 1 muss abgeschlossen sein, bevor die nächste T3-Phase startet.');
+    const withFrozenReview = await readUntil(ownerApi, '/workflow-instances/' + frozenInstance.id, (current) => current.run_ids.length === 2, 'Version 1 muss nach der Bearbeitung ihre Reviewphase starten.');
+    const frozenReviewRunId = withFrozenReview.run_ids[1];
+    const frozenReviewRun = await readUntil(ownerApi, '/runs/' + frozenReviewRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die eingefrorene Reviewphase muss abgeschlossen werden, bevor Version 2 startet.');
+    const frozenReviewTask = await ownerApi.get('/tasks/' + frozenTask.id);
+    expect(frozenReviewTask.data.status_category).toBe('review');
+    expect(frozenReviewRun.snapshot).toMatchObject({
+      workflow_version: 1,
+      agent_profile_id: sameRole.id,
+      stage_name: 'Review',
+      stage_instructions: originalInstructions[1],
+      stage_board_target: apiBoardTarget(targets.review),
+      handoff_source_run_id: frozenRunId,
+      handoff_snapshot: {
+        source_report_id: frozenWorkReport.reportId,
+        task_revision_id: frozenActiveTask.data.version,
+      },
+    });
+    await submitReport(ownerApi, reporter.agent, frozenReviewRunId, frozenReviewTask.data.version, {
+      summary: 'Die eingefrorene Vorlage wurde geprüft.',
+      label: 'Vorlagenreview',
+      text: 'Die alte Version behielt ihre gemeinsame Reviewrolle.',
+    });
+    await approvePhaseIfRequired(ownerApi, frozenReviewRunId);
+    await readUntil(ownerApi, '/workflow-instances/' + frozenInstance.id, (current) => current.state === 'succeeded', 'Version 1 muss vollständig enden, bevor die neue Version gestartet wird.');
+
+    const taskResult = await createReadyTask(ownerApi, project.id, {
+      title: 'Redaktion versionierter Rollenlauf ' + suffix,
+      description: 'Eine getrennte Redaktionsrolle setzt den Auftrag um, anschließend prüft eine zweite Rolle die Übergabe.',
+    });
+    const task = (await ownerApi.get('/tasks/' + taskResult.id)).data;
+    const instance = await startWorkflow(ownerApi, task, workflowV2);
+    expect(instance.definition_version).toBe(2);
+    const workRunId = instance.run_ids[0];
+    const workRun = await readUntil(ownerApi, '/runs/' + workRunId, (run) => run.state === 'running' && Boolean(run.attempts[0]?.external_thread_id), 'Die neue Workversion muss die Redaktionsrolle starten.');
+    const activeTask = await ownerApi.get('/tasks/' + task.id);
+    expect(activeTask.data.status_category).toBe('active');
+    expect(workRun.snapshot).toMatchObject({
+      workflow_version: 2,
+      agent_profile_id: workRole.id,
+      stage_name: 'Bearbeitung',
+      stage_instructions: 'Setze den Auftrag als Redaktion um und dokumentiere das konkrete Ergebnis.',
+      stage_board_target: apiBoardTarget(targets.active),
+      task_revision: activeTask.data.version,
+    });
+    expect(await taskOnBoardColumn(ownerApi, board.id, targets.active.column_id, task.id)).toBe(true);
+
     const report = await submitReport(ownerApi, reporter.agent, workRunId, activeTask.data.version, {
       summary: 'Die Umsetzung ist abgeschlossen und der Reviewrolle übergeben.',
       label: 'Umsetzungsbericht',
@@ -564,7 +621,6 @@ test('UI versions a same-role two-phase template into separate work and review r
       agent_profile_id: reviewRole.id,
       stage_name: 'Review',
       stage_instructions: 'Prüfe den eingefrorenen Umsetzungsbericht unabhängig und begründet.',
-      stage_board_target: apiBoardTarget(targets.review),
       task_revision: reviewTask.data.version,
       handoff_source_run_id: workRunId,
       handoff_snapshot: {
@@ -578,14 +634,19 @@ test('UI versions a same-role two-phase template into separate work and review r
 
     const journal = await qaMocks.t3Journal();
     expect(journal.unexpected).toEqual([]);
-    expect(journal.accepted_launches).toHaveLength(3);
+    expect(journal.accepted_launches).toHaveLength(4);
     const frozenLaunch = await launchForRun(qaMocks, frozenRunId);
+    const frozenReviewLaunch = await launchForRun(qaMocks, frozenReviewRunId);
     const workLaunch = await launchForRun(qaMocks, workRunId);
     const reviewLaunch = await launchForRun(qaMocks, reviewRunId);
     expect(frozenLaunch?.payload.message).toContain('Bearbeitung');
     expect(frozenLaunch?.payload.message).toContain(originalInstructions[0]);
     expect(frozenLaunch?.payload.message).toContain('Gemeinsames Vorlagenprofil für Umsetzung und Review.');
     expect(frozenLaunch?.payload.message).not.toContain('Setze den Auftrag als Redaktion um');
+    expect(frozenReviewLaunch?.payload.message).toContain('Review');
+    expect(frozenReviewLaunch?.payload.message).toContain(originalInstructions[1]);
+    expect(frozenReviewLaunch?.payload.message).toContain('Gemeinsames Vorlagenprofil für Umsetzung und Review.');
+    expect(frozenReviewLaunch?.payload.message).not.toContain('Prüfe den eingefrorenen Umsetzungsbericht unabhängig und begründet.');
     expect(workLaunch?.payload.message).toContain('Bearbeitung');
     expect(workLaunch?.payload.message).toContain('Setze den Auftrag als Redaktion um');
     expect(workLaunch?.payload.message).toContain('Spezifischer Rollenprompt: Zeitungsauftrag umsetzen.');
@@ -597,7 +658,7 @@ test('UI versions a same-role two-phase template into separate work and review r
 
     recordEvidence(
       'Ein gespeicherter Zwei-Phasen-Workflow wird über die UI versioniert, ohne die alte Rollen- und Anweisungssnapshot-Version umzuschreiben.',
-      'Version 1 behielt die gemeinsame Rolle ' + sameRole.id + ' und beide ursprünglichen Phasenaufträge. Die UI speicherte Version 2 mit Rollen ' + workRole.id + ' und ' + reviewRole.id + '; die API bestätigte If-Match der vorher gelesenen Workflowversion. Der echte T3-Dispatch startete zuerst die Workrolle und nach deren Report die getrennte Reviewrolle. Beim Reviewstart wurde das entfernte Boardziel nicht angewendet: Status, Taskrevision und Boardposition blieben auf der Workphase. Die Run-Snapshots bewahrten den Quellreport mit seiner ursprünglichen Revision.',
+      'Version 1 behielt die gemeinsame Rolle ' + sameRole.id + ' und beide ursprünglichen Phasenaufträge; beide alten Phasen wurden nacheinander abgeschlossen, bevor der nächste T3-Start erfolgte. Die UI speicherte Version 2 mit Rollen ' + workRole.id + ' und ' + reviewRole.id + '; die API bestätigte If-Match der vorher gelesenen Workflowversion. Der echte T3-Dispatch startete in Version 2 zuerst die Workrolle und nach deren Report die getrennte Reviewrolle. Beim Reviewstart wurde das entfernte Boardziel nicht angewendet: Status, Taskrevision und Boardposition blieben auf der Workphase. Die Run-Snapshots bewahrten den Quellreport mit seiner ursprünglichen Revision.',
       { t3: journal },
     );
   } finally {

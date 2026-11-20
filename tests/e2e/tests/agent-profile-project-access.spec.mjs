@@ -227,6 +227,7 @@ test('Eine globale Agentrolle erscheint nur bei passender aktiver T3-Projektbind
   await ownerPage.goto('/#/workflows');
   await expect(ownerPage.getByRole('heading', { name: 'Workflows' })).toBeVisible();
   const workflowForm = ownerPage.getByTestId('workflow-editor-create');
+  await workflowForm.getByRole('button', { name: 'Zwei-Phasen-Vorlage verwenden', exact: true }).click();
   const workflowProjectPicker = workflowForm.getByLabel('Projekt');
   await workflowProjectPicker.click();
   await ownerPage.getByRole('option', { name: project.name, exact: true }).click();

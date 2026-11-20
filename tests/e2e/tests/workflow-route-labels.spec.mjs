@@ -173,7 +173,8 @@ async function submitReport(ownerApi, agent, runId, options) {
   expect(result?.isError, JSON.stringify(result?.structuredContent)).toBe(false);
   const report = await readUntil(ownerApi, `/runs/${runId}/result-reports/${reportId}`, (item) => item.id === reportId, 'Der Ergebnisbericht muss öffentlich lesbar sein.');
   expect(report).toMatchObject({ run_id: runId, task_revision: initialRun.snapshot.task_revision, accepted_for_reconciliation: true });
-  const settledRun = await readUntil(ownerApi, `/runs/${runId}`, (item) => item.state === 'succeeded', 'T3-Abschluss und Agentenbericht müssen den Phasenlauf abschließen.');
+  const expectedState = 'reported_success' === outcome ? 'succeeded' : 'failed';
+  const settledRun = await readUntil(ownerApi, `/runs/${runId}`, (item) => item.state === expectedState, 'T3-Abschluss und Agentenbericht müssen den Phasenlauf abschließen.');
   return { initialRun, settledRun, report, reportId };
 }
 
@@ -223,8 +224,8 @@ test('reporting role selects a frozen route back to Discovery with its report ha
   const { board, targets, statuses } = await boardTargets(ownerApi, project.id);
   const discovery = await createProfile(ownerApi, project, connection, `Discovery ${suffix}`, 'Discovery', 'Lege eine belastbare Recherche an.');
   const reporting = await createProfile(ownerApi, project, connection, `Reporting ${suffix}`, 'Reporting', 'Prüfe die Recherche und wähle die fachlich passende Rückroute.');
-  const labelA = await ownerApi.createLabel(project.id, { name: `Discovery ${suffix}`, key: `discovery-${suffix}` });
-  const labelB = await ownerApi.createLabel(project.id, { name: `Recherche erweitern ${suffix}`, key: `research-${suffix}` });
+  const labelA = await ownerApi.createLabel(project.id, { name: `Discovery ${suffix}`, key: `discovery-${suffix}`, color: '#315B77' });
+  const labelB = await ownerApi.createLabel(project.id, { name: `Recherche erweitern ${suffix}`, key: `research-${suffix}`, color: '#7765A3' });
   const workflow = await createWorkflow(ownerApi, project.id, `Redaktionelle Route ${suffix}`, [
     stage('discovery', 'Discovery', discovery, targets.ready),
     stage('reporting', 'Reporting', reporting, targets.review),
@@ -269,6 +270,9 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     const reportId = randomUUID();
     const beforeInvalid = (await ownerApi.get(`/runs/${reportingRunId}`)).data;
     const taskBeforeInvalid = (await ownerApi.get(`/tasks/${task.id}`)).data;
+    const evidenceBeforeInvalid = await ownerApi.get(`/evidence?task_id=${encodeURIComponent(task.id)}&limit=100`);
+    expect(evidenceBeforeInvalid.response.status(), JSON.stringify(evidenceBeforeInvalid.data)).toBe(200);
+    const existingEvidenceIds = evidenceBeforeInvalid.data.items.map((item) => item.id).sort();
     const invalid = await reporter.agent.callRaw('runs_report_result', {
       run_id: reportingRunId,
       report_id: reportId,
@@ -291,7 +295,8 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     expect((await ownerApi.get(`/runs/${reportingRunId}/result-reports/${reportId}`)).response.status()).toBe(404);
     const evidenceAfterRejection = await ownerApi.get(`/evidence?task_id=${encodeURIComponent(task.id)}&limit=100`);
     expect(evidenceAfterRejection.response.status(), JSON.stringify(evidenceAfterRejection.data)).toBe(200);
-    expect(evidenceAfterRejection.data.items).toEqual([]);
+    expect(evidenceAfterRejection.data.items.map((item) => item.id).sort()).toEqual(existingEvidenceIds);
+    expect(evidenceAfterRejection.data.items.map((item) => item.label)).not.toContain('Nicht speichern');
     const flowAfterRejection = await taskFlow(ownerApi, task.id, instance.id);
     expect(flowAfterRejection.runs.map((run) => run.id)).toEqual([firstRunId, reportingRunId]);
     expect(flowAfterRejection.selected_transitions).toHaveLength(1);
@@ -362,8 +367,8 @@ test('topic labels select one route, while ambiguity or a missing route waits fo
   const { board, targets, statuses } = await boardTargets(ownerApi, project.id);
   const discovery = await createProfile(ownerApi, project, connection, `Discovery ${suffix}`, 'Discovery', 'Bearbeite die nächste Phase auf Basis der Übergabe.');
   const reporting = await createProfile(ownerApi, project, connection, `Reporting ${suffix}`, 'Reporting', 'Melde Änderungsbedarf mit einer konkreten Route, sofern sie eindeutig ist.');
-  const labelA = await ownerApi.createLabel(project.id, { name: `Discovery ${suffix}`, key: `discovery-${suffix}` });
-  const labelB = await ownerApi.createLabel(project.id, { name: `Recherche ${suffix}`, key: `research-${suffix}` });
+  const labelA = await ownerApi.createLabel(project.id, { name: `Discovery ${suffix}`, key: `discovery-${suffix}`, color: '#315B77' });
+  const labelB = await ownerApi.createLabel(project.id, { name: `Recherche ${suffix}`, key: `research-${suffix}`, color: '#7765A3' });
   const reportStage = stage('reporting', 'Reporting', reporting, targets.review);
   const discoveryStage = stage('discovery', 'Discovery', discovery, targets.ready);
   const researchStage = stage('research', 'Recherche vertiefen', discovery, targets.active);
@@ -388,7 +393,8 @@ test('topic labels select one route, while ambiguity or a missing route waits fo
     const researchRunId = withResearch.run_ids[1];
     const researchRun = await runningRun(ownerApi, researchRunId);
     expect(researchRun).toMatchObject({ stage: 'research', snapshot: { agent_profile_id: discovery.id, stage_name: 'Recherche vertiefen' } });
-    expect(withResearch.selected_transitions.at(-1)).toMatchObject({ route_label_id: labelB.id, route_label_name: labelB.name, to_stage_id: 'research' });
+    const researchFlow = await taskFlow(ownerApi, labelTask.id, labelInstance.id);
+    expect(researchFlow.selected_transitions.at(-1)).toMatchObject({ route_label_id: labelB.id, route_label_name: labelB.name, to_stage_id: 'research' });
     expect((await ownerApi.get(`/tasks/${labelTask.id}`)).data.status_category).toBe('active');
     expect(await taskOnBoardColumn(ownerApi, board.id, targets.active.column_id, labelTask.id)).toBe(true);
     await submitReport(ownerApi, reporter.agent, researchRunId, { summary: 'Die Recherchevertiefung ist abgeschlossen.' });
@@ -473,6 +479,71 @@ test('topic labels select one route, while ambiguity or a missing route waits fo
     recordEvidence(
       'Automatische Workflowrouten beachten eindeutige Themenlabels und warten bei widersprüchlicher oder fehlender Auswahl auf die Eigentümerin.',
       `Das Label ${labelB.name} wählte die vertiefende Recherche, ein Ticket ohne Routenlabel nahm den konfigurierten Standardweg. Die mehrdeutigen Labels ${labelA.name} und ${labelB.name} pausierten ohne Zusatzlauf; nach Entfernung des Konflikts wurde ${labelA.name} verwendet. Ein Workflow ohne Standardroute pausierte ebenfalls, bis die Eigentümerin ${labelA.name} zuordnete. Alle korrigierten Tickets wechselten beim Phaseneintritt auf das jeweilige Boardziel.`,
+      { t3: journal },
+    );
+  } finally {
+    await reporter.close();
+  }
+});
+
+test('a blocked default route back to a visited earlier phase consumes the repair limit', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+  test.setTimeout(240_000);
+  await qaMocks.setT3Scenario('default');
+  const suffix = randomUUID().slice(0, 6);
+  const project = await ownerApi.createProject({ name: `Workflowroute Rückkehr ${suffix}` });
+  const connection = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, project);
+  const { targets, statuses } = await boardTargets(ownerApi, project.id);
+  const implementation = await createProfile(ownerApi, project, connection, `Bearbeitung ${suffix}`, 'Implementation', 'Setze den fachlichen Auftrag um.');
+  const review = await createProfile(ownerApi, project, connection, `Review ${suffix}`, 'Review', 'Prüfe den aktuellen Arbeitsstand.');
+  const workflow = await createWorkflow(ownerApi, project.id, `Blockierte Standardrückkehr ${suffix}`, [
+    stage('implementation', 'Bearbeitung', implementation, targets.active),
+    stage('review', 'Prüfung', review, targets.review),
+  ], [
+    { from_stage_id: 'implementation', to_stage_id: 'review', on: 'accepted', conditions: [] },
+    { from_stage_id: 'review', to_stage_id: 'implementation', on: 'blocked', conditions: [] },
+  ], 0);
+  expect(workflow.transitions.find((transition) => transition.on === 'blocked')).not.toHaveProperty('route_label_id');
+  const task = (await ownerApi.get(`/tasks/${(await createReadyTask(ownerApi, project.id, { statuses })).id}`)).data;
+  const reporter = await createReporter(ownerApi, baseURL, project.id);
+  try {
+    const instance = await startWorkflow(ownerApi, task, workflow);
+    const implementationRunId = instance.run_ids[0];
+    await submitReport(ownerApi, reporter.agent, implementationRunId, {
+      summary: 'Die Bearbeitung ist für die unabhängige Prüfung bereit.',
+    });
+    const inReview = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (current) => current.run_ids.length === 2, 'Die erfolgreiche Bearbeitung muss die Prüfungsphase starten.');
+    const reviewRunId = inReview.run_ids[1];
+    const reviewRun = await runningRun(ownerApi, reviewRunId);
+    expect(reviewRun.snapshot.workflow_routes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ on: 'blocked', to_stage_id: 'implementation', is_default: true, route_label_id: null }),
+    ]));
+    const blocked = await submitReport(ownerApi, reporter.agent, reviewRunId, {
+      outcome: 'blocked',
+      summary: 'Die Prüfung kann wegen einer ungeklärten Voraussetzung nicht fortfahren.',
+      openQuestions: ['Welche Voraussetzung muss zuerst erfüllt sein?'],
+    });
+    expect(blocked.settledRun.state).toBe('failed');
+    const paused = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (current) => current.state === 'paused' && current.repair_decision_run_id === reviewRunId, 'Die Rückkehr über den Standardweg muss die Reparaturgrenze auslösen.');
+    expect(paused).toMatchObject({
+      repair_round: 0,
+      repair_decision_run_id: reviewRunId,
+      repair_decision_stage_name: 'Bearbeitung',
+      run_ids: [implementationRunId, reviewRunId],
+    });
+    expect(paused.pause_reason).toContain('Reparaturrunden');
+    const flow = await taskFlow(ownerApi, task.id, instance.id);
+    expect(flow.selected_transitions).toHaveLength(1);
+    expect(flow.selected_transitions[0]).toMatchObject({
+      from_stage_id: 'implementation',
+      to_stage_id: 'review',
+      outcome: 'accepted',
+    });
+    const journal = await qaMocks.t3Journal();
+    expect(journal.unexpected).toEqual([]);
+    expect(journal.accepted_launches).toHaveLength(2);
+    recordEvidence(
+      'Auch eine blockierte Standardroute zurück zu einer besuchten früheren Phase benötigt die konfigurierte Überarbeitungsfreigabe.',
+      `Die Prüfungsphase ${reviewRunId} meldete blocked. Der eingefrorene Standardübergang führte zurück zur zuvor besuchten Phase Bearbeitung, zählte gegen max_repair_rounds=0 und pausierte mit einer konkreten Eigentümerentscheidung, ohne einen dritten T3-Lauf zu starten.`,
       { t3: journal },
     );
   } finally {
