@@ -904,10 +904,11 @@ paths:
       - server_derived_origin
       - mandatory_technical_classification
       - persist_before_provider_call
-      description: Owner-UI/JSON kann händisch anlegen. Jeder MCP-Aufruf und jeder technische API-Principal wird zwingend klassifiziert;
-        source/manual sind keine beschreibbaren Eingabefelder. 201 liefert finalen aktuellen Receipt, 202 einen dauerhaft nachverfolgbaren
-        accepted Receipt. Bei needs_information bleibt dasselbe Ticket bestehen. Anfragen warten höchstens prefer_wait_ms, Worker bleibt
-        Besitzer der Klassifikation.
+      description: Owner-UI/JSON kann standardmäßig händisch anlegen; ein Projekt kann Klassifikation für manuelle Tickets aktivieren.
+        tasks_create über MCP und jede Anlage mit technischem API-Principal werden zwingend klassifiziert; source/manual sind keine beschreibbaren
+        Eingabefelder. Technische Ticketanlagen werden dauerhaft gespeichert und als accepted Receipt mit 202 quittiert. Der endgültige
+        Intake-Ausgang wird über GET /api/v1/tasks/{task_id}/intake gelesen. prefer_wait_ms wird aus Kompatibilitätsgründen akzeptiert,
+        der aktuelle Server wartet damit aber nicht innerhalb des Requests. Bei needs_information bleibt dasselbe Ticket bestehen.
   /tasks/{task_id}:
     parameters:
     - name: task_id
@@ -6924,11 +6925,12 @@ components:
           minimum: 0
           maximum: 1500
           default: 1000
+          description: Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die Klassifikation.
       required:
       - title
-      description: Server klassifiziert alle technischen Principals und alle MCP-Aufrufe zwingend; Quelle ist nicht clientseitig schreibbar.
-        Owner-JSON/UI gilt als händisch, technische Automationen benötigen technische Tokens. Dauerhafte Anlage erfolgt vor einem begrenzten
-        optionalen Warten auf Klassifikation.
+      description: Owner-JSON/UI legt standardmäßig manuelle Tickets an; eine Projektpolicy kann manuelle Klassifikation aktivieren.
+        Technische API- und MCP-Anlagen durchlaufen immer die Klassifikation. Herkunft und Quelle werden serverseitig aus Credential und
+        Transport abgeleitet und können nicht als Eingabe gesetzt werden. Technische Tickets werden vor dem Intake-Command dauerhaft angelegt.
     TaskUpdate:
       type: object
       additionalProperties: false
@@ -12005,6 +12007,7 @@ components:
           type: integer
           minimum: 0
           maximum: 1500
+          description: Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die neue Klassifikationsgeneration.
       required:
       - answers
       description: Nur offene Feldschlüssel dieses Intakes, keine doppelte Antwort pro Schlüssel. Server legt neue Taskrevision und
@@ -12021,6 +12024,7 @@ components:
           type: integer
           minimum: 0
           maximum: 1500
+          description: Aus Kompatibilitätsgründen akzeptiert; der aktuelle Server wartet innerhalb dieses Requests nicht auf die erneute Klassifikation.
       required:
       - reason
     IntakeOwnerDecision:

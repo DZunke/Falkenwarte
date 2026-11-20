@@ -1,58 +1,53 @@
-# Bounded Contexts, Aggregate und Invarianten
+# Fachmodule, Verantwortungen und Regeln
 
-**Status:** Verbindlicher Fachvertrag aus Konzeptfassung 2.0. Der Umsetzungs- und Abnahmenachweis steht in [TRACEABILITY.md](../TRACEABILITY.md).
+Falkenwarte ist ein modularer Symfony-Monolith: die Anwendung läuft in einem Prozess, und ihre Fachmodule sind durch Verzeichnisse, veröffentlichte Application-Ports und statische Importregeln getrennt.
 
-## 1. Modulkonvention
+Die meisten Fachdatensätze werden als typisierte JSON-Datensätze über den gemeinsamen `Store` geladen und geändert. Es gibt keine eigene Aggregate- oder Repositoryklasse pro Ressource. Domain-Policies und Application-Handler setzen die fachlichen Guards um.
 
-Der modulare Monolith verwendet `src/<Context>/{Domain,Application,Infrastructure,Presentation}`. Frameworkattribute, DBAL-Queries und MCP-Objekte gehören nicht in die Domain. Ein gemeinsamer DBAL-Transaktionskoordinator darf mehrere ausdrücklich veröffentlichte lokale Teilnehmer verbinden. Ein Context erhält dadurch keinen beliebigen Schreibzugriff auf fremde Tabellen.
+## Module und Datenverantwortung
 
-Im Startumfang liegen die Contexts in einem Repository und einem Prozessraum. Ihre Grenzen werden durch Ordner, Composer-Autoloading, Interfaces und statische Importregeln sichtbar. Es wird kein Netzwerkdienst pro Context gebaut.
-
-## 2. Fachlicher Besitz
-
-| Context | Wichtige Aggregate / Modelle | Invarianten und veröffentlichte Grenze |
+| Modul | Verantwortung | Relevante Umsetzung |
 |---|---|---|
-| Portfolio | Project, ProjectBinding | Eindeutiger Slug; archivierte Projekte starten keine neue automatische Arbeit. Projektidentität wird über lesbare Referenzen veröffentlicht. |
-| WorkManagement | Task, Board, TaskStatusCatalog, LinkCollection | Jede Referenz liegt im selben Projekt; Abhängigkeiten sind azyklisch; Abschlussregeln gelten unabhängig vom Eingangskanal; Links werden nicht abgerufen. Commands betreffen Aufgabe, Reihenfolge, Kriterien und Linkregistrierung. |
-| Classification | LabelCatalog, Intake, ClassificationRecord, RequirementProfile | Zulässige Taxonomiewerte, stabile Labelkeys und Herkunft; eine Bewertung gilt für genau einen Eingabestand. Regeln für menschlichen Handlungsbedarf werden nicht vom Modell überschrieben. |
-| AgentCatalog | AgentProfile, T3Connection | Rollen referenzieren vorhandene T3-Ziele. Secrets bleiben außerhalb öffentlicher DTOs. Capability- und Authänderungen sind versioniert. |
-| Orchestration | Run, Dispatch, ResultReport, Approval, ExecutionSlot | Stabile Startidentität; keine zweite belegte Ausführung im gesperrten Scope; Meldung und Beobachtung bleiben getrennt; Freigabe ist an Revision und Ergebnisdigest gebunden. |
-| Automation | Workflow, WorkflowInstance, RoutingRule, Schedule | Definitionen sind versioniert; Instanzen behalten ihren Snapshot; keine stillen Routenwechsel; Schleifen und Wiederholungen sind begrenzt. |
-| History | ObjectRevision, ChangeRecord | Jede erfolgreiche fachliche Änderung hat eine unveränderliche redigierte Revision; alte Schemas bleiben lesbar; Wiederherstellung erzeugt eine neue Version. |
-| Metrics | ProjectMetricProjection, MetricDefinition | Kennzahlen haben definierte Quellen, Zeiträume und Stichproben; Rebuilds erzeugen keine fachlichen Außenwirkungen. |
-| Extensions | PluginInstallation, CapabilityRegistration | Pakete und aktivierte Fähigkeiten sind verschieden; Drain erhält Beobachtbarkeit; Deaktivierung löscht keine Historie. |
-| Access | OwnerSession, TechnicalPrincipal, CredentialReference | Genau ein Eigentümer; technische Zugriffe sind projekt-/fähigkeitsbezogen; Secretwerte werden weder historisiert noch an die UI geliefert. |
+| Portfolio | Projekte, Projektschlüssel, projektspezifische Abschlussregeln und Zusatzfelddefinitionen. | `src/Portfolio/Application/PortfolioHandler.php`, `src/Portfolio/Domain/ProjectSlug.php`, `src/Portfolio/Domain/CustomFieldPolicy.php` |
+| WorkManagement | Aufgaben, Status, Boards, Labels, Link-Collections, Kriterien, Nachweise und fachliche Aufgabenhistorie. | `src/WorkManagement/Application/WorkHandler.php`, `src/WorkManagement/Domain/BoardWipPolicy.php`, `src/WorkManagement/Domain/TaskCompletionPolicy.php`, `src/WorkManagement/Domain/TaskLinkPolicy.php` |
+| Classification | Intake, Klassifikationsnachweise, projektbezogene Decision-Policies und versionierte Workflowzuordnungen. `DecisionGateway` kapselt den technischen Bewertungsaufruf. | `src/Classification/Application/IntakeHandler.php`, `src/Classification/Domain/IntakeOutcome.php`, `src/Classification/Application/DecisionGateway.php` |
+| AgentCatalog | T3-Verbindungen, Anmeldezustand, Projektbindungen und Agentprofile samt zulässigen Projekten und Ausführungsziel. | `src/AgentCatalog/Application/AgentCatalogHandler.php`, `src/AgentCatalog/Application/AgentCatalogReader.php`, `src/AgentCatalog/Domain/` |
+| Orchestration | Runs und ihre T3-Versuche, Ergebnisberichte, Workflowdefinitionen und -instanzen, Trigger, Eigentümerentscheidungen sowie Wiederherstellungsinventur. | `src/Orchestration/Application/RunHandler.php`, `src/Orchestration/Domain/`, `src/Orchestration/Infrastructure/` |
+| Automation | Prüfung von Workflowdefinitionen und Auswahl eines passenden Phasenübergangs. Das Modul speichert keine Workflowinstanzen und startet keine Runs. | `src/Automation/Domain/WorkflowDefinitionPolicy.php`, `src/Automation/Application/WorkflowPolicyService.php`, `src/Automation/Infrastructure/SymfonyWorkflowTransitionSelector.php` |
+| Extensions | Vertrauenswürdige Pluginmanifeste, registrierte Beiträge, Capability-Gates und Aktivierungs-, Drain- und Entfernungsabläufe. | `src/Extensions/Application/PluginRegistry.php`, `src/Extensions/Application/PluginHandler.php`, `src/Extensions/Domain/PluginLifecyclePolicy.php` |
+| Access | Eigentümerkonto und Sitzung, technische Principals, Fähigkeiten, technische Zugangsdaten und Geheimnisreferenzen. | `src/Access/Presentation/Access.php`, `src/Access/Application/AccessPersistence.php`, `src/Access/Domain/TechnicalCredential.php` |
+| Metrics | Dashboard und wiederaufbaubare Messwerte aus gespeicherten Aufgaben, Runs und Ereignissen. | `src/Metrics/Application/MetricsHandler.php`, `src/Metrics/Domain/MeasurementWindow.php` |
+| Operations | Ereignisjournal-Abfragen, Exporte, Backups und kontrollierte Wiederherstellung. | `src/Operations/Application/JournalHandler.php`, `src/Operations/Application/BackupHandler.php`, `src/Operations/Infrastructure/RestoreOfflineProcessor.php` |
 
-## 3. Task und Board
+`src/Shared/` enthält gemeinsam genutzte Ports und Werte wie `Actor`, `Clock`, `OperationHandler` und `Store`. `src/Shared/Infrastructure/DbalStore.php` implementiert Speicherung, Revisionen und Ereignisablage.
 
-Das Task-Aggregat hält Titel, Beschreibung, Kriterien, Status, Blockade, erlaubte Referenzen und Version. Link-Collections können wegen ihrer eigenständigen Reihenfolge eigene Aggregate mit Task-ID sein; ein Linkcommand prüft den aktuellen Task-/Projektscope. Anzahl und Länge werden in den API-Schemas begrenzt.
+`src/Presentation/` stellt OpenAPI-Verträge, HTTP- und MCP-Einstiege sowie `Gateway` bereit. `src/Live/Infrastructure/Live.php` liefert Ressourcenhinweise über Mercure aus und speichert keine Fachzustände.
 
-Boards besitzen eine eigene Version und eine Sichtdefinition. Eine Karte ist eine Darstellung desselben Tasks. Boardpositionen besitzen boardbezogene Ordnung. Das Verschieben in eine Statusspalte ist ein Task-Command; Sortieren innerhalb derselben Spalte ist ein Boardpositions-Command.
+Es gibt kein eigenständiges `History`-Modul: Revisionen entstehen in `DbalStore`, werden über WorkManagement gelesen oder für unterstützte Datensätze wiederhergestellt und über Operations exportiert.
 
-Ein harter WIP-Check betrifft alle aktiven Boards, deren Filter die Aufgabe nach der Änderung erfüllt. Die Prüfung und Änderung verwenden eine gemeinsame projektbezogene Konsistenzgrenze. Zwei gleichzeitig freie Plätze dürfen nicht durch voneinander unabhängige Taskversionen doppelt vergeben werden. Dasselbe gilt für gleichzeitiges Anlegen zyklischer Abhängigkeiten.
+## Fachliche Regeln
 
-## 4. Klassifikation und menschliche Aufmerksamkeit
+| Bereich | Regel und Zuständigkeit |
+|---|---|
+| Projekt | `ProjectSlug` normalisiert den Projektschlüssel. `PortfolioHandler` legt beim Erstellen die Standardstatus an. `RunHandler` weist neue Runs in archivierten Projekten ab. |
+| Aufgabenstatus | Kategorien sind `backlog`, `ready`, `active`, `review`, `done` und `cancelled`. Projekte können eigene Status innerhalb dieser Kategorien führen. Ein Wechsel in `done` prüft die projektspezifische `TaskCompletionPolicy`. |
+| Boards und WIP | Boardspalten ordnen Projektstatus zu. `BoardWipPolicy` prüft harte Grenzen über alle aktiven Boards, deren Filter die geänderte Aufgabe einschließt. |
+| Abhängigkeiten | Eine Aufgabe kann nur von Aufgaben desselben Projekts abhängen. `WorkHandler` weist Selbstabhängigkeiten und gerichtete Zyklen zurück. |
+| Kriterien und Nachweise | Agenten und technische Principals melden Kriterien und Nachweise. Der Eigentümer bestätigt oder lehnt sie ab. Ein Nachweis gilt nur für die gebundene Aufgabenrevision und aktuelle Linkfassung. |
+| Links | `TaskLinkPolicy` und `contracts/schemas/task-links.schema.json` begrenzen Referenzen auf syntaktisch gültige HTTP- oder HTTPS-URLs. Die Anwendung ruft die Ziele nicht ab. |
+| Labels | WorkManagement verwaltet Label-IDs und die Arten `topic`, `workflow` und `attention`. Classification bietet aktive Themen- und Workflowlabels als Auswahl an. Systemverwaltete Attentionlabels gehören nicht zu dieser Taxonomie. |
+| Intake | Technische Aufgabeneingänge erhalten einen Intake. Eine manuelle Aufgabe wird nur bewertet, wenn die Projektpolicy Klassifikation für manuelle Eingänge einschaltet. Ergebnisse sind an Aufgabenrevision sowie Taxonomie-, Policy- und Routingversion gebunden. |
+| Runs | `RunHandler` speichert einen Snapshot der Aufgabenrevision, Rolle, Zielbindung, Workflowphase und Ausführungspolicy. Bei `RunHandler` belegt jeder Run in `ACTIVE_RUN_STATES` die T3-Projektbindung. Das Set enthält nicht `abandoned`. Dieser lokale Status hält nicht fest, ob T3 die Ausführung beendet hat. |
+| Workflow | Definitionen werden versioniert. Eine laufende Instanz behält ihre verwendete Definition als Snapshot. `WorkflowDefinitionPolicy` verlangt vollständige Laufzeitgrenzen und eindeutige Übergänge. Die Policy begrenzt parallele Runs auf einen je T3-Projektbindung. |
+| Eigentümerentscheidung | Approval bindet Runversuch, Aufgabenrevision und Ergebnisdigest. Bei einer Abweichung markiert `RunHandler` die Entscheidung als `invalidated`. |
+| Plugin | Ein Beitrag ist nur bei aktiviertem Plugin und erfüllten Abhängigkeiten verfügbar. Drain stoppt neue Arbeit und wartet auf offene Runs, Jobs und externe Aktivität. Paketentfernung erfordert ein neues App-Image. |
 
-Classification besitzt Definition und Herkunft der Labels. WorkManagement besitzt die Zuordnung am Task. Eine öffentliche lokale Anwendungsschnittstelle validiert Label-IDs und nimmt die Taskänderung innerhalb derselben Transaktion vor. Ausgehende Modellaufrufe liegen außerhalb dieser Transaktion.
+## Gemeinsamer Änderungsweg
 
-Eine ClassificationRecord ist ein unveränderlicher Entscheidungsnachweis: Eingaberevision, Taxonomie, Regeln, Modell-/Adapterversion, Frageversion, Antwortwerte, angewandte Schwellen und Ergebnis. Sie enthält keine pauschale Garantie, dass eine Modellwahrscheinlichkeit stimmt.
+HTTP- und MCP-Aufrufe verwenden dieselbe `Presentation\Gateway`-Instanz und dieselben `OperationHandler`. Der Gateway prüft Vertrag, Akteur, Pluginvoraussetzung, Version und Idempotenz, bevor er eine Änderung ausführt.
 
-Ein offener Handlungsgrund besitzt intern stabile ID, Code, Task/Run/Intake-Bezug, Adressat, Entstehung, Auflösungsvoraussetzung und optionalen Auflösungszeitpunkt. Die API darf diese Daten kompakt als `human_attention` zusammenfassen. Eine Anfrage an den meldenden Agenten erzeugt nicht allein deshalb einen menschlichen Grund. Ein technischer Akteur kann offene Eigentümerentscheidungen nicht durch Labelschreiben erledigen.
+`Store::atomic()` verbindet Datensatzänderung, Version, unterstützte Revision, Ereignisumschlag und lokale Action in einer DBAL-Transaktion. Dauerhafte Hintergrundaufträge liegen in `commands`. `Shared\Infrastructure\Consumer` leitet sie an den passenden Handler.
 
-## 5. Run und Workflow
+Infrastrukturadapter führen externe HTTP-, MCP-, OAuth- und Mercure-Aufrufe aus. Der Handler hält während eines externen Aufrufs keine lange SQLite-Schreibtransaktion offen.
 
-Ein Run bindet Ticketrevision, Phase, Profil-/Promptversion, T3-Ziel, clientRequestId und die unveränderliche gesendete Startpayload. Der Referenzthread-Modus enthält aufgelöste Routingwerte; beim Projektstandard steht die wirksame T3-Auswahl erst nach erster Annahme fest. Die später veränderte Konfiguration darf einen Retry nicht semantisch verändern. Als Projektentscheidung gilt im MVP höchstens ein aktiver Run je T3-Projektbindung und je entsprechend begrenztem Profil.
-
-Der Run endet nach seiner Phasenpolicy. Der Task endet nach seiner gesonderten Aufgabenpolicy. Ein Bearbeitungsergebnis darf deshalb einen Reviewlauf anstoßen, obwohl die Gesamtaufgabe noch nicht erfüllt ist. Menschlich bearbeitete Aufgaben erhalten keinen künstlichen Agentlauf.
-
-Ein unbekannter externer Zustand hält den Ausführungsplatz konservativ belegt. Der lokale Status `abandoned` bedeutet aufgegebene lokale Bearbeitung; er beweist keine Beendigung des externen Agents. Erst der dokumentierte Abgleich beziehungsweise eine begründete manuelle Wiederherstellung löst die Quarantäne.
-
-## 6. Shared Kernel und veröffentlichte Verträge
-
-Gemeinsam sind nur IDs, Versionswert, Clock, ActorRef, Correlation/Causation-ID und Ereignisumschlag. Ein universelles Task-Objekt mit allen Infrastrukturfeldern gehört nicht in den Shared Kernel. Andere Module verwenden veröffentlichte DTOs, Query-Ports oder versionierte Ereignisse.
-
-Domain Events bleiben fachlich benannt. Interne PHP-Klassennamen sind keine dauerhaften Schema-IDs. SQL-Migrationen, JSON-Schemas und Ereignisversionen werden zusammen dokumentiert. Lesende Projektionen dürfen gezielt über mehrere Tabellen lesen; fachliche Mutationen bleiben an den zuständigen Context gebunden.
-
-## 7. Sicherheit der fachlichen Grenzen
-
-Projekt- und Principalprüfungen erfolgen vor einer Mutation und erneut vor externen Wirkungen. Replay eines Idempotenzschlüssels gibt einem inzwischen gesperrten Principal keine alten Daten zurück. Prompt- und Tickettext sind Eingaben, keine Anweisung an den Autorisierungsmechanismus. Eine Decision darf nur vorhandene Auswahlwerte vorschlagen und keinen neuen Toolzugriff erzeugen.
+Die Grenzen sind bewusst pragmatisch: die Domainklassen enthalten reine Policies, während einige Fachmodule ihre Datensatzregeln in Application-Handlern durchsetzen. `scripts/check-architecture.php` prüft insbesondere Layerimporte, veröffentlichte Application-Ports und Zugriffe auf den rohen DBAL-Anschluss.

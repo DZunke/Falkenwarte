@@ -253,30 +253,134 @@ foreach ($exampleSchemas as $exampleName => $schemaName) {
     }
 }
 
-$requirements = json_decode((string) file_get_contents($root.'/requirements.json'), true, 512, JSON_THROW_ON_ERROR);
-$acceptance = (string) file_get_contents($root.'/docs/ACCEPTANCE.md');
-preg_match_all('/^##\s+(A\d{2})\s+-/m', $acceptance, $acceptanceMatches);
-$acceptanceIds = array_fill_keys($acceptanceMatches[1], true);
+$requirementsPath = $root.'/requirements.json';
+$requirements = json_decode((string) file_get_contents($requirementsPath), true, 512, JSON_THROW_ON_ERROR);
+$acceptancePath = $root.'/qa/acceptance/ACCEPTANCE.md';
+$acceptance = is_file($acceptancePath) ? (string) file_get_contents($acceptancePath) : '';
+if ('' === $acceptance) {
+    $errors[] = 'The current QA acceptance specification is missing or empty.';
+}
+preg_match_all('/^##\s+(A\d{2,})\s+-/m', $acceptance, $acceptanceMatches);
+$acceptanceIds = [];
+foreach ($acceptanceMatches[1] as $acceptanceId) {
+    if (isset($acceptanceIds[$acceptanceId])) {
+        $errors[] = sprintf('Duplicate acceptance case ID %s.', $acceptanceId);
+    }
+    $anchor = sprintf('<a id="%s"></a>', strtolower($acceptanceId));
+    if (!str_contains($acceptance, $anchor)) {
+        $errors[] = sprintf('Acceptance case %s is missing its explicit Markdown anchor.', $acceptanceId);
+    }
+    $acceptanceIds[$acceptanceId] = true;
+}
+if ([] === $acceptanceIds) {
+    $errors[] = 'The current QA acceptance specification defines no cases.';
+}
 $requirementIds = [];
+$referencedAcceptanceIds = [];
 foreach ($requirements['requirements'] ?? [] as $requirement) {
-    $id = $requirement['id'] ?? '';
+    if (!is_array($requirement)) {
+        $errors[] = 'requirements.json contains a non-object requirement.';
+        continue;
+    }
+    $id = $requirement['id'] ?? null;
+    if (!is_string($id) || 1 !== preg_match('/^R\d{2,}$/', $id)) {
+        $errors[] = sprintf('Invalid requirement ID %s.', (string) $id);
+        continue;
+    }
     if (isset($requirementIds[$id])) {
         $errors[] = sprintf('Duplicate requirement ID %s.', $id);
     }
     $requirementIds[$id] = true;
-    if (empty($requirement['specification']) || empty($requirement['acceptance'])) {
-        $errors[] = sprintf('Requirement %s lacks a concept reference or acceptance case.', $id);
+    if (empty($requirement['requirement'])) {
+        $errors[] = sprintf('Requirement %s lacks its description.', $id);
     }
-    foreach ($requirement['acceptance'] ?? [] as $acceptanceId) {
-        if (!isset($acceptanceIds[$acceptanceId])) {
-            $errors[] = sprintf('Requirement %s references missing acceptance case %s.', $id, $acceptanceId);
+    if (isset($requirement['specification']) && (!is_string($requirement['specification']) || '' === trim($requirement['specification']))) {
+        $errors[] = sprintf('Requirement %s has an invalid optional specification reference.', $id);
+    }
+    if (isset($requirement['milestone']) && (!is_string($requirement['milestone']) || '' === trim($requirement['milestone']))) {
+        $errors[] = sprintf('Requirement %s has an invalid optional milestone reference.', $id);
+    }
+
+    $caseReferences = $requirement['acceptance'] ?? null;
+    if (!is_array($caseReferences) || [] === $caseReferences) {
+        $errors[] = sprintf('Requirement %s has no acceptance case mapping.', $id);
+    } else {
+        if (count($caseReferences) !== count(array_unique(array_filter($caseReferences, 'is_string')))) {
+            $errors[] = sprintf('Requirement %s contains duplicate or invalid acceptance references.', $id);
+        }
+        foreach ($caseReferences as $acceptanceId) {
+            if (!is_string($acceptanceId) || !isset($acceptanceIds[$acceptanceId])) {
+                $errors[] = sprintf('Requirement %s references missing acceptance case %s.', $id, (string) $acceptanceId);
+                continue;
+            }
+            $referencedAcceptanceIds[$acceptanceId] = true;
+        }
+    }
+
+    foreach (['implementation', 'documentation'] as $mappingName) {
+        $paths = $requirement[$mappingName] ?? null;
+        if (!is_array($paths) || [] === $paths) {
+            $errors[] = sprintf('Requirement %s has no %s path mapping.', $id, $mappingName);
+            continue;
+        }
+        foreach ($paths as $mappedPath) {
+            if (!is_string($mappedPath)
+                || '' === $mappedPath
+                || str_starts_with($mappedPath, '/')
+                || preg_match('~(^|/)\.\.(/|$)~', $mappedPath)
+                || !file_exists($root.'/'.$mappedPath)) {
+                $errors[] = sprintf('Requirement %s has an invalid or missing %s path: %s.', $id, $mappingName, (string) $mappedPath);
+            }
+        }
+    }
+
+    if (preg_match_all('~(?:^|[; ])(docs/[A-Za-z0-9_./-]+)~', (string) ($requirement['specification'] ?? ''), $documentReferences)) {
+        foreach ($documentReferences[1] as $documentReference) {
+            if (!file_exists($root.'/'.$documentReference)) {
+                $errors[] = sprintf('Requirement %s references missing documentation path %s.', $id, $documentReference);
+            }
+        }
+    }
+}
+if ([] === $requirementIds) {
+    $errors[] = 'requirements.json defines no requirements.';
+}
+foreach (array_keys($acceptanceIds) as $acceptanceId) {
+    if (!isset($referencedAcceptanceIds[$acceptanceId])) {
+        $errors[] = sprintf('Acceptance case %s is not mapped to a requirement.', $acceptanceId);
+    }
+}
+$milestoneGates = $requirements['milestone_gates'] ?? null;
+if (!is_array($milestoneGates) || [] === $milestoneGates) {
+    $errors[] = 'requirements.json defines no milestone gates.';
+} else {
+    foreach ($milestoneGates as $milestone => $gate) {
+        if (!is_string($milestone) || 1 !== preg_match('/^M\d+$/', $milestone) || !is_array($gate) || !is_array($gate['acceptance'] ?? null)) {
+            $errors[] = sprintf('Invalid milestone gate %s.', (string) $milestone);
+            continue;
+        }
+        foreach ($gate['acceptance'] as $acceptanceId) {
+            if (!is_string($acceptanceId) || !isset($acceptanceIds[$acceptanceId])) {
+                $errors[] = sprintf('Milestone %s references missing acceptance case %s.', $milestone, (string) $acceptanceId);
+                continue;
+            }
         }
     }
 }
 
+preg_match_all('/\]\(([^)]+)\)/', $acceptance, $acceptanceLinks);
+foreach ($acceptanceLinks[1] as $acceptanceLink) {
+    if (preg_match('~^https?://~i', $acceptanceLink) || str_starts_with($acceptanceLink, '#')) {
+        continue;
+    }
+    [$linkedPath] = explode('#', $acceptanceLink, 2);
+    if ('' !== $linkedPath && !file_exists(dirname($acceptancePath).'/'.$linkedPath)) {
+        $errors[] = sprintf('Acceptance specification links to missing path %s.', $linkedPath);
+    }
+}
 if ([] !== $errors) {
     fwrite(STDERR, implode("\n", array_map(static fn (string $error): string => 'ERROR: '.$error, $errors))."\n");
     exit(1);
 }
 
-fwrite(STDOUT, sprintf("Validated OpenAPI 3.1 with %d operations, %d MCP mappings, %d contract examples, and %d requirements.\n", count($operations), count($seenTools), count($exampleSchemas), count($requirementIds)));
+fwrite(STDOUT, sprintf("Validated OpenAPI 3.1 with %d operations, %d MCP mappings, %d contract examples, %d requirements, and %d acceptance cases.\n", count($operations), count($seenTools), count($exampleSchemas), count($requirementIds), count($acceptanceIds)));

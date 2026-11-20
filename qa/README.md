@@ -1,25 +1,25 @@
 # Falkenwarte QA
 
-Die Produktabdeckung läuft mit Playwright gegen eine gestartete Falkenwarte-Anwendung und deren öffentliche Browser-, JSON- und MCP-Schnittstellen.
+Die [Prüfspezifikation](acceptance/ACCEPTANCE.md) ist der aktuell gepflegte Katalog der Abnahmefälle. `requirements.json` ordnet die Konzeptanforderungen zu; die statische Prüfung kontrolliert Kennungen, Referenzen und alle dort gepflegten Pfade.
 
-Die reproduzierbaren T3- und OpenAI-Decisions-Dienste stehen unter `qa/mocks`; sie werden ausschließlich im Testprofil gestartet.
+## Browser- und Qualitätsläufe
 
-## Lokaler Lauf
+Installiere die gesperrten Abhängigkeiten einmal mit `make install`. `make check` führt API- und Architekturprüfung, Symfony-Containerprüfung, PHPStan, PHP-CS-Fixer, Frontendprüfungen, Handbuchprüfung und die erlaubten Background-Funktionstests aus.
 
-Starte zuerst das Compose-Testprofil mit der Falkenwarte-App, SQLite-Volume, Worker, `t3-mock` und `decisions-mock`.
+`make e2e` baut das produktionsnahe App-Image und startet die isolierte Browserabnahme mit Chromium sowie den T3- und Decisions-Testdiensten. Sie prüft die echte Anwendung über Browser, JSON und MCP, ohne aktive T3- oder OpenAI-Zugänge.
 
-Installiere den gesperrten Runner mit `npm --prefix tests/e2e ci` und Chromium mit `npm --prefix tests/e2e exec playwright install chromium`.
+`make plugin-upgrade` prüft Installation, Entfernung, Konfigurationserhalt und Wiederherstellung über getrennte QA- und Produktionsimages. `make qa` führt Installation, `make check`, `make e2e` und `make plugin-upgrade` nacheinander aus.
 
-Führe die Browser- und Schnittstellentests mit `FALKENWARTE_BASE_URL=http://127.0.0.1:8080 npm --prefix tests/e2e test` aus.
+Für die lokale Bedienung starte `make app-up`; die Anwendung ist standardmäßig unter `https://localhost:8443` erreichbar. `make app-down` stoppt sie und bewahrt die lokalen Datenvolumes. Der Browserlauf mit isolierten Mocks wird über `make e2e` gestartet.
 
-Das Compose-Profil setzt `APP_ENV=test`, `APP_SETUP_TOKEN=test-setup-token-ONLY-for-isolated-qa`, `DECISIONS_API_KEY=qa-decisions-token` und die Mockadressen `http://decisions-mock:4310/v1/decisions` sowie `http://t3-mock:4311/mcp`.
+## Lokale und historische Nachweise
 
-Die Runnerkonfiguration begrenzt die Suite auf einen Chromium-Worker und startet keine internen HTTP-Mocks im Browser.
+Der E2E-Workflow schreibt den bereinigten Browserbericht nach `var/ci-evidence/acceptance.json`. Lokale Laufdaten und generierte QA-Berichte sind ignorierte Arbeitsausgaben; sie werden nicht in das Handbuch geschrieben.
 
-## Nachweise
+Die Belegaufbereitung erfolgt manuell. `scripts/prepare-traceability-evidence.php` verknüpft einen GitHub-Workflowexport, den bereinigten Browserbericht sowie Produktionsstart und Neustart. Optional kann `--a31=PATH` die getrennten GitHub-Lieferbelege ergänzen. Der Standardausgabepfad ist `var/ci-evidence/verification.json`.
 
-Der Playwright-Reporter schreibt gezielte Entwicklerläufe nach `qa/results.json`; diese Datei ist ignoriert und wird bei jedem Lauf überschrieben. `scripts/ci-e2e.sh` redigiert den vollständigen Workflowbericht zu `var/ci-evidence/acceptance.json`, den GitHub Actions als `acceptance`-Artefakt veröffentlicht.
+`php scripts/build-traceability.php` erstellt aus dem aktuellen Abnahmekatalog und vorhandenen optionalen Belegen `var/ci-evidence/traceability.md`. Fehlende hosted Belege bleiben offen. Mit `--output=PATH` kannst du den Bericht auch an einem anderen Ort ablegen, etwa unter `/tmp/`.
 
-Browserartefakte, Playwright-HTML-Bericht und Owner-Sitzungsdaten liegen unter `tests/e2e/results/` und gehören nicht in den Quellstand.
+Abgeschlossene Release-Fakten und ihre damaligen Quellen stehen getrennt und versioniert unter [evidence/](evidence/README.md). Sie sind nicht das Ergebnis eines aktuellen lokalen Laufs.
 
-Echte T3- und OpenAI-Verbindungen bleiben gesonderte Integrationsnachweise und werden nicht aus einem Mock-Lauf abgeleitet.
+Für R16 liegen die ursprünglichen Mockups im unveränderlichen [Konzeptstand ef488989152d305de39a11e11b65ef174eae223a](https://github.com/DZunke/Falkenwarte/tree/ef488989152d305de39a11e11b65ef174eae223a/docs), insbesondere in [docs/MOCKUPS.md](https://github.com/DZunke/Falkenwarte/blob/ef488989152d305de39a11e11b65ef174eae223a/docs/MOCKUPS.md).

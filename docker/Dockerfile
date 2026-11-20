@@ -98,7 +98,7 @@ COPY docker/Caddyfile /etc/frankenphp/Caddyfile
 COPY --from=frontend /workspace/public/build/ /app/public/build/
 COPY --from=frontend /tmp/falkenwarte-frontend-sbom.cdx.json /tmp/falkenwarte-frontend-sbom.cdx.json
 RUN composer dump-autoload --no-dev --classmap-authoritative --no-scripts \
-    && php scripts/build-docs.php \
+    && php scripts/build-docs.php --revision="$VCS_REF" \
     && APP_ENV=prod APP_SECRET=falkenwarte-image-build-validation-secret-not-used-at-runtime php bin/console lint:container --no-interaction \
     && rm -rf var/cache/* \
     && mkdir -p /usr/share/falkenwarte/image-audit \

@@ -7,10 +7,11 @@ NPM ?= npm
 DOCKER ?= docker
 DOCKER_COMPOSE ?= $(DOCKER) compose
 FALKENWARTE_IMAGE ?= falkenwarte:local
+DOCS_PORT ?= 8081
 COMPOSE_ENV_FILE_ARGS = $(if $(wildcard .env.local), --env-file .env --env-file .env.local)
 
 .DEFAULT_GOAL := help
-.PHONY: help install php-deps frontend-deps e2e-deps delivery-deps app-up app-down app-logs image format format-check contracts architecture container phpstan frontend-check static docs background check e2e e2e-run plugin-upgrade plugin-upgrade-run qa clean
+.PHONY: help install php-deps frontend-deps e2e-deps delivery-deps app-up app-down app-logs image format format-check contracts architecture container phpstan frontend-check static docs docs-serve background check e2e e2e-run plugin-upgrade plugin-upgrade-run qa clean
 .NOTPARALLEL: check static qa
 
 help: ## List the available developer commands
@@ -79,6 +80,10 @@ docs: ## Check documentation and build the static handbook
 	$(PHP) scripts/check-docs.php
 	$(PHP) scripts/build-docs.php
 	test -s public/docs/index.html
+
+docs-serve: docs ## Preview the handbook locally (override DOCS_PORT to change port)
+	@echo "Handbuch: http://127.0.0.1:$(DOCS_PORT)/docs/"
+	$(PHP) -S 127.0.0.1:$(DOCS_PORT) -t public scripts/preview-docs.php
 
 background: ## Run the focused background-job functional checks
 	vendor/bin/phpunit -c phpunit.dist.xml

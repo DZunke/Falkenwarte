@@ -1,19 +1,11 @@
-## Anlass und Ergebnis
+## Ergebnis
 
-Welches konkrete Problem besteht, und welches Verhalten entsteht durch diese Änderung?
+Welches Problem wird behandelt, und welches Verhalten oder welche Dokumentation ändert sich?
 
-## Fachlicher Umfang
+## Geprüfte Pfade und Nachweise
 
-Betroffene Bounded Contexts, öffentliche Commands/Events und Abnahme-IDs nennen. Bei reinen Text-/Darstellungsänderungen genügt eine kurze Einordnung.
+Betroffene Pfade, ausgeführte Make-Ziele oder GitHub-Checks und deren Ergebnis nennen. Für eine reine Dokumentationsänderung genügt lokal `make docs`. Nur relevante, nicht ausgeführte Prüfungen als offen angeben.
 
-## Nachweis
+## Auswirkungen, falls relevant
 
-Ausgeführte E2E-Szenarien mit tatsächlichen Ergebnissen verlinken. Statische QA getrennt nennen. Falls Background-Funktionstests betroffen sind, den geprüften Job-/Workerablauf angeben. Nicht ausgeführte Nachweise ausdrücklich als offen markieren.
-
-## Dokumentationsabgleich
-
-Aktualisierte Context Map, Objektlebenszyklen, Event-/API-/MCP-Verträge und ADRs verlinken, soweit fachlich betroffen. Falls keine Änderung nötig ist, kurz begründen. Ersetzte ADRs behalten ihre Geschichte und verweisen auf den Nachfolger.
-
-## Auslieferung
-
-Relevante Migrationen, Konfiguration, Kompatibilität und Wiederanlauf nach einem Fehler beschreiben. Bei fehlenden Auswirkungen genügt ein Satz. Der Conventional-Commit-PR-Titel muss zum späteren Squash-Commit passen.
+Nenne Auswirkungen auf Fachregeln, Verträge, Konfiguration oder Datenmigration, falls sie für den Review wichtig sind. Der PR-Titel folgt Conventional Commits.

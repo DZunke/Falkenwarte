@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 474" role="img" aria-labelledby="title desc">
+  <title id="title">Vom technischen Eingang zur Einordnung</title>
+  <desc id="desc">WorkManagement legt das Ticket an. Classification speichert Eingang und Prüfauftrag. Der Melder erhält jetzt die Quittung. Erst im Hintergrund holt der Worker eine Einordnung über Decisions ein und speichert das Ergebnis am Eingang.</desc>
+  <rect width="480" height="474" rx="12" fill="#f4f7f7"/>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M1 1 9 5 1 9" fill="none" stroke="#41605d" stroke-width="2"/>
+    </marker>
+  </defs>
+  <g fill="none" stroke="#41605d" stroke-width="2" marker-end="url(#arrow)">
+    <path d="M74 116v26"/>
+    <path d="M74 224v100"/>
+    <path d="M74 390v24"/>
+  </g>
+  <g stroke="#9cadaa" fill="#fff">
+    <rect x="32" y="48" width="416" height="68" rx="7"/>
+    <rect x="32" y="148" width="416" height="76" rx="7"/>
+    <rect x="32" y="328" width="416" height="62" rx="7"/>
+    <rect x="32" y="418" width="416" height="38" rx="7"/>
+  </g>
+  <path d="M26 275h428" stroke="#677a77" stroke-dasharray="4 4"/>
+  <g font-family="system-ui, sans-serif" fill="#183e3c">
+    <g font-size="16" font-weight="700">
+      <text x="32" y="31">Während der Anfrage</text>
+      <text x="98" y="304">Im Hintergrund</text>
+    </g>
+    <g font-size="21" font-weight="600">
+      <text x="52" y="76">WorkManagement</text>
+      <text x="52" y="179">Classification</text>
+      <text x="52" y="356">Messenger-Worker</text>
+    </g>
+    <g font-size="17">
+      <text x="52" y="101">Ticket im Projekt anlegen</text>
+      <text x="52" y="207">Eingang und Prüfauftrag speichern</text>
+      <text x="98" y="256">Quittung mit Ticket-ID liegt vor.</text>
+      <text x="52" y="380">Einordnung über Decisions einholen</text>
+      <text x="52" y="443">Ergebnis oder Klärungsbedarf speichern</text>
+    </g>
+  </g>
+</svg>

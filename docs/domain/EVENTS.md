@@ -1,75 +1,54 @@
-# Ereignisse, Actions und Objektgeschichte
+# Kommandos, Ereignisse und Objektgeschichte
 
-**Status:** Verbindlicher Fachvertrag aus Konzeptfassung 2.0. Der Umsetzungs- und Abnahmenachweis steht in [TRACEABILITY.md](../TRACEABILITY.md).
+Falkenwarte speichert Befehlsannahme, fachliche Änderung, Hintergrundauftrag und Live-Hinweis als getrennte Aussagen, weil sie unterschiedliche Zeitpunkte und Zuständigkeiten beschreiben.
 
-## 1. Vier verschiedene Aussagen
+## Vier Verträge mit unterschiedlicher Bedeutung
 
-| Typ | Aussage | Beispiel |
+| Vertrag | Bedeutung | Ablage oder Beispiel |
 |---|---|---|
-| Command | Eine Änderung wird angefordert. | RegisterTicket, RequestRun |
-| Domain Event | Eine fachliche Änderung ist committed. | TicketClassified, LinkRegistered |
-| Action Event | Ein Anwendungsaufruf wurde angenommen oder verarbeitet. | ActionAccepted, ActionSucceeded |
-| UI-Hinweis | Eine Ressource kann neu geladen werden. | Ressourcentyp Task, ID und Version |
+| Operation / Kommando | Ein Akteur fordert eine lesende oder mutierende Anwendungshandlung an. | OpenAPI-`operationId`, `OperationHandler`, `commands`-Auftrag für Hintergrundarbeit. |
+| Domain-Ereignis | Ein Datensatz wurde lokal erstellt, geändert oder entfernt. | Umschlag `kind=domain` in `events`. Beispiele sind `task.created`, `run.queued` und `classification.applied`. |
+| Action-Ereignis | Ein Anwendungsaufruf wurde angenommen, gestartet oder abgeschlossen. | `action.accepted`, `action.started`, `action.succeeded` und `action.failed`. |
+| UI-Änderungshinweis | Der Client soll die Ressource erneut laden. | `change_json` mit Ressourcentyp, ID, Projekt, Version und Änderung. |
 
-Commandnamen und Beispiele sind Projektverträge, keine Symfony-Bordmittel. Symfony Messenger transportiert versionierte Nachrichten; Symfony EventDispatcher darf synchrone interne Benachrichtigungen unterstützen. Der dauerhafte fachliche Nachweis entsteht in den expliziten Tabellen und Transaktionen.
+Ein Auftragsdatensatz in `commands` ist kein Domain-Ereignis. Er veranlasst einen Worker, während ein Journalereignis eine bereits gespeicherte lokale Änderung beschreibt.
 
-## 2. Fachlicher Katalog
+## Persistierter Ereignisumschlag
 
-| Ereignis | Produzent | Fachliche Aussage und typische Reaktion |
-|---|---|---|
-| ProjectCreated / ProjectArchived | Portfolio | Identität beziehungsweise Archivierung ist gespeichert; UI und Metriken aktualisieren. |
-| TicketRegistered | WorkManagement | Task existiert. Bei technischem Eingang ist der Intake mitpersistiert. |
-| TaskMoved | WorkManagement | Tatsächlicher Statuswechsel unter WIP- und Abschlussguards; Verlauf und Durchsatzprojektion aktualisieren. |
-| TaskReopened | WorkManagement | Frühere Beendigung wurde mit Grund aufgehoben; neue Durchlaufepisode beginnt. |
-| LabelDefinitionChanged | Classification | Fachliche Taxonomieänderung wurde versioniert; alte Klassifikationen werden nicht umgeschrieben. |
-| TicketClassified | Classification | Zulässige Einordnung wurde auf die geprüfte Revision angewandt. |
-| InformationRequested / InformationSupplied | Classification | Konkrete fehlende Felder beziehungsweise nachgereichte Antworten sind gespeichert. |
-| HumanAttentionRequired / HumanAttentionResolved | Zuständiger Fachcontext | Ein konkreter Grund ist offen beziehungsweise durch seine Auflösungsaktion erledigt. |
-| LinkRegistered / LinkChanged / LinkRemoved | WorkManagement | Referenzbestand wurde geändert; keine Aussage über den externen Inhalt oder Status. |
-| RunRequested | Orchestration | Snapshot, Startidentität und reservierter Slot sind committed. |
-| RunDispatched | Orchestration | Ein zugeordneter externer Annahmebeleg liegt vor. |
-| RunObservationRecorded | Orchestration | Ein externer Zustand wurde zu einem Zeitpunkt beobachtet. |
-| RunResultReported | Orchestration | Eine zugeordnete Agentbehauptung wurde gespeichert. |
-| HumanDecisionRecorded | Orchestration / Classification | Eigentümer hat über die konkret gebundenen Daten entschieden. |
-| RunFinished | Orchestration | Phasenpolicy hat einen nachvollziehbaren Endzustand ergeben. |
-| WorkflowPhaseAdvanced | Automation | Eine konkrete Workflowinstanz hat unter ihren Guards die Phase gewechselt. |
-| PluginActivationChanged | Extensions | Beiträge wurden freigeschaltet oder gesperrt; aktive Arbeit folgt ihrer Drainpolicy. |
-| PluginRemovalCompleted / PluginRemovalPlanCompleted | Extensions | Ein Betreiberimage ohne Pluginmanifest wurde erkannt; Pluginzustand, Revision, Domain-Event und abgeschlossener Entfernungsplan sind gespeichert. |
+Das [Event-Envelope-Schema v1](../../contracts/schemas/event-envelope.schema.json) benennt Event-ID, Typ, Schema-Version, Zeitpunkt, Projekt, Akteur, Korrelations- und Action-ID, optionale Causation-ID, Aggregate-Referenz und Nutzdaten.
 
-Die Tabelle ist der fachliche Katalog. Die endgültigen serialisierten Typnamen werden im jeweiligen Schema fixiert. Öffentlich verwendete Namen werden nicht durch Refactoring einer PHP-Klasse geändert. Das Beispiel `contracts/schemas/task-moved.schema.json` zeigt einen konkreten versionierten Vertrag.
+`DbalStore::journal()` leitet die meisten `event_type`-Werte aus dem Journalnamen des Handlers ab. Punkte bleiben erhalten, CamelCase wird in Kleinbuchstaben mit Unterstrichen umgewandelt. Ein Aufgabenstatuswechsel erhält den festen Typ `work.task_moved` aus dem [Task-Moved-Schema v1](../../contracts/schemas/task-moved.schema.json).
 
-Die gespeicherten Klassifikationsrevisionen trennen Bewertung und Anwendung: `classification.assessed` hält Antworten und die geprüften Ticket-, Taxonomie-, Policy- und Routingversionen fest, `classification.applied` kennzeichnet die unter Versionsprüfung übernommene Entscheidung, und `classification.assessment_stale` protokolliert eine durch zwischenzeitliche Änderungen überholte Antwort. Ein stale Nachweis überschreibt weder Ticketlabels noch den aktuellen Intake; die erneute Bewertung erzeugt einen Nachweis für die dann aktuelle Ticketrevision.
+`DbalStore` setzt `correlation_id` und `action_id` auf dieselbe Action-ID. Der Store schreibt `causation_id` als `null`, sodass die Ereignisse keine Verursachungskette enthalten.
 
-## 3. Umschlag und Datenminimierung
+Normale Datensatzänderungen erhalten `kind=domain` und Action-Datensätze `kind=action`. Für nicht als UUID verwendbare Datensatz-IDs setzt `DbalStore` `kind=integration`. Das Schema erlaubt außerdem `ui`. Der Store legt UI-Hinweise separat als `change_json` ab.
 
-Der Eventvertrag v1 umfasst den [gemeinsamen Umschlag](../../contracts/schemas/event-envelope.schema.json), die [Action-Ereignisse](../../contracts/schemas/action-event.schema.json), den [Ticketstatuswechsel](../../contracts/schemas/task-moved.schema.json) und die [öffentlichen Änderungshinweise](../../contracts/schemas/ui-change.schema.json).
+Der aktuelle Datensatz liegt in `records`. Das Journal ergänzt ihn. `DbalStore` lädt Ressourcen aus den Datensätzen und baut sie nicht ausschließlich aus Ereignissen wieder auf.
 
-Jeder Umschlag enthält stabile Event-ID, Typ, Schemaversion, Zeitpunkt, Projekt-/Aggregatreferenz, Aggregatversion, ActorRef, correlation_id, causation_id und Payload. Die Korrelation verbindet Intake, Run und Folgephase. Die Causation-ID verweist auf den konkreten Auslöser.
+## Actions und Hintergrundaufträge
 
-Secrets, Authorization-Header, Sessioncookies und rohe fremde Transkripte gehören nicht in Ereignisse. Externe Antworten werden vor dem Speichern normalisiert und redigiert. Für die Klassifikation genügen nachvollziehbare Eingabereferenz, Fragen-/Policyversion und benötigte Antwortwerte; eine vollständige Promptkopie ist keine pauschale Loggingpflicht.
+`Presentation\Gateway` erzeugt für mutierende API-Aufrufe eine Action mit Status `accepted` und `started`. Wenn kein Hintergrundauftrag offen bleibt, setzt der Gateway sie auf `succeeded`.
 
-## 4. Atomarer lokaler Abschluss
+`Shared\Infrastructure\Consumer` aktualisiert die Action nach Abschluss aller Aufträge auf `succeeded` oder nach dem letzten fehlgeschlagenen Versuch auf `failed`. Intake und Run behalten ihren eigenen Outcome.
 
-Der Application-Handler öffnet eine kurze DBAL-Transaktion, prüft Version und Guards, verändert Zustand, schreibt Revision, Domain Events, Outboxeinträge und den lokalen Actionausgang und committet gemeinsam. Ein Consumer speichert Inbox-Marker und lokale Wirkung ebenfalls gemeinsam.
+Der Consumer routet den Auftrag über seinen Präfix, prüft den `inbox`-Marker und wiederholt fehlgeschlagene Aufträge höchstens dreimal. Der Marker verhindert doppelte lokale Verarbeitung desselben Auftrags. Ein externer Provideraufruf kann trotzdem wiederholt werden. T3-Aufträge mit unsicherem Ausgang werden abgeglichen.
 
-HTTP zu T3, Decisions oder Mercure findet außerhalb dieser Transaktion statt. Ein Netzwerkfehler kann so keinen langen SQLite-Schreiblock halten. Nach Timeout wird je Außenwirkung entschieden, ob derselbe Auftrag wiederholbar ist oder ein Abgleich nötig ist.
+Das [Action-Event-Schema v1](../../contracts/schemas/action-event.schema.json) enthält einen Befehlstyp, das Ziel, eine mögliche Ergebnisressource und redigierte Fehlerangaben.
 
-Mindestens-einmal-Zustellung ist die technische Annahme. Genau-einmal-Wirkung entsteht nur dort, wo eine konkrete Deduplizierung nachweisbar greift. Besonders T3-Idempotenz ist an den beobachteten Auth-Namespace gebunden und wird nicht als universelle Garantie formuliert.
+## Revisionen und Live-Zustellung
 
-## 5. History und Wiederherstellung
+Für Datensatztypen aus `Store::PUBLIC_TYPES` schreibt `DbalStore::save()` eine Revision mit Ressource, Version, Projekt, Akteur, Action, Zusammenfassung, Änderungen und redigiertem Snapshot. Die Revision ist ein Änderungsverlauf und kein eigener Bounded Context.
 
-History speichert redigierte Snapshots und daraus lesbare Änderungen mit Schema, Akteur und Grund. Eine Revisionsansicht benötigt keine damalige PHP-Klasse oder ein noch installiertes Plugin. Bekannte Kernfelder werden verständlich gerendert; unbekannte alte Zusatzfelder bleiben als beschriftetes JSON/Text lesbar.
+`DbalStore` markiert nur nicht entfernte Tasks als wiederherstellbar. `WorkHandler` prüft Rechte und aktuelle Regeln, bevor es eine Taskrevision als neue Änderung speichert.
 
-Bei Ticketrevisionen enthält `custom_field_values` den öffentlichen Stand der typisierten Zusatzfelder. Der Verlauf hält Schlüssel und Bezeichnung zum Zeitpunkt der Revision fest. Bei älteren Snapshots ohne gespeicherte Bezeichnung zeigt er den damaligen Feldschlüssel. Vertrauliche Schlüsselnamen werden vor der Historisierung ausgefiltert. Das Zurückspielen einer Revision erhält zwischenzeitlich deaktivierte Felddefinitionen im inaktiven Zustand.
+Für UI-fähige Ressourcentypen speichert der Store einen minimierten `change_json`-Hinweis mit Version und Ressourcen-ID. `Live::publish()` liefert offene Hinweise privat über Mercure aus und markiert sie als zugestellt. Der Browser lädt danach die aktuelle Ressource über JSON.
 
-Eine Wiederherstellung ist ein neuer Command gegen die aktuelle Version. Sie prüft heutige Rechte und Invarianten, kopiert nur erlaubte fachliche Felder und erzeugt eine neue Revision. Run-IDs, offene Freigaben, Authzustand oder externe Ausführung werden nicht aus einem historischen Snapshot blind zurückkopiert.
+Das [UI-Change-Schema v1](../../contracts/schemas/ui-change.schema.json) ist daher ein Invalidierungshinweis und kein Ersatz für die autoritative Ressource oder ein vollständiges Domain-Ereignis.
 
-## 6. Projektionen und Rebuild
+`DbalStore::journal()` schreibt Änderungsart und ausgewählte Zustandsfelder in Ereignisse, nicht den vollständigen Datensatz. `DbalStore::redact()` entfernt Secret-, Passwort- und Tokenfelder aus Revisions-Snapshots.
 
-Metriken verarbeiten versionierte Ereignisse mit Consumer-ID und Cursor. Der Rebuild läuft mit ausdrücklich deaktivierten Ausführungswirkungen und ersetzt seine Projektion kontrolliert. Er sendet keine Agentaufträge und spielt keine menschlichen Entscheidungen erneut ab.
+## Projektionen
 
-Für Lead-/Cycle-Time wird eine Episode vom jeweiligen fachlichen Beginn bis zum Abschluss betrachtet. Wiedereröffnung erzeugt eine weitere Episode; die Definition nennt, ob erste oder aktuelle Episode dargestellt wird. Unvollständige oder unbekannte Zeitwerte werden nicht als Null eingebucht.
+`MetricsHandler` berechnet Dashboardwerte aus aktuellen Aufgaben, Runs und Journalereignissen und kann gespeicherte Metrikprojektionen neu aufbauen. Ein Rebuild verändert Metrikdatensätze, wiederholt aber keine T3-Ausführung und keine Eigentümerentscheidung.
 
-## 7. Abnahme
-
-Die E2E-Fälle A04–A06 zeigen atomare Änderung, Wiederaufnahme und History. A10–A12 behandeln externe Unsicherheit. A16 prüft Metriken und Rebuild. Ergänzende Backend-Funktionstests dürfen ausschließlich die erlaubten Background-Aufgaben abdecken; es entsteht keine separate Domain-Unit-Suite.
+Workflow-Trigger lesen passende Domain-Ereignisse des Projektjournals ab einem gespeicherten Cursor. Bei einem Treffer erzeugen sie einen separaten `workflow.trigger`-Auftrag.

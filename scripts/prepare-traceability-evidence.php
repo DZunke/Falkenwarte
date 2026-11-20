@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 $root = dirname(__DIR__);
 $options = [];
+$supportedOptions = ['run', 'acceptance', 'production-boot', 'production-restart', 'a31', 'output'];
 foreach (array_slice($_SERVER['argv'] ?? [], 1) as $argument) {
     if (!str_starts_with($argument, '--') || !str_contains($argument, '=')) {
         throw new InvalidArgumentException(sprintf('Expected --name=value, got %s.', $argument));
@@ -11,6 +12,9 @@ foreach (array_slice($_SERVER['argv'] ?? [], 1) as $argument) {
     [$name, $value] = explode('=', substr($argument, 2), 2);
     if ('' === $name || '' === $value || isset($options[$name])) {
         throw new InvalidArgumentException(sprintf('Invalid or repeated option %s.', $name));
+    }
+    if (!in_array($name, $supportedOptions, true)) {
+        throw new InvalidArgumentException(sprintf('Unknown option --%s.', $name));
     }
     $options[$name] = $value;
 }
@@ -33,6 +37,13 @@ $readJson = static function (string $path): array {
 
     return $value;
 };
+$acceptanceSpecificationPath = $root.'/qa/acceptance/ACCEPTANCE.md';
+$acceptanceSpecification = is_file($acceptanceSpecificationPath) ? (string) file_get_contents($acceptanceSpecificationPath) : '';
+preg_match_all('/^##\s+(A\d{2,})\s+-/m', $acceptanceSpecification, $acceptanceMatches);
+$knownAcceptanceIds = array_fill_keys($acceptanceMatches[1], true);
+if ([] === $knownAcceptanceIds) {
+    throw new RuntimeException('The current QA acceptance specification contains no cases.');
+}
 $get = static function (array $record, string $camel, ?string $snake = null): mixed {
     return $record[$camel] ?? (null === $snake ? null : ($record[$snake] ?? null));
 };
@@ -83,6 +94,20 @@ $run = $readJson($options['run']);
 $acceptance = $readJson($options['acceptance']);
 $productionBoot = $readJson($options['production-boot']);
 $productionRestart = $readJson($options['production-restart']);
+$reportedAcceptanceIds = [];
+$reportedCases = $acceptance['cases'] ?? [];
+if (!is_array($reportedCases)) {
+    throw new RuntimeException('Browser evidence cases must be an array.');
+}
+foreach ($reportedCases as $case) {
+    if (!is_array($case) || !is_string($case['acceptance_id'] ?? null) || !isset($knownAcceptanceIds[$case['acceptance_id']])) {
+        throw new RuntimeException(sprintf('Browser evidence references unknown acceptance case %s.', (string) ($case['acceptance_id'] ?? null)));
+    }
+    if (isset($reportedAcceptanceIds[$case['acceptance_id']])) {
+        throw new RuntimeException(sprintf('Browser evidence duplicates acceptance case %s.', $case['acceptance_id']));
+    }
+    $reportedAcceptanceIds[$case['acceptance_id']] = true;
+}
 $runId = $get($run, 'databaseId', 'run_id');
 $runSha = $get($run, 'headSha', 'head_sha');
 $runUrl = $readUrl($get($run, 'htmlUrl', 'html_url'), $readUrl($get($run, 'url')) ?? '');
@@ -147,13 +172,14 @@ $cases = [];
 if ($primaryPassed && is_array($acceptance['cases'] ?? null) && null !== $workflowUrl) {
     $e2eUrl = $jobResults['e2e']['source_url'] ?? $workflowUrl;
     foreach ($acceptance['cases'] as $case) {
-        if (!is_array($case) || !$passedCase($case) || !is_string($case['acceptance_id'] ?? null) || !preg_match('/^A\d{2}$/', $case['acceptance_id'])) {
+        if (!is_array($case) || !$passedCase($case)) {
             continue;
         }
-        if (in_array($case['acceptance_id'], ['A03', 'A05', 'A19', 'A31'], true)) {
+        $acceptanceId = $case['acceptance_id'] ?? null;
+        if (in_array($acceptanceId, ['A03', 'A05', 'A19', 'A31'], true)) {
             continue;
         }
-        $cases[$case['acceptance_id']] = [
+        $cases[$acceptanceId] = [
             'status' => 'passed',
             'evidence_kind' => 'hosted_browser_acceptance',
             'commit' => $primaryCommit,
