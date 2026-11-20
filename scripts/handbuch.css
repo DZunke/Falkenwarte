@@ -150,6 +150,10 @@ article {
     overflow-wrap: anywhere;
 }
 
+article [id] {
+    scroll-margin-top: 1rem;
+}
+
 h1,
 h2,
 h3 {
@@ -167,16 +171,20 @@ h2 {
     font-size: 1.35rem;
 }
 
-table {
-    display: block;
-    width: 100%;
+.handbook-table {
     overflow-x: auto;
+}
+
+table {
+    width: 100%;
     border-collapse: collapse;
     font-size: .92rem;
+    overflow-wrap: normal;
 }
 
 th,
 td {
+    min-width: min(20ch, 50vw);
     padding: .5rem .75rem;
     border: 1px solid var(--line);
     text-align: left;

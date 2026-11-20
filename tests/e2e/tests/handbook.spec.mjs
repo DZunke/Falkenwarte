@@ -119,6 +119,37 @@ test('A23 A32 handbook navigation, repository links and anchors work in the stat
   await expect(ownerPage).toHaveURL(/\/#\/docs\/OPERATIONS\.md$/);
   await expect(appAnchor).toBeInViewport();
 
+  await ownerPage.setViewportSize({ width: 390, height: 844 });
+  await ownerPage.goto('/#/docs/user/AGENT_SKILL.md');
+  const skillGuide = ownerPage.locator('main article');
+  const apiHandbookLink = skillGuide.getByRole('link', { name: 'MCP-Werkzeuge', exact: true });
+  await expect(apiHandbookLink).toHaveCount(1);
+  await apiHandbookLink.click();
+  await expect(ownerPage).toHaveURL(/\/#\/docs\/API\.md$/);
+
+  const mcpSection = ownerPage.getByRole('heading', { name: 'MCP-Tools verwenden', level: 2 });
+  await expect(mcpSection).toHaveAttribute('id', 'mcp-tools-verwenden');
+  await expect(mcpSection).toBeInViewport();
+  await (await mcpSection.elementHandle()).waitForElementState('stable');
+  const headerBox = await ownerPage.locator('header.sticky').boundingBox();
+  const headingBox = await mcpSection.boundingBox();
+  expect(headerBox).not.toBeNull();
+  expect(headingBox).not.toBeNull();
+  expect(headingBox.y).toBeGreaterThan(headerBox.y + headerBox.height);
+  expect(await ownerPage.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+
+  const apiToolsScroller = ownerPage.locator('main article .handbook-table').filter({
+    has: ownerPage.getByRole('columnheader', { name: 'MCP-Tool', exact: true }),
+  });
+  await expect(apiToolsScroller).toHaveCount(1);
+  const article = ownerPage.locator('main article');
+  expect(await article.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  expect(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expect.poll(() => apiToolsScroller.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
+  await apiToolsScroller.hover();
+  await ownerPage.mouse.wheel(1200, 0);
+  await expect.poll(() => apiToolsScroller.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+
   await ownerPage.goto('/#/agents');
   const [skill] = await Promise.all([
     ownerPage.waitForEvent('download'),
