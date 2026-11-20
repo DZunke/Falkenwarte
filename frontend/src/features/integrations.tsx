@@ -27,7 +27,7 @@ export default function IntegrationsView() {
   const [name, setName] = useState('T3 Code')
   const [url, setUrl] = useState('')
   const [selectedId, setSelectedId] = useState<string>()
-  const [bindingTarget, setBindingTarget] = useState<components['schemas']['RemoteProject']>()
+  const [bindingTarget, setBindingTarget] = useState<{ connectionId: string; project: components['schemas']['RemoteProject'] }>()
   const selected = connectionsQuery.isError ? undefined : connections.find((item) => item.id === selectedId) ?? connections[0]
   const effectiveId = selected?.id
   const canLoadProjects = Boolean(effectiveId && selected?.auth_status === 'valid')
@@ -90,7 +90,9 @@ export default function IntegrationsView() {
     onError: (error) => toast.error(formatError(error)),
   })
 
-  const openBindingDialog = (project: components['schemas']['RemoteProject']) => setBindingTarget(project)
+  const bindingSourcesReady = canLoadProjects && projectsQuery.isSuccess && bindingIndexQuery.isSuccess
+  const bindingSourcesError = projectsQuery.error ?? bindingIndexQuery.error
+  const reloadBindingSources = () => { void projectsQuery.refetch(); void bindingIndexQuery.refetch() }
 
   if (connectionsQuery.isPending) return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
   if (connectionsQuery.isError) return <Card><CardContent className="p-6"><h2 className="font-semibold">T3-Verbindungen konnten nicht geladen werden</h2><p className="mt-2 text-sm text-muted-foreground">{formatError(connectionsQuery.error)}</p><Button variant="outline" className="mt-4" onClick={() => void connectionsQuery.refetch()}>Erneut laden</Button></CardContent></Card>
@@ -167,14 +169,25 @@ export default function IntegrationsView() {
                     <a className="font-medium underline underline-offset-4" href={`#/project/${encodeURIComponent(localProject.id)}/board`}>{localProject.name} öffnen</a>
                     <a className="underline underline-offset-4" href={`#/roles/${encodeURIComponent(localProject.id)}/${encodeURIComponent(selected.id)}`}>Agentrolle einrichten</a>
                   </div>)}
-                </div> : <Button variant="outline" size="sm" disabled={!projectsQuery.isSuccess || !bindingIndexQuery.isSuccess || Boolean(bindingIndexQuery.isFetching)} onClick={() => openBindingDialog(project)}>Projekt verbinden</Button>}
+                </div> : <Button variant="outline" size="sm" disabled={!bindingSourcesReady} onClick={() => setBindingTarget({ connectionId: selected.id, project })}>Projekt verbinden</Button>}
               </div>
             })}
             {canLoadProjects && remoteProjectsQuery.data?.items.length === 0 && <p className="py-3 text-sm text-muted-foreground">Für diese Verbindung wurden keine T3-Projekte gemeldet.</p>}
           </CardContent>
         </Card>
       </section>}
-      {bindingTarget && selected && bindingIndexQuery.data && projectsQuery.data && <ProjectBindingDialog key={`${selected.id}:${bindingTarget.external_project_id}`} connectionId={selected.id} remoteProject={bindingTarget} projects={internalProjects} boundProjects={bindingIndexQuery.data} onClose={() => setBindingTarget(undefined)} />}
+      {bindingTarget && selected?.id === bindingTarget.connectionId && (
+        <ProjectBindingDialog
+          connectionId={bindingTarget.connectionId}
+          remoteProject={bindingTarget.project}
+          projects={internalProjects}
+          boundProjects={bindingIndexQuery.data ?? []}
+          sourcesReady={bindingSourcesReady}
+          sourcesError={bindingSourcesError}
+          onReload={reloadBindingSources}
+          onClose={() => setBindingTarget(undefined)}
+        />
+      )}
     </main>
   )
 }

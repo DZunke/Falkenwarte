@@ -24,6 +24,9 @@ type Props = {
   remoteProject: RemoteProject
   projects: Project[]
   boundProjects: BoundProject[]
+  sourcesReady: boolean
+  sourcesError: Error | null
+  onReload: () => void
   onClose: () => void
 }
 
@@ -57,7 +60,7 @@ export function bindingsForT3Project(boundProjects: BoundProject[], connectionId
   return boundProjects.filter(({ binding }) => binding.connection_id === connectionId && binding.external_project_id === externalProjectId)
 }
 
-export default function ProjectBindingDialog({ connectionId, remoteProject, projects, boundProjects, onClose }: Props) {
+export default function ProjectBindingDialog({ connectionId, remoteProject, projects, boundProjects, sourcesReady, sourcesError, onReload, onClose }: Props) {
   const queryClient = useQueryClient()
   const availableProjects = projects.filter((project) => !project.archived && project.active_binding_id === null)
   const [mode, setMode] = useState<'existing' | 'new'>(availableProjects.length > 0 ? 'existing' : 'new')
@@ -159,6 +162,8 @@ export default function ProjectBindingDialog({ connectionId, remoteProject, proj
         <DialogDescription>„{remoteProject.title}“ wird mit einem Falkenwarte-Projekt verknüpft. Agenten und Ausführungsziele wählst du in T3.</DialogDescription>
       </DialogHeader>
 
+      {sourcesError && <div role="alert" className="text-sm"><p>{formatError(sourcesError)}</p><Button variant="link" onClick={onReload}>Zuordnungen erneut laden</Button></div>}
+      {!sourcesReady && !sourcesError && <p role="status" className="text-sm text-muted-foreground">Projektzuordnungen werden aktualisiert…</p>}
       {duplicate.length > 0 && <div role="status" className="rounded-md border bg-muted/30 p-3 text-sm">Dieses T3-Projekt ist bereits mit Falkenwarte-Projekten verbunden.
         <ul className="mt-2 list-disc space-y-1 pl-5">{duplicate.map(({ project }) => <li key={project.id}><a className="font-medium underline underline-offset-4" href={`#/project/${encodeURIComponent(project.id)}/board`}>{project.name}</a></li>)}</ul>
       </div>}
@@ -190,7 +195,7 @@ export default function ProjectBindingDialog({ connectionId, remoteProject, proj
 
       <DialogFooter className="flex-col-reverse gap-2 sm:flex-row">
         <Button type="button" variant="outline" onClick={onClose} disabled={bind.isPending}>Abbrechen</Button>
-        {duplicate.length === 0 && <Button type="button" onClick={() => { setErrorMessage(undefined); bind.mutate({ projectId: createdProject?.id ?? selectedProjectId }) }} disabled={bind.isPending || !isReady}>{bind.isPending && <LoaderCircle className="animate-spin" />}{createdProject || mode === 'existing' ? 'Projekt verbinden' : 'Projekt anlegen und verbinden'}</Button>}
+        {duplicate.length === 0 && <Button type="button" onClick={() => { setErrorMessage(undefined); bind.mutate({ projectId: createdProject?.id ?? selectedProjectId }) }} disabled={bind.isPending || !sourcesReady || !isReady}>{bind.isPending && <LoaderCircle className="animate-spin" />}{createdProject || mode === 'existing' ? 'Projekt verbinden' : 'Projekt anlegen und verbinden'}</Button>}
       </DialogFooter>
     </DialogContent>
   </Dialog>
