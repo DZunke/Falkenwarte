@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/DZunke/Falkenwarte/compare/v0.2.0...v0.2.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* keep ticket tabs within reach on desktop and mobile ([#7](https://github.com/DZunke/Falkenwarte/issues/7)) ([e7f6084](https://github.com/DZunke/Falkenwarte/commit/e7f6084f747d7a6f8d1701e3f1076fe944353917))
+
 ## [0.2.0](https://github.com/DZunke/Falkenwarte/compare/v0.1.0...v0.2.0) (2026-11-19)
 
 

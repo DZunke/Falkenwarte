@@ -76,7 +76,7 @@ ENV APP_ENV=prod \
 WORKDIR /app
 ARG VCS_REF=unknown
 # x-release-please-start-version
-ARG APP_VERSION=0.2.0
+ARG APP_VERSION=0.2.1
 # x-release-please-end
 ARG DEBIAN_SNAPSHOT=20261104T212339Z
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer
