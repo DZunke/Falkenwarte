@@ -1,5 +1,7 @@
 # Falkenwarte auf GitHub ausliefern
 
+Der aktuelle, abgenommene Stand ist v0.2.1 ([Release](https://github.com/DZunke/Falkenwarte/releases/tag/v0.2.1)). Die geprüften Veröffentlichungsbelege folgen im Abschnitt „Geprüfte Veröffentlichung v0.2.1“.
+
 Das Repository `DZunke/Falkenwarte` enthält den Anwendungscode, die Abnahmesuite und den Releaseprozess. In der privaten Installation laufen die Verwaltung von Tickets und die T3-Aufträge mit den dort eingerichteten Zugängen. GitHub-Zugangsdaten werden ausschließlich während der Entwicklung und für die Veröffentlichung des Falkenwarte-Images benötigt.
 
 ## Änderungen prüfen und mergen
@@ -44,7 +46,7 @@ Die QA führt PR-Code ohne produktive Secrets aus. Die verwendeten Actions sind 
 
 Die Fork-PR-Verifikation ist auf ausdrückliche Nutzerentscheidung vertagt und bleibt unverifiziert; bis zu einer erneuten Freigabe ist sie eine dokumentierte M6-Ausnahme und keine aktive Abnahmebedingung.
 
-## Geprüfte Veröffentlichung
+## Historischer Nachweis: geprüfte Veröffentlichung v0.2.0
 
 Für v0.2.0 stimmen Tag, geprüfter Commit und OCI-Revision überein. Der GitHub-Packages-Eintrag bestätigt für den Versionstag denselben Registry-Digest wie das veröffentlichte Manifest. [Release](https://github.com/DZunke/Falkenwarte/releases/tag/v0.2.0) · [Image-Manifest](https://github.com/DZunke/Falkenwarte/releases/download/v0.2.0/image-manifest.json)
 
@@ -73,3 +75,24 @@ gh release view
 ```
 
 Den tatsächlichen Prüf- und Veröffentlichungsstand dokumentiert der [Abnahmenachweis](TRACEABILITY.md).
+
+## Geprüfte Veröffentlichung v0.2.1
+
+Der Tag `v0.2.1` zeigt auf den getesteten Commit `e9be3da563d598550b13e6ad576ea0417e40c79b`. Das OCI-Revision-Label enthält dieselbe SHA. Der Registry-Manifest-Digest `sha256:8738f47cca93cfd921ab6172e3e1880595a1242169be4ffcfafcc1be9fec2c6d` entspricht dem Image-Digest im [veröffentlichten Image-Manifest](https://github.com/DZunke/Falkenwarte/releases/download/v0.2.1/image-manifest.json). [Release](https://github.com/DZunke/Falkenwarte/releases/tag/v0.2.1) · [GitHub-QA](https://github.com/DZunke/Falkenwarte/actions/runs/44646408471)
+
+Zwei unabhängige Runner erzeugten die Config-ID `sha256:f881a2e9ee376cf5671f8d659e91161100d02f8292a6e3fb345320639bc8499f`, 43 gleiche RootFS-Layer und übereinstimmende Inventare. [Runner 1](https://github.com/DZunke/Falkenwarte/actions/runs/44646408471/job/135990004299) · [Runner 2](https://github.com/DZunke/Falkenwarte/actions/runs/44646442059/job/135990120375)
+
+Der tatsächliche anonyme GHCR-Pull bestätigte Registry-Referenz, Manifest-Digest, OCI-Revision `e9be3da563d598550b13e6ad576ea0417e40c79b` und Config-ID `sha256:f881a2e9ee376cf5671f8d659e91161100d02f8292a6e3fb345320639bc8499f`. Der Produktions-Browsertest lief auf diesem Digest-Image ohne externe Zugangsdaten und in isoliertem Netzwerk. [Release-Manifest](https://github.com/DZunke/Falkenwarte/releases/download/v0.2.1/image-manifest.json) · [Gehosteter A17-E2E-Job](https://github.com/DZunke/Falkenwarte/actions/runs/44646408471/job/135991084621) · [Browserabnahme-Archiv](https://github.com/DZunke/Falkenwarte/releases/download/v0.2.1/browser-acceptance.tar.gz) · [Test im geprüften Commit](https://github.com/DZunke/Falkenwarte/blob/e9be3da563d598550b13e6ad576ea0417e40c79b/tests/e2e/tests/plugins-lifecycle.spec.mjs)
+
+| A31-Prüfung | Ergebnis | Quelle |
+|---|---|---|
+| Normaler PR | Bestanden · success | [normal_pr](https://github.com/DZunke/Falkenwarte/actions/runs/44640533860) |
+| Dokumentations-PR | Bestanden · success | [docs_quality](https://github.com/DZunke/Falkenwarte/actions/runs/44606393813/job/135851115578) |
+| Release-PR | Bestanden · success | [release_pr](https://github.com/DZunke/Falkenwarte/actions/runs/44644282593) |
+| Native Release-PR-Prüfung | `success` | [quality-gate](https://github.com/DZunke/Falkenwarte/actions/runs/44644281468) |
+| Absichtlich fehlschlagender E2E-Job | Erwarteter Fehler · workflow failure, quality-gate failure, E2E failure | [fail_probe](https://github.com/DZunke/Falkenwarte/actions/runs/44606342740) |
+| Übersprungener E2E-Job | Erwarteter Fehler · workflow failure, quality-gate failure, E2E skipped | [skip_probe](https://github.com/DZunke/Falkenwarte/actions/runs/44606360382) |
+| Veröffentlichung | Bestanden · success | [release](https://github.com/DZunke/Falkenwarte/releases/tag/v0.2.1) |
+| Fork-Prüfung | Auf ausdrückliche Nutzerentscheidung vertagt | — |
+
+Die Fork-Prüfung bleibt auf ausdrückliche Nutzerentscheidung vertagt und wird nicht als bestanden ausgewiesen.
