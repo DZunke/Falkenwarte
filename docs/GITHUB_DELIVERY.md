@@ -1,6 +1,6 @@
 # Falkenwarte auf GitHub ausliefern
 
-Der aktuelle, abgenommene Stand ist v0.2.1 ([Release](https://github.com/DZunke/Falkenwarte/releases/tag/v0.2.1)). Die geprüften Veröffentlichungsbelege folgen im Abschnitt „Geprüfte Veröffentlichung v0.2.1“.
+Der abgenommene Stand ist v0.2.2. Das Release-Manifest verknüpft Commit `2260bc7801790ba12fa45dbc6c82be357a91cfe6` mit dem öffentlichen GHCR-Digest `sha256:66a843304373b6f95cd9fd9801136e1337267cc79a7fe4a79744ffd68e21a5a8`. Der Publish-Job übernahm das Image aus der erfolgreichen QA dieses Commits. [Release-Manifest](https://github.com/DZunke/Falkenwarte/releases/download/v0.2.2/image-manifest.json) · [Veröffentlichung](https://github.com/DZunke/Falkenwarte/actions/runs/44721855163) · [Prüfergebnisse](VALIDATION.md)
 
 Das Repository `DZunke/Falkenwarte` enthält den Anwendungscode, die Abnahmesuite und den Releaseprozess. In der privaten Installation laufen die Verwaltung von Tickets und die T3-Aufträge mit den dort eingerichteten Zugängen. GitHub-Zugangsdaten werden ausschließlich während der Entwicklung und für die Veröffentlichung des Falkenwarte-Images benötigt.
 
