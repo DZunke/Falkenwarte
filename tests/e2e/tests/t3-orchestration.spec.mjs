@@ -86,7 +86,7 @@ async function authorizeAndCheckT3Connection(ownerApi, ownerPage, baseURL, qaMoc
   await qaMocks.setT3OAuthToken(token);
   await ownerPage.goto('/#/agents');
   await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
-  await authorizeT3InBrowser(ownerPage, baseURL, qaMocks.t3URL);
+  await authorizeT3InBrowser(ownerPage, baseURL, canonicalUrl);
   const authorized = await readUntil(ownerApi, `/connections/${created.data.id}`, (item) => item.auth_status === 'valid', 'Die zusätzliche T3-Verbindung muss separat autorisiert sein.');
 
   await ownerPage.locator('main').getByRole('button', { name: new RegExp(name) }).click();
@@ -295,13 +295,13 @@ test('A11/A30 early agent report and new OAuth namespace do not create a second 
   const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'T3 Übergabe');
   const alternateConnection = await authorizeAndCheckT3Connection(ownerApi, ownerPage, baseURL, qaMocks, {
     name: `T3 Zweitziel ${randomUUID().slice(0, 6)}`,
-    canonicalUrl: `${qaMocks.t3URL}/alternate`,
+    canonicalUrl: qaMocks.t3AlternateURL,
     token: 'qa-t3-token-B',
   });
   const connectionJournal = await qaMocks.t3Journal();
-  expect(connectionJournal.journal.some((entry) => entry.path === '/mcp' && entry.method === 'initialize' && entry.auth_namespace === 'oauth-client-A')).toBe(true);
-  expect(connectionJournal.journal.some((entry) => entry.path === '/alternate/mcp' && entry.method === 'initialize' && entry.auth_namespace === 'oauth-client-B')).toBe(true);
-  expect(connectionJournal.journal.some((entry) => entry.path === '/alternate/mcp' && entry.method === 'tools/list' && entry.auth_namespace === 'oauth-client-B')).toBe(true);
+  expect(connectionJournal.journal.some((entry) => entry.mock_origin === new URL(qaMocks.t3URL).origin && entry.path === '/mcp' && entry.method === 'initialize' && entry.auth_namespace === 'oauth-client-A')).toBe(true);
+  expect(connectionJournal.journal.some((entry) => entry.mock_origin === new URL(qaMocks.t3AlternateURL).origin && entry.path === '/mcp' && entry.method === 'initialize' && entry.auth_namespace === 'oauth-client-B')).toBe(true);
+  expect(connectionJournal.journal.some((entry) => entry.mock_origin === new URL(qaMocks.t3AlternateURL).origin && entry.path === '/mcp' && entry.method === 'tools/list' && entry.auth_namespace === 'oauth-client-B')).toBe(true);
   const profile = await createProfile(ownerApi, ownerPage, baseURL, project, connection, 'Übergabe');
   const taskResult = await createReadyTask(ownerApi, project.id, 'Frühe Agentmeldung');
   const task = (await ownerApi.get(`/tasks/${taskResult.id}`)).data;
@@ -340,7 +340,7 @@ test('A11/A30 early agent report and new OAuth namespace do not create a second 
     expect(t3.unexpected).toEqual([]);
     recordEvidence(
       'A11/A30: Eine echte Agentmeldung trifft vor der Launch-Antwort ein; neue OAuth-Session darf keinen zweiten T3-Start erzeugen.',
-      `Verbindung ${connection.id} erreichte /mcp mit Token-Namespace A; Verbindung ${alternateConnection.id} erreichte /alternate/mcp mit Token-Namespace B. Run ${runId} nahm den MCP-Bericht ohne externe Thread-ID an. Nach OAuth-Epoch 2 beobachtete Falkenwarte denselben Thread mit Token-Namespace B; T3 hatte genau einen angenommenen Launch in Namespace A und der Run endete succeeded.`,
+      `Verbindung ${connection.id} erreichte ${new URL(qaMocks.t3URL).origin}/mcp mit Token-Namespace A; Verbindung ${alternateConnection.id} erreichte ${new URL(qaMocks.t3AlternateURL).origin}/mcp mit Token-Namespace B. Run ${runId} nahm den MCP-Bericht ohne externe Thread-ID an. Nach OAuth-Epoch 2 beobachtete Falkenwarte denselben Thread mit Token-Namespace B; T3 hatte genau einen angenommenen Launch in Namespace A und der Run endete succeeded.`,
       { t3 },
     );
   } finally {

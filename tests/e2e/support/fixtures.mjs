@@ -317,6 +317,10 @@ export const test = base.extend({
   qaMocks: async ({}, use) => {
     const decisionsURL = process.env.QA_DECISIONS_MOCK_URL ?? 'http://127.0.0.1:4310';
     const t3URL = process.env.QA_T3_MOCK_URL ?? 'http://127.0.0.1:4311';
+    const alternateT3 = new URL(t3URL);
+    const primaryPort = Number(alternateT3.port || (alternateT3.protocol === 'https:' ? 443 : 80));
+    alternateT3.port = String(primaryPort + 2);
+    const t3AlternateURL = process.env.QA_T3_MOCK_ALTERNATE_URL ?? alternateT3.origin;
     const context = await playwrightRequest.newContext();
     const reset = async (url) => {
       const response = await context.post(`${url}/__qa/reset`, { data: {} });
@@ -328,6 +332,7 @@ export const test = base.extend({
       await use({
         decisionsURL,
         t3URL,
+        t3AlternateURL,
         setDecisionsScenario: async (scenario) => {
           const response = await context.post(`${decisionsURL}/__qa/scenario`, { data: { scenario } });
           expect(response.status(), await response.text()).toBe(200);
@@ -413,6 +418,7 @@ function sanitizeMockJournal(name, journal) {
       requests: journal.journal.map((entry) => ({
         sequence: entry.sequence,
         path: entry.path ?? null,
+        mock_origin: entry.mock_origin ?? null,
         method: entry.method,
         tool: entry.tool ?? null,
         external_thread_id: entry.external_thread_id ?? null,

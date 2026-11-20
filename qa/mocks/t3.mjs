@@ -10,6 +10,7 @@ const transcript = JSON.parse(await readFile(path.join(root, 'fixtures/mcp/t3-le
 const faultFixture = JSON.parse(await readFile(path.join(root, 'fixtures/mcp/t3-faults.json'), 'utf8'));
 const faultIds = new Set(faultFixture.faults.map((fault) => fault.id));
 const port = Number(process.env.PORT ?? 4311);
+const alternatePort = Number(process.env.ALTERNATE_PORT ?? port + 2);
 const statePath = process.env.T3_MOCK_STATE ?? '/tmp/falkenwarte-t3-mock-state.json';
 
 function emptyState() {
@@ -82,10 +83,8 @@ function oauthResponse(response, status, body) {
 
 async function oauthRequest(request, response, pathname) {
   const origin = originOf(request);
-  const protectedResourceSuffix = '/.well-known/oauth-protected-resource/mcp';
-  if (pathname.endsWith(protectedResourceSuffix) && request.method === 'GET') {
-    const prefix = pathname.slice(0, -protectedResourceSuffix.length);
-    return oauthResponse(response, 200, { resource: `${origin}${prefix}/mcp`, issuer: origin, authorization_servers: [origin] });
+  if (pathname === '/.well-known/oauth-protected-resource/mcp' && request.method === 'GET') {
+    return oauthResponse(response, 200, { resource: `${origin}/mcp`, issuer: origin, authorization_servers: [origin] });
   }
   if (pathname === '/.well-known/oauth-authorization-server' && request.method === 'GET') {
     return oauthResponse(response, 200, {
@@ -372,8 +371,7 @@ function externalActivity(body) {
 async function mcpRequest(request, response) {
   noStore(response);
   const pathname = pathOf(request);
-  const allowedEndpoints = ['/mcp', '/alternate/mcp'];
-  if (allowedEndpoints.includes(pathname) && request.method === 'DELETE') {
+  if (pathname === '/mcp' && request.method === 'DELETE') {
     const namespace = namespaceFor(request.headers.authorization);
     const sessionId = request.headers['mcp-session-id'];
     const version = request.headers['mcp-protocol-version'];
@@ -402,7 +400,7 @@ async function mcpRequest(request, response) {
     response.end();
     return;
   }
-  if (allowedEndpoints.includes(pathname) && request.method === 'GET') {
+  if (pathname === '/mcp' && request.method === 'GET') {
     response.writeHead(405, { Allow: 'POST, DELETE' });
     response.end();
     return;
@@ -413,6 +411,7 @@ async function mcpRequest(request, response) {
   const version = request.headers['mcp-protocol-version'];
   const entry = {
     path: pathname,
+    mock_origin: originOf(request),
     method: body?.method ?? null,
     request_id: body?.id ?? null,
     tool: body?.params?.name ?? null,
@@ -422,7 +421,7 @@ async function mcpRequest(request, response) {
     arguments_hash: body?.params?.arguments ? hash(body.params.arguments) : null,
   };
 
-  if (request.method !== 'POST' || !allowedEndpoints.includes(pathname)) {
+  if (request.method !== 'POST' || pathname !== '/mcp') {
     recordUnexpected({ ...entry, http_method: request.method, path: pathOf(request) });
     return sendJson(response, 404, { error: { message: 'Unknown MCP endpoint.' } });
   }
@@ -535,7 +534,7 @@ async function mcpRequest(request, response) {
   return sendJson(response, 200, { jsonrpc: '2.0', id: body?.id, error: { code: -32601, message: `Unsupported MCP method: ${String(body?.method)}` } });
 }
 
-startServer(port, async (request, response) => {
+const handleRequest = async (request, response) => {
   const pathname = pathOf(request);
   if (pathname === '/__qa/health' && request.method === 'GET') {
     return sendJson(response, 200, { service: 't3-mcp-mock', scenario: state.scenario, launches: Object.keys(state.acceptedLaunches).length });
@@ -583,11 +582,14 @@ startServer(port, async (request, response) => {
   if (pathname === '/__qa/journal' && request.method === 'GET') {
     return sendJson(response, 200, { scenario: state.scenario, journal: state.journal, unexpected: state.unexpected, accepted_launches: Object.values(state.acceptedLaunches).map(({ namespace, clientRequestId, payloadHash, payload, response: launchResponse, replays }) => ({ namespace, clientRequestId, payloadHash, payload, response: launchResponse, replays })) });
   }
-  if (pathname.startsWith('/.well-known/') || pathname.endsWith('/.well-known/oauth-protected-resource/mcp') || ['/register', '/authorize', '/token'].includes(pathname)) {
+  if (pathname.startsWith('/.well-known/') || ['/register', '/authorize', '/token'].includes(pathname)) {
     const handled = await oauthRequest(request, response, pathname);
     if (handled !== false) return handled;
   }
-  if (['/mcp', '/alternate/mcp'].includes(pathname)) return mcpRequest(request, response);
+  if (pathname === '/mcp') return mcpRequest(request, response);
   recordUnexpected({ http_method: request.method, path: pathname });
   return sendJson(response, 404, { error: { message: 'Unknown mock path.' } });
-});
+};
+
+startServer(alternatePort, handleRequest);
+startServer(port, handleRequest);
