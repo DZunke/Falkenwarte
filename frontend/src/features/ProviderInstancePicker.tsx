@@ -36,13 +36,14 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
   })
 
   const providers = inventory.data?.providers ?? []
-  const selectedProvider = providers.find((provider) => provider.provider_instance_id === value?.provider_instance_id)
+  const availableProviders = providers.filter((provider) => provider.available)
+  const selectedProvider = availableProviders.find((provider) => provider.provider_instance_id === value?.provider_instance_id)
   const models = selectedProvider?.models ?? []
   const omittedModels = selectedProvider?.omitted_models ?? 0
   const matchingModel = models.find((model) => model.id === value?.model)
   const selectedModelId = matchingModel?.id ?? (!value?.model && models.length === 1 && omittedModels === 0 ? models[0].id : '')
   const selectedModel = models.find((model) => model.id === selectedModelId)
-  const ready = Boolean(inventory.isSuccess && !inventory.isFetching && selectedProvider?.available && selectedModel)
+  const ready = Boolean(inventory.isSuccess && !inventory.isFetching && selectedProvider && selectedModel)
 
   useEffect(() => {
     onReadyChange(ready)
@@ -74,7 +75,7 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
 
       {connectionId && inventory.isSuccess && (
         <>
-          {providers.length > 0 ? (
+          {availableProviders.length > 0 ? (
             <div className="space-y-1.5">
               <Label htmlFor={providerFieldId}>Providerinstanz aus T3</Label>
               <Select
@@ -91,9 +92,9 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
                   <SelectValue placeholder="Providerinstanz wählen" />
                 </SelectTrigger>
                 <SelectContent className="max-w-[min(90vw,36rem)]">
-                  {providers.map((provider) => (
-                    <SelectItem key={provider.provider_instance_id} className="whitespace-normal break-words" value={provider.provider_instance_id} disabled={!provider.available}>
-                      {provider.display_name || 'Unbenannte Providerinstanz'} · {provider.provider_instance_id}{provider.available ? '' : ' · nicht verfügbar'}
+                  {availableProviders.map((provider) => (
+                    <SelectItem key={provider.provider_instance_id} className="whitespace-normal break-words" value={provider.provider_instance_id}>
+                      {provider.display_name || 'Unbenannte Providerinstanz'} · {provider.provider_instance_id}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -101,7 +102,7 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
               <p className="text-xs text-muted-foreground">Die T3-Instanz-ID unterscheidet auch mehrere gleichnamige Provider.</p>
             </div>
           ) : (
-            <p role="status" className="text-sm text-muted-foreground">{searchTerm ? 'T3 meldet keine Provider oder Modelle für diese Suche.' : 'T3 meldet keine Providerinstanzen für diese Verbindung.'}</p>
+            <p role="status" className="text-sm text-muted-foreground">{searchTerm ? 'T3 meldet für diese Suche keine verfügbaren Providerinstanzen.' : 'T3 meldet für diese Verbindung keine verfügbaren Providerinstanzen.'}</p>
           )}
 
           <form className="space-y-2" onSubmit={submitSearch}>
@@ -115,14 +116,20 @@ export function ProviderInstancePicker({ connectionId, value, onChange, onReadyC
             </div>
           </form>
 
-          {selectedProvider && !selectedProvider.available && <p role="status" className="text-sm text-muted-foreground">Diese Providerinstanz ist laut T3 derzeit nicht verfügbar.</p>}
-          {value && !selectedProvider && <p role="status" className="text-sm text-muted-foreground">Die gespeicherte Providerinstanz {value.provider_instance_id} ist in dieser T3-Antwort nicht enthalten. Setze die Suche zurück oder wähle eine verfügbare Instanz.</p>}
+          {value && !selectedProvider && (
+            <div role="status" className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+              <p><strong className="text-foreground">Bisheriges Ziel:</strong> Providerinstanz {value.provider_instance_id}{value.model ? ` · Modell ${value.model}` : ''}</p>
+              <p className="mt-1">{searchTerm
+                ? 'Setze die Modellsuche zurück, um die Instanz im vollständigen Angebot zu prüfen.'
+                : 'T3 meldet diese Instanz als nicht verfügbar. Wähle eine verfügbare Instanz und ein Modell, um das Ziel zu ändern.'}</p>
+            </div>
+          )}
           {selectedProvider && omittedModels > 0 && <p role="status" className="text-xs text-muted-foreground">T3 zeigt für diese Instanz nur einen Teil der Modelle. Suche nach Modell-ID oder Name; das Kurzlistenmodell wird nicht automatisch ausgewählt.</p>}
           {selectedProvider && value?.model && !matchingModel && <p role="status" className="text-sm text-muted-foreground">Das gespeicherte Modell {value.model} ist in der aktuellen T3-Auswahl nicht enthalten. Suche danach oder wähle bewusst ein anderes Modell, bevor du speicherst.</p>}
           {selectedProvider && models.length > 0 && (
             <div className="space-y-1.5">
               <Label htmlFor={modelFieldId}>Modell aus T3</Label>
-              <Select value={selectedModelId} disabled={inventory.isFetching || !selectedProvider.available} onValueChange={(modelId) => onChange({ provider_instance_id: selectedProvider.provider_instance_id, model: modelId })}>
+              <Select value={selectedModelId} disabled={inventory.isFetching} onValueChange={(modelId) => onChange({ provider_instance_id: selectedProvider.provider_instance_id, model: modelId })}>
                 <SelectTrigger id={modelFieldId} className="w-full max-w-full" data-testid="provider-model-picker" aria-label="Modell aus T3">
                   <SelectValue placeholder={value?.model && !matchingModel ? 'Modell erneut wählen' : 'Modell wählen'} />
                 </SelectTrigger>

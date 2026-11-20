@@ -711,14 +711,27 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
 
   try {
     const firstT3Journal = await qaMocks.t3Journal();
-    const providerInventory = firstT3Journal.journal.find((entry) => entry.tool === 'orchestrator_capabilities' && entry.provider_inventory?.length === 2);
-    expect(providerInventory.provider_inventory).toEqual([
-      expect.objectContaining({ providerInstanceId: 'codex_general', driverKind: 'codex' }),
-      expect.objectContaining({ providerInstanceId: 'codex_review', driverKind: 'codex' }),
+    const providerInventory = firstT3Journal.journal.find((entry) => entry.tool === 'orchestrator_capabilities' && entry.provider_inventory?.length === 5);
+    expect(providerInventory.provider_inventory.map((provider) => provider.providerInstanceId)).toEqual([
+      'codex', 'codex_general', 'codex_review', 'codex_disabled', 'qa_uninstalled_agent',
     ]);
-    expect(providerInventory.provider_inventory[0].models).toContainEqual({ id: 'qa-general-model', label: 'QA General Model' });
-    expect(providerInventory.provider_inventory[1].models).toContainEqual({ id: 'qa-review-model', label: 'QA Review Model' });
-    expect(providerInventory.provider_inventory.map((provider) => provider.driverKind)).toEqual(['codex', 'codex']);
+    expect(providerInventory.provider_inventory.map((provider) => provider.driverKind)).toEqual(['codex', 'codex', 'codex', 'codex', 'claude-code']);
+    expect(providerInventory.provider_inventory.slice(0, 3).every((provider) => provider.canRunChildTask === true && provider.constraints.length === 0)).toBe(true);
+    expect(providerInventory.provider_inventory[0].models).toContainEqual({ id: 'qa-codex-model', label: 'QA Codex Model' });
+    expect(providerInventory.provider_inventory[1].models).toContainEqual({ id: 'qa-general-model', label: 'QA General Model' });
+    expect(providerInventory.provider_inventory[2].models).toContainEqual({ id: 'qa-review-model', label: 'QA Review Model' });
+    expect(providerInventory.provider_inventory[3]).toMatchObject({
+      canRunChildTask: false,
+      canRunCrossProviderChildTask: false,
+      constraints: ['Provider instance is disabled.'],
+      models: [expect.objectContaining({ id: 'qa-disabled-model' })],
+    });
+    expect(providerInventory.provider_inventory[4]).toMatchObject({
+      canRunChildTask: false,
+      canRunCrossProviderChildTask: false,
+      constraints: ['Provider executable is not installed.'],
+      models: [expect.objectContaining({ id: 'qa-uninstalled-model' })],
+    });
     expect(firstT3Journal.journal.filter((entry) => entry.tool === 't3_thread_read')).toHaveLength(0);
 
     for (const [index, { profile, target, title }] of [
@@ -763,6 +776,23 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
       await readUntil(ownerApi, `/runs/${runId}`, (current) => current.state === 'succeeded');
     }
 
+    const disabledTarget = { mode: 't3_provider_instance', provider_instance_id: 'codex_disabled', model: 'qa-disabled-model' };
+    const disabledProfile = await createProfileRecord(ownerApi, project, connection, 'Deaktivierter Codex', disabledTarget);
+    const disabledTaskResult = await createReadyTask(ownerApi, project.id, 'Deaktivierte T3-Instanz blockieren');
+    const disabledTask = (await ownerApi.get(`/tasks/${disabledTaskResult.id}`)).data;
+    const disabledRunId = await requestRun(ownerApi, disabledTask, disabledProfile);
+    const disabledRun = await readUntil(ownerApi, `/runs/${disabledRunId}`, (current) => current.state === 'failed');
+    expect(disabledRun.status_reason).toContain('Die gewählte T3-Providerinstanz oder das Modell ist in der gebundenen Verbindung nicht mehr verfügbar.');
+    expect(disabledRun.snapshot.execution_target).toEqual(disabledTarget);
+    const afterDisabledDispatch = await qaMocks.t3Journal();
+    expect(afterDisabledDispatch.accepted_launches).toHaveLength(2);
+    expect(afterDisabledDispatch.journal.filter((entry) => entry.tool === 't3_thread_launch')).toHaveLength(2);
+    const disabledCheck = afterDisabledDispatch.journal.filter((entry) => entry.tool === 'orchestrator_capabilities').at(-1);
+    expect(disabledCheck.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_disabled')).toMatchObject({
+      canRunChildTask: false,
+      constraints: ['Provider instance is disabled.'],
+    });
+
     await qaMocks.setT3Scenario('provider_missing');
     const missingTaskResult = await createReadyTask(ownerApi, project.id, 'Verschwundene Providerinstanz');
     const missingTask = (await ownerApi.get(`/tasks/${missingTaskResult.id}`)).data;
@@ -780,12 +810,14 @@ test('explicit T3 provider instances dispatch exactly and a disappeared instance
       expect(launchedThreadIds.has(read.thread_read_target_thread_id)).toBe(true);
     }
     const missingProviderCheck = t3.journal.filter((entry) => entry.tool === 'orchestrator_capabilities').at(-1);
-    expect(missingProviderCheck.provider_inventory).toEqual([
-      expect.objectContaining({ providerInstanceId: 'codex_general', driverKind: 'codex' }),
+    expect(missingProviderCheck.provider_inventory.map((provider) => provider.providerInstanceId)).toEqual([
+      'codex', 'codex_general', 'codex_disabled', 'qa_uninstalled_agent',
     ]);
+    expect(missingProviderCheck.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_disabled')).toMatchObject({ canRunChildTask: false });
+    expect(missingProviderCheck.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_uninstalled_agent')).toMatchObject({ canRunChildTask: false });
     recordEvidence(
-      'Zwei T3-Providerinstanzen desselben Drivers erzeugen je einen neuen Thread mit exakt ihrer eigenen Instanz- und Modell-ID. Fehlt eine gewählte Instanz später im T3-Inventar, wird der Auftrag mit Owner-Handlungsbedarf beendet, ohne Referenzthread-Lesezugriff oder stillen Ersatzprovider.',
-      `Die Rollen Codex Allgemein und Codex Review starteten je einen T3-Thread. Die Launchantworten bestätigten modelSelection codex_general/qa-general-model und codex_review/qa-review-model. Der spätere Lauf für codex_review endete failed mit sichtbarem Hinweis auf die nicht verfügbare Auswahl; T3 nahm weiterhin exakt zwei Launches an. Die normalen Beobachtungs-Reads betrafen ausschließlich diese beiden gestarteten Threads.`,
+      'Zwei verfügbare T3-Providerinstanzen desselben Drivers erzeugen je einen neuen Thread mit exakt ihrer eigenen Instanz- und Modell-ID. Eine deaktivierte Instanz und eine später fehlende Instanz werden vor dem Launch mit Owner-Handlungsbedarf beendet, ohne stillen Ersatzprovider.',
+      `Codex Allgemein und Codex Review starteten je einen T3-Thread. Die Launchantworten bestätigten modelSelection codex_general/qa-general-model und codex_review/qa-review-model. Die deaktivierte Instanz codex_disabled mit vorhandenem Modell wurde vor dem Launch abgelehnt; danach fehlte codex_review im Inventar und sein Auftrag endete ebenfalls failed. T3 nahm weiterhin exakt zwei Launches an; Beobachtungs-Reads betrafen ausschließlich gestartete Threads.`,
       { t3 },
     );
   } finally {

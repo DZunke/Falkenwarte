@@ -2068,9 +2068,8 @@ paths:
       operationId: connection_providers_list
       tags:
       - agents
-      summary: Aktuelle T3-Providerinstanzen und Modelle lesen
-      description: Fragt die autorisierte T3-Verbindung live ab. Die Liste ist keine lokal gepflegte Providerkonfiguration und wird nicht
-        aus einem möglicherweise veralteten Capability-Snapshot abgeleitet.
+      summary: Ausführbare T3-Providerinstanzen und ihre Modelle lesen
+      description: Fragt die autorisierte T3-Verbindung live ab und liefert nur Instanzen, die T3 als ausführbar meldet. Eine Modellsuche verwendet denselben Filter.
       parameters:
       - name: search
         in: query
@@ -5150,7 +5149,7 @@ components:
           schema:
             $ref: '#/components/schemas/CapabilitySnapshot'
     ProviderInventory:
-      description: Aktuelle Providerinstanzen und Modelle aus der autorisierten T3-Verbindung.
+      description: Ausführbare Providerinstanzen und ihre Modelle aus der autorisierten T3-Verbindung.
       content:
         application/json:
           schema:
@@ -8503,7 +8502,7 @@ components:
           maxItems: 100
       required:
       - providers
-      description: Frisch von T3 gelesene Providerinstanzen mit Modellen; keine Provider- oder Modellkonfiguration in Falkenwarte.
+      description: Instanzen, die T3 bei dieser Abfrage als ausführbar meldet, mit ihren jeweiligen Modellen.
     ProviderInstance:
       type: object
       additionalProperties: false

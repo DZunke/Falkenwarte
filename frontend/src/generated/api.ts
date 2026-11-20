@@ -995,8 +995,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Aktuelle T3-Providerinstanzen und Modelle lesen
-         * @description Fragt die autorisierte T3-Verbindung live ab. Die Liste ist keine lokal gepflegte Providerkonfiguration und wird nicht aus einem möglicherweise veralteten Capability-Snapshot abgeleitet.
+         * Ausführbare T3-Providerinstanzen und ihre Modelle lesen
+         * @description Fragt die autorisierte T3-Verbindung live ab und liefert nur Instanzen, die T3 als ausführbar meldet. Eine Modellsuche verwendet denselben Filter.
          */
         get: operations["connection_providers_list"];
         put?: never;
@@ -3175,7 +3175,7 @@ export interface components {
         };
         /** @description T3-Instanz-Slug. Groß- und Kleinschreibung sind unterscheidbar. */
         T3ProviderInstanceId: string;
-        /** @description Frisch von T3 gelesene Providerinstanzen mit Modellen; keine Provider- oder Modellkonfiguration in Falkenwarte. */
+        /** @description Instanzen, die T3 bei dieser Abfrage als ausführbar meldet, mit ihren jeweiligen Modellen. */
         ProviderInventory: {
             providers: components["schemas"]["ProviderInstance"][];
         };
@@ -4979,7 +4979,7 @@ export interface components {
                 "application/json": components["schemas"]["CapabilitySnapshot"];
             };
         };
-        /** @description Aktuelle Providerinstanzen und Modelle aus der autorisierten T3-Verbindung. */
+        /** @description Ausführbare Providerinstanzen und ihre Modelle aus der autorisierten T3-Verbindung. */
         ProviderInventory: {
             headers: {
                 [name: string]: unknown;

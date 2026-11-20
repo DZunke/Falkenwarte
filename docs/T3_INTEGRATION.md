@@ -43,7 +43,7 @@ Der Client handelt ausschließlich MCP `2025-06-18` aus und deaktiviert Protokol
 
 | T3-Werkzeug | Verwendung in Falkenwarte |
 |---|---|
-| `orchestrator_capabilities` | Serverversion, gemeldete Providerinstanzen und unterstützte Aktionen lesen |
+| `orchestrator_capabilities` | Serverversion, Providerausführbarkeit, gemeldete Modelle und unterstützte Aktionen lesen |
 | `t3_project_list` | Projekte für die Zuordnung in **Agents & T3** auflisten |
 | `t3_thread_list` (optional) | Referenzthreads des gebundenen T3-Projekts für die Rollenansicht auflisten |
 | `t3_thread_launch` | Einen neuen Thread mit eingefrorener Nachricht und stabiler Request-ID starten |
@@ -57,11 +57,13 @@ Für die Threadauswahl fragt die Eigentümeroberfläche `GET /api/v1/projects/{p
 
 ## Ausführungsziele und Providerauswahl
 
-Ein Rollenprofil kann den Projektstandard, einen Referenzthread oder eine konkrete T3-Providerinstanz samt Modell wählen. Die Rollenoberfläche fragt bei Auswahl des Modus **T3-Providerinstanz** `GET /api/v1/connections/{connection_id}/providers` über die autorisierte T3-Verbindung ab. Die Antwort ist eine aktuelle Auswahl aus T3 und keine lokale oder dauerhafte Providerkonfiguration in Falkenwarte. Ein erneutes **Provider neu laden** fragt die Auswahl erneut ab; der Verbindungstest ist dafür nicht nötig.
+Im Modus **T3-Providerinstanz** ruft die Rollenansicht mit `GET /api/v1/connections/{connection_id}/providers` die ausführbaren Instanzen und ihre Modelle direkt über die autorisierte T3-Verbindung ab. **Provider neu laden** wiederholt diese Abfrage. Für die Verbindungsdiagnose liefert `GET /api/v1/connections/{connection_id}/capabilities` den letzten gespeicherten Snapshot. Er enthält auch nicht ausführbare Instanzen und den Zeitpunkt der Prüfung in `observed_at`.
 
 Warum Falkenwarte die Instanz-ID und das Modell als Zielreferenz speichert und Providerdetails T3 überlässt, ist in [ADR-0016](adr/0016.md) festgehalten.
 
-Die Auswahl zeigt den von T3 gemeldeten Instanz-Slug zusammen mit dem Anzeigenamen, damit gleich benannte Providerinstanzen unterscheidbar bleiben. Ein T3-Modell muss für eine explizite Providerinstanz gewählt sein. Die Oberfläche wählt es nur dann automatisch, wenn T3 genau ein Modell und eine vollständige, nicht gekürzte Liste liefert. Bei mehreren Modellen ist eine Auswahl erforderlich. Wenn T3 Modelle aus der Antwort ausgelassen hat, kann die Oberfläche **Modellsuche in T3** und **Modelle suchen** verwenden und vermeidet eine voreilige Einzelauswahl. Eine T3-Auswahl behauptet nicht, dass Falkenwarte das vollständige interne Providerinventar kennt oder die externe Ausführung vorab geprüft hat.
+T3 v0.1.11 meldet die Ausführbarkeit mit `canRunChildTask`. Ältere Antworten können dafür `available` verwenden. Falkenwarte benötigt eine ausdrückliche Bestätigung. Liefert T3 beide Felder, hat ein ausdrückliches `false` Vorrang. T3 prüft beim Start zusätzlich die Aktivierung für das Zielprojekt. [T3-Capability-Antwort](https://github.com/pingdotgg/t3code/blob/v0.1.11/apps/server/src/mcp/OrchestratorMcpService.ts#L2736-L2785)
+
+Der Instanz-Slug unterscheidet auch gleich benannte Instanzen. Die Rollenansicht wählt ein Modell nur dann vor, wenn die Instanz genau ein Modell meldet und die Liste vollständig ist. Bei mehreren Modellen trifft der Eigentümer die Auswahl. Gibt `omittedModels` ausgelassene Treffer an, sucht **Modelle suchen** in T3 nach Modell-ID oder Name.
 
 Der Modus `t3_project_default` sendet `t3_thread_launch` ohne `modelSelection`. T3 löst den effektiven Projektstandard bei der ersten Annahme auf. Bei einer konkreten Providerinstanz übermittelt Falkenwarte die verbindungsbezogene Instanz-ID und das ausgewählte T3-Modell als `modelSelection.instanceId` und `modelSelection.model`. Der native Vertrag verlangt beide Werte. Diese Auswahl wird im Dispatch-Snapshot festgehalten; ein Replay eines bereits angenommenen Starts verwendet die von T3 gespeicherte Zuordnung. [T3-ModelSelection-Vertrag in v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/packages/contracts/src/modelSelection.ts)
 

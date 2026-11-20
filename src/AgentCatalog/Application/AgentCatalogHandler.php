@@ -210,7 +210,10 @@ final class AgentCatalogHandler implements OperationHandler
             throw new Problem(502, 't3_unavailable', $exception->getMessage());
         }
 
-        return ['providers' => $capabilities['providers']];
+        return ['providers' => array_values(array_filter(
+            $capabilities['providers'],
+            static fn (array $provider): bool => $provider['available'],
+        ))];
     }
 
     /** @param array<string, mixed> $p @return array<string, mixed> */

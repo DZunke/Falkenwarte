@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { authorizeT3InBrowser, expect, recordEvidence, test } from '../support/fixtures.mjs';
 
+const activeProviderIds = ['codex', 'codex_general', 'codex_review'];
+const activeProviderLabels = ['Codex · codex', 'Codex Allgemein · codex_general', 'Codex Review · codex_review'];
+
 async function readUntil(ownerApi, route, matches, description) {
   let current;
   await expect.poll(async () => {
@@ -74,6 +77,16 @@ async function roleByName(ownerApi, name) {
   return result.data.items.find((profile) => profile.name === name);
 }
 
+async function visibleProviderOptions(ownerPage) {
+  const picker = ownerPage.getByLabel('Providerinstanz aus T3');
+  await expect(picker).toBeVisible();
+  await picker.click();
+  const options = ownerPage.getByRole('option');
+  await expect(options).toHaveCount(activeProviderIds.length);
+  await expect(options).toHaveText(activeProviderLabels);
+  await ownerPage.keyboard.press('Escape');
+}
+
 test('Agentrolle kann einen echten Referenzthread aus dem gebundenen T3-Projekt wählen', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
   test.setTimeout(150_000);
   const { project, connection } = await configureBoundT3Project(ownerApi, ownerPage, baseURL, qaMocks, { name: 'Threadpicker' });
@@ -144,8 +157,37 @@ test('Agentrolle kann einen echten Referenzthread aus dem gebundenen T3-Projekt 
 test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Modell unterscheiden und speichern', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
   test.setTimeout(150_000);
   const { project, connection } = await configureBoundT3Project(ownerApi, ownerPage, baseURL, qaMocks, { name: 'Providerziel' });
+  const snapshot = await ownerApi.get(`/connections/${connection.id}/capabilities`);
+  expect(snapshot.response.status(), JSON.stringify(snapshot.data)).toBe(200);
+  expect(snapshot.data.providers).toHaveLength(5);
+  expect(snapshot.data.providers.map((provider) => provider.provider_instance_id)).toEqual([
+    'codex', 'codex_general', 'codex_review', 'codex_disabled', 'qa_uninstalled_agent',
+  ]);
+  expect(snapshot.data.providers.find((provider) => provider.provider_instance_id === 'codex_disabled')).toMatchObject({
+    available: false,
+    models: [expect.objectContaining({ id: 'qa-disabled-model' })],
+  });
+  expect(snapshot.data.providers.find((provider) => provider.provider_instance_id === 'qa_uninstalled_agent')).toMatchObject({
+    available: false,
+    models: [expect.objectContaining({ id: 'qa-uninstalled-model' })],
+  });
+  const nativeInventory = (await qaMocks.t3Journal()).journal.find((entry) => entry.tool === 'orchestrator_capabilities' && entry.outcome === 'success');
+  expect(nativeInventory.provider_inventory).toHaveLength(5);
+  expect(nativeInventory.provider_inventory.every((provider) => !Object.hasOwn(provider, 'available') && !Object.hasOwn(provider, 'enabled') && !Object.hasOwn(provider, 'installed'))).toBe(true);
+  expect(nativeInventory.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_disabled')).toMatchObject({
+    canRunChildTask: false,
+    constraints: ['Provider instance is disabled.'],
+    models: [expect.objectContaining({ id: 'qa-disabled-model' })],
+  });
+  expect(nativeInventory.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_uninstalled_agent')).toMatchObject({
+    canRunChildTask: false,
+    constraints: ['Provider executable is not installed.'],
+    models: [expect.objectContaining({ id: 'qa-uninstalled-model' })],
+  });
   const inventory = await ownerApi.get(`/connections/${connection.id}/providers`);
   expect(inventory.response.status(), JSON.stringify(inventory.data)).toBe(200);
+  expect(inventory.data.providers.map((provider) => provider.provider_instance_id)).toEqual(activeProviderIds);
+  expect(inventory.data.providers.every((provider) => provider.available)).toBe(true);
   const generalProvider = inventory.data.providers.find((provider) => provider.provider_instance_id === 'codex_general');
   const reviewProvider = inventory.data.providers.find((provider) => provider.provider_instance_id === 'codex_review');
   expect(generalProvider).toMatchObject({ display_name: 'Codex Allgemein', available: true });
@@ -157,6 +199,7 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   await selectRoleConnectionAndProject(ownerPage, connection.name, project.name);
   await ownerPage.getByLabel('Ausführungsziel in T3').click();
   await ownerPage.getByRole('option', { name: 'T3-Providerinstanz', exact: true }).click();
+  await visibleProviderOptions(ownerPage);
 
   const targets = [
     { label: 'Codex Allgemein · codex_general', providerInstanceId: 'codex_general', model: 'qa-general-model', modelOption: 'QA General Model · qa-general-model', roleName: 'Codex Allgemein Rolle' },
@@ -193,6 +236,24 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
     await expect(ownerPage.getByRole('article').filter({ hasText: target.roleName })).toContainText(`Providerinstanz ${target.providerInstanceId} · Modell ${target.model}`);
   }
 
+  const inactiveModelSearch = await ownerApi.get(`/connections/${connection.id}/providers?search=qa-disabled-model`);
+  expect(inactiveModelSearch.response.status(), JSON.stringify(inactiveModelSearch.data)).toBe(200);
+  expect(inactiveModelSearch.data.providers.map((provider) => provider.provider_instance_id)).toEqual(activeProviderIds);
+  expect(inactiveModelSearch.data.providers.every((provider) => provider.models.length === 0)).toBe(true);
+  const modelSearch = ownerPage.getByLabel('Modellsuche in T3');
+  await modelSearch.fill('qa-disabled-model');
+  await ownerPage.getByRole('button', { name: 'Modelle suchen', exact: true }).click();
+  await visibleProviderOptions(ownerPage);
+
+  const searchRefreshCount = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities' && entry.capability_search === 'qa-disabled-model').length;
+  await ownerPage.getByRole('button', { name: 'Provider neu laden', exact: true }).click();
+  await expect.poll(async () => (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities' && entry.capability_search === 'qa-disabled-model').length, {
+    timeout: 45_000,
+    message: 'Das Aktualisieren der Suche muss das aktuelle T3-Inventar erneut lesen.',
+  }).toBe(searchRefreshCount + 1);
+  await expect(ownerPage.getByText('T3-Inventar wird aktualisiert…', { exact: true })).toHaveCount(0);
+  await visibleProviderOptions(ownerPage);
+
   const capabilityCalls = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities' && entry.outcome === 'success');
   expect(capabilityCalls.some((entry) => entry.provider_inventory?.some((provider) => provider.providerInstanceId === 'codex_general' && provider.driverKind === 'codex')
     && entry.provider_inventory?.some((provider) => provider.providerInstanceId === 'codex_review' && provider.driverKind === 'codex'))).toBe(true);
@@ -225,11 +286,27 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   for (const field of preservedFields) expect(changedProfile[field]).toEqual(originalValues[field]);
   expect(changedProfile.version).toBe(generalProfile.version + 1);
 
+  await qaMocks.setT3Scenario('provider_signals');
+  const signalInventory = await ownerApi.get(`/connections/${connection.id}/providers`);
+  expect(signalInventory.response.status(), JSON.stringify(signalInventory.data)).toBe(200);
+  expect(signalInventory.data.providers.map((provider) => provider.provider_instance_id)).toEqual(['qa_native_signal', 'qa_legacy_signal']);
+  expect(signalInventory.data.providers.every((provider) => provider.available)).toBe(true);
+  const signalJournal = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities').at(-1);
+  expect(signalJournal.provider_inventory).toHaveLength(7);
+  expect(signalJournal.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_native_signal')).toMatchObject({ canRunChildTask: true });
+  expect(signalJournal.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_legacy_signal')).toMatchObject({ available: true });
+  expect(signalJournal.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_no_signal')).not.toHaveProperty('available');
+  expect(signalJournal.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_native_string')).toMatchObject({ canRunChildTask: 'true' });
+  expect(signalJournal.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_legacy_string')).toMatchObject({ available: 'true' });
+  expect(signalJournal.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_native_overruled')).toMatchObject({ canRunChildTask: true, available: false });
+  expect(signalJournal.provider_inventory.find((provider) => provider.providerInstanceId === 'qa_legacy_overruled')).toMatchObject({ canRunChildTask: false, available: true });
+  await qaMocks.setT3Scenario('default');
+
   const t3 = await qaMocks.t3Journal();
   expect(t3.unexpected).toEqual([]);
   recordEvidence(
     'Agentrollen können zwei Providerinstanzen desselben T3-Treibers anhand ihrer Verbindungs-ID unterscheiden und die jeweilige Modell-ID speichern.',
-    'Die Live-Provider-API lieferte codex_general mit qa-general-model und codex_review mit qa-review-model; der T3-Capability-Mock weist beide als codex-Treiberinstanzen aus. Die Browserauswahl zeigte beide Instanzen eindeutig und die Agentrollen-API speicherte für beide den passenden provider_instance_id- und model-Wert. Eine vorhandene Rolle wurde anschließend auf codex_review umgestellt; ID, Name, Rolle, Verbindung, Projektfreigaben und übrige Profilfelder blieben erhalten.',
+    'Der Capability-Snapshot enthielt drei aktive und zwei inaktive T3-Instanzen samt Modellen. Die Live-Provider-API und das Browser-Dropdown enthielten nur codex, codex_general und codex_review; die inaktiven Slugs blieben auch bei Suche nach ihrem Modell und nach Provider-Refresh ausgeschlossen. Die Browserauswahl speicherte codex_general/qa-general-model und codex_review/qa-review-model. Eine vorhandene Rolle wurde anschließend auf codex_review umgestellt; ID und übrige Profilfelder blieben erhalten. Die API-Signalvariante ergänzte, dass ein natives true und ein Legacy-true verfügbar sind; fehlende, falsch typisierte oder widersprüchlich falsche Signale wurden ausgeschlossen.',
     { t3 },
   );
 });

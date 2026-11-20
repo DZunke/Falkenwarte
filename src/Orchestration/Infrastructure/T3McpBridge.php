@@ -408,9 +408,9 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
             $normalized = [
                 'provider_instance_id' => $id,
                 'display_name' => $displayName,
-                // The T3 capabilities constraints describe child-task support. Only a legacy
-                // explicit field can report launch availability; listed instances default true.
-                'available' => is_bool($provider['available'] ?? null) ? $provider['available'] : true,
+                // A false signal from either schema takes precedence over a true from the other.
+                // Native T3 uses canRunChildTask; older capability sources may expose available.
+                'available' => $this->providerAvailable($provider),
                 'models' => $models,
             ];
             $omittedModels = $provider['omittedModels'] ?? $provider['omitted_models'] ?? null;
@@ -421,6 +421,18 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
         }
 
         return $result;
+    }
+
+    /** @param array<string, mixed> $provider */
+    private function providerAvailable(array $provider): bool
+    {
+        $legacy = $provider['available'] ?? null;
+        $native = $provider['canRunChildTask'] ?? null;
+        if (false === $legacy || false === $native) {
+            return false;
+        }
+
+        return true === $legacy || true === $native;
     }
 
     /** @param list<string> $tools @return list<string> */
