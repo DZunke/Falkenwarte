@@ -169,7 +169,10 @@ export default function RolesView({ initialProjectId, initialConnectionId }: { i
     setTargetEditor((current) => {
       if (!current) return current
       const previous = current.providerSelection
-      if (previous?.provider_instance_id === selection?.provider_instance_id && previous?.model === selection?.model) return current
+      if (previous?.provider_instance_id === selection?.provider_instance_id
+        && previous?.model === selection?.model
+        && previous?.reasoning?.option_id === selection?.reasoning?.option_id
+        && previous?.reasoning?.value === selection?.reasoning?.value) return current
 
       return { ...current, providerSelection: selection }
     })
