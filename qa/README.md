@@ -18,7 +18,7 @@ Der E2E-Workflow schreibt den bereinigten Browserbericht nach `var/ci-evidence/a
 
 Die Belegaufbereitung erfolgt manuell. `scripts/prepare-traceability-evidence.php` verknüpft einen GitHub-Workflowexport, den bereinigten Browserbericht sowie Produktionsstart und Neustart. Optional kann `--a31=PATH` die getrennten GitHub-Lieferbelege ergänzen. Der Standardausgabepfad ist `var/ci-evidence/verification.json`.
 
-`php scripts/build-traceability.php` erstellt aus dem aktuellen Abnahmekatalog und vorhandenen optionalen Belegen `var/ci-evidence/traceability.md`. Fehlende hosted Belege bleiben offen. Ein anderer Ausgabeort innerhalb des Repositorys kann mit `--output=PATH` gesetzt werden.
+`php scripts/build-traceability.php` erstellt aus dem aktuellen Abnahmekatalog und vorhandenen optionalen Belegen `var/ci-evidence/traceability.md`. Fehlende hosted Belege bleiben offen. Mit `--output=PATH` kannst du den Bericht auch an einem anderen Ort ablegen, etwa unter `/tmp/`.
 
 Abgeschlossene Release-Fakten und ihre damaligen Quellen stehen getrennt und versioniert unter [evidence/](evidence/README.md). Sie sind nicht das Ergebnis eines aktuellen lokalen Laufs.
 
