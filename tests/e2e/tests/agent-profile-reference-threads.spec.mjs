@@ -3,6 +3,7 @@ import { authorizeT3InBrowser, expect, recordEvidence, test } from '../support/f
 
 const activeProviderIds = ['codex', 'codex_general', 'codex_review'];
 const activeProviderLabels = ['Codex · codex', 'Codex Allgemein · codex_general', 'Codex Review · codex_review'];
+const apiPrefix = process.env.FALKENWARTE_API_PREFIX ?? '/api/v1';
 
 async function readUntil(ownerApi, route, matches, description) {
   let current;
@@ -85,6 +86,31 @@ async function visibleProviderOptions(ownerPage) {
   await expect(options).toHaveCount(activeProviderIds.length);
   await expect(options).toHaveText(activeProviderLabels);
   await ownerPage.keyboard.press('Escape');
+}
+
+async function refreshProviderInventoryFromBrowser(ownerPage, connectionId, search, button, qaMocks) {
+  await expect(button).toBeVisible();
+  await expect(button).toBeEnabled();
+  const journalBookmark = (await qaMocks.t3Journal()).journal.length;
+  const requestPromise = ownerPage.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'GET'
+      && url.pathname === `${apiPrefix}/connections/${connectionId}/providers`
+      && url.searchParams.get('search') === search;
+  });
+  await button.click();
+  const request = await requestPromise;
+  const response = await request.response();
+  expect(response, 'The clicked refresh must complete the matching browser GET.').toBeTruthy();
+  expect(response.status()).toBe(200);
+  const inventory = await response.json();
+  const newNativeEntries = (await qaMocks.t3Journal()).journal.slice(journalBookmark);
+  const matchingNativeRefreshes = newNativeEntries.filter((entry) => entry.tool === 'orchestrator_capabilities'
+    && entry.outcome === 'success'
+    && entry.capability_search === search).at(-1);
+  expect(matchingNativeRefreshes, 'The refreshed browser response must be backed by a new native T3 inventory entry.').toBeTruthy();
+
+  return { inventory, nativeRefresh: matchingNativeRefreshes };
 }
 
 test('Agentrolle kann einen echten Referenzthread aus dem gebundenen T3-Projekt wählen', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
@@ -264,12 +290,17 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   await ownerPage.getByRole('button', { name: 'Modelle suchen', exact: true }).click();
   await visibleProviderOptions(ownerPage);
 
-  const searchRefreshCount = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities' && entry.capability_search === 'qa-disabled-model').length;
-  await ownerPage.getByRole('button', { name: 'Provider neu laden', exact: true }).click();
-  await expect.poll(async () => (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities' && entry.capability_search === 'qa-disabled-model').length, {
-    timeout: 45_000,
-    message: 'Das Aktualisieren der Suche muss das aktuelle T3-Inventar erneut lesen.',
-  }).toBe(searchRefreshCount + 1);
+  const { inventory: refreshedSearchInventory, nativeRefresh: searchedNativeRefresh } = await refreshProviderInventoryFromBrowser(
+    ownerPage,
+    connection.id,
+    'qa-disabled-model',
+    ownerPage.getByRole('button', { name: 'Provider neu laden', exact: true }),
+    qaMocks,
+  );
+  expect(refreshedSearchInventory.providers.map((provider) => provider.provider_instance_id)).toEqual(activeProviderIds);
+  expect(refreshedSearchInventory.providers.every((provider) => provider.models.length === 0)).toBe(true);
+  expect(searchedNativeRefresh.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_disabled').models)
+    .toContainEqual(expect.objectContaining({ id: 'qa-disabled-model' }));
   await expect(ownerPage.getByText('T3-Inventar wird aktualisiert…', { exact: true })).toHaveCount(0);
   await visibleProviderOptions(ownerPage);
 
@@ -318,13 +349,15 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
   await qaMocks.setT3Scenario('reasoning_option_missing');
   await generalArticle.getByRole('button', { name: 'Ausführungsziel ändern', exact: true }).click();
   const staleReasoningEditor = ownerPage.getByTestId(`profile-target-editor-${generalProfile.id}`);
-  const refreshedCapabilitiesBefore = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities').length;
-  await staleReasoningEditor.getByRole('button', { name: 'Provider neu laden', exact: true }).click();
-  await expect.poll(async () => (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities').length, {
-    timeout: 45_000,
-    message: 'Die Rolle muss ihre Reasoning-Auswahl gegen das aktuelle native T3-Inventar prüfen.',
-  }).toBe(refreshedCapabilitiesBefore + 1);
-  const staleCapability = (await qaMocks.t3Journal()).journal.filter((entry) => entry.tool === 'orchestrator_capabilities').at(-1);
+  const { inventory: refreshedStaleInventory, nativeRefresh: staleCapability } = await refreshProviderInventoryFromBrowser(
+    ownerPage,
+    connection.id,
+    null,
+    staleReasoningEditor.getByRole('button', { name: 'Provider neu laden', exact: true }),
+    qaMocks,
+  );
+  expect(refreshedStaleInventory.providers.find((provider) => provider.provider_instance_id === 'codex_review').models)
+    .toContainEqual(expect.objectContaining({ id: 'qa-review-model' }));
   expect(staleCapability.provider_inventory.find((provider) => provider.providerInstanceId === 'codex_review').models
     .find((model) => model.id === 'qa-review-model')).not.toHaveProperty('options');
   await expect(staleReasoningEditor.getByText(/Gespeichertes Reasoning-Level „high“ \(Option reasoningEffort\)/)).toBeVisible();
