@@ -96,7 +96,21 @@ Wartet der Auftrag auf eine Antwort, öffne **Eingabe an den laufenden Auftrag**
 
 ## 12. Das Ergebnis prüfen
 
-Öffne im Ticket **Ausführung**, wähle den Lauf und lies unter **Ergebnisberichte**, was der Agent geändert und geprüft hat. Prüfe seine Angaben anhand deiner Erfolgskriterien. Wenn eine menschliche Freigabe aussteht, findest du sie unter **Entscheidungen**. Den Ticketabschluss bestätigst du gesondert. [Kriterien und Ticketabschluss](PROJECTS_AND_TICKETS.md)
+Öffne im Ticket **Ausführung** und wähle **task · Versuch 1**. Lies unter **Ergebnisberichte**, was der Agent geändert hat und welche Prüfungen er tatsächlich ausgeführt hat. Die zugehörigen Prüfberichte findest du unter **Details → Gemeldete Nachweise**.
+
+Prüfe im Beispiel, ob der Nachweis die Installation der aktualisierten Abhängigkeiten belegt und ob er die Ergebnisse für Ruff und pytest nennt. Unter **Details → Erfolgskriterien** siehst du **Agentenmeldung liegt vor** bei den Kriterien, denen der Agent einen Nachweis zugeordnet hat.
+
+**Falls die Zuordnung fehlt:** Öffne unter **Gemeldete Nachweise** den passenden Prüfbericht. Klicke auf **Kriterien zuordnen**, hake die Kriterien an, die dieser Bericht tatsächlich belegt, und klicke auf **Zuordnung speichern**. Bei diesen Kriterien erscheint jetzt **Bestätigen**. Diesen Schritt brauchst du beispielsweise bei einem älteren Agentenbericht. [Nachweise zuordnen und prüfen](PROJECTS_AND_TICKETS.md#ticketdetails-nachweise-und-verlauf)
+
+## 13. Die Erfolgskriterien bestätigen
+
+Klicke unter **Details → Erfolgskriterien** beim ersten belegten Kriterium auf **Bestätigen**. Trage unter **Begründung** kurz ein, was dich am Nachweis überzeugt hat, und klicke auf **Fachlich bestätigen**. Wiederhole das für die übrigen Kriterien, die du geprüft hast. Bei jedem abgenommenen Kriterium steht jetzt **Menschlich bestätigt**.
+
+## 14. Das Ticket abschließen
+
+Klicke oben im geöffneten Ticket auf das Statusfeld **Bereit** und wähle **Erledigt**. Schließe die Ticketansicht, sobald der neue Status angezeigt wird. Auf dem Board findest du deine Karte jetzt in der Spalte **Erledigt**.
+
+Verhindert eine Abschlussregel den Wechsel, öffne im Ticket den Reiter **Ablauf** und lies unter **Ticketstand**, was noch aussteht. Eine ausstehende Phasenfreigabe findest du im Reiter **Entscheidungen**.
 
 ### Den Ablauf eines Tickets lesen
 

@@ -46,6 +46,12 @@ function RevisionFields({ fields }: { fields: components['schemas']['Revision'][
 
 type TaskLink = components['schemas']['TaskLink']
 
+function evidenceIsCurrentForTask(evidence: components['schemas']['Evidence'], task: Task): boolean {
+  return typeof evidence.current_for_task === 'boolean'
+    ? evidence.current_for_task
+    : evidence.task_revision === task.version
+}
+
 export default function TaskSheet({ taskId, project, statuses, onClose, onChanged }: { taskId?: string; project: Project; statuses: TaskStatus[]; onClose: () => void; onChanged: () => Promise<void> }) {
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('details')
@@ -120,11 +126,12 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   const [restoreReason, setRestoreReason] = useState('')
   const evidenceItems = evidenceQuery.data?.items ?? []
   const evidenceAssignmentEvidence = evidenceItems.find((item) => item.id === evidenceAssignmentTarget)
-  const evidenceAssignmentIsStale = Boolean(task && evidenceAssignmentEvidence && evidenceAssignmentEvidence.task_revision !== task.version)
+  const evidenceAssignmentIsCurrent = Boolean(task && evidenceAssignmentEvidence && evidenceIsCurrentForTask(evidenceAssignmentEvidence, task))
+  const evidenceAssignmentIsStale = Boolean(evidenceAssignmentEvidence && !evidenceAssignmentIsCurrent)
   const evidenceAssignmentLinkedCriteria = task && evidenceAssignmentEvidence
     ? task.criteria.filter((criterion) => criterion.evidence_ids.includes(evidenceAssignmentEvidence.id))
     : []
-  const evidenceAssignmentAvailableCriteria = task && evidenceAssignmentEvidence && !evidenceAssignmentIsStale && evidenceAssignmentEvidence.review_status !== 'rejected'
+  const evidenceAssignmentAvailableCriteria = task && evidenceAssignmentEvidence && evidenceAssignmentIsCurrent && evidenceAssignmentEvidence.review_status !== 'rejected'
     ? task.criteria.filter((criterion) => ['pending', 'reported'].includes(criterion.state) && !criterion.evidence_ids.includes(evidenceAssignmentEvidence.id))
     : []
   const missingCustomFields = missingRequiredCustomFields(customFields, customFieldDraftValues)
@@ -304,7 +311,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
       const requestedTask = await request(api.GET('/tasks/{task_id}', { params: { path: { task_id: task.id } } }))
       if (evidence.task_id !== requestedTask.id) throw new Error('Der Nachweis gehört nicht mehr zu diesem Ticket.')
       if (evidence.review_status === 'rejected') throw new Error('Ein zurückgewiesener Nachweis kann nicht zugeordnet werden.')
-      if (evidence.task_revision !== requestedTask.version) throw new Error('Der Nachweis ist veraltet. Er bezieht sich auf eine ältere Ticketversion.')
+      if (!evidenceIsCurrentForTask(evidence, requestedTask)) throw new Error('Der Nachweis ist für den aktuellen Ticketstand nicht gültig und kann nicht zugeordnet werden.')
 
       let currentTask = requestedTask
       let savedCount = 0
@@ -424,16 +431,21 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                     {evidenceQuery.isPending ? <p className="text-sm text-muted-foreground">Meldungen werden geladen…</p> : evidenceQuery.isError ? <p role="alert" className="text-sm text-destructive">Meldungen konnten nicht geladen werden: {formatError(evidenceQuery.error)}</p> : evidenceItems.length === 0 ? <p className="text-sm text-muted-foreground">Noch keine Meldungen. Ein Nachweis bleibt als menschliche oder Agentenmeldung gekennzeichnet.</p> : <div className="space-y-2">{evidenceItems.map((item) => {
                       const linkedCriteria = task.criteria.filter((criterion) => criterion.evidence_ids.includes(item.id))
                       const openCriteria = task.criteria.filter((criterion) => ['pending', 'reported'].includes(criterion.state) && !criterion.evidence_ids.includes(item.id))
-                      const linkedToCurrentCriterion = item.review_status !== 'rejected'
+                      const linkedToConfirmedCriterion = item.review_status !== 'rejected'
+                        && linkedCriteria.some((criterion) => criterion.state === 'human_confirmed')
+                      const legacyCurrentCriterionLink = item.review_status !== 'rejected'
                         && linkedCriteria.some((criterion) => criterion.state === 'human_confirmed' || (item.run_id !== null && criterion.state === 'reported'))
-                      const stale = item.task_revision !== task.version && !linkedToCurrentCriterion
-                      const canAssign = item.review_status !== 'rejected' && item.task_revision === task.version && openCriteria.length > 0
+                      const isCurrent = typeof item.current_for_task === 'boolean'
+                        ? item.current_for_task
+                        : item.task_revision === task.version || legacyCurrentCriterionLink
+                      const stale = !isCurrent && !linkedToConfirmedCriterion
+                      const canAssign = item.review_status !== 'rejected' && evidenceIsCurrentForTask(item, task) && openCriteria.length > 0
 
                       return <div key={item.id} className="rounded-lg border p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{item.label}</p><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{item.review_status === 'human_confirmed' ? 'Menschlich bestätigt' : item.review_status === 'rejected' ? 'Zurückgewiesen' : 'Gemeldet'}</Badge>{stale && <Badge variant="destructive">Veraltet</Badge>}</div></div>
                         {item.text && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{item.text}</p>}
                         {linkedCriteria.length > 0 ? <p className="mt-2 text-xs text-muted-foreground">Bereits zugeordnet: {linkedCriteria.map((criterion) => criterion.text).join(' · ')}</p> : <p className="mt-2 text-xs text-muted-foreground">Noch keinem Erfolgskriterium zugeordnet.</p>}
-                        {linkedToCurrentCriterion && item.task_revision !== task.version && <p className="mt-2 text-xs text-muted-foreground">Nachweis aus Ticketversion {item.task_revision}.</p>}
+                        {(isCurrent || linkedToConfirmedCriterion) && item.task_revision !== task.version && <p className="mt-2 text-xs text-muted-foreground">Nachweis aus Ticketversion {item.task_revision}.</p>}
                         {item.review_status === 'rejected' && <p className="mt-2 text-xs text-destructive">Zurückgewiesene Nachweise lassen sich nicht zuordnen.</p>}
                         {stale && <p className="mt-2 text-xs text-destructive">Dieser Nachweis bezieht sich auf Ticketversion {item.task_revision}, aktuell ist Version {task.version}. Er lässt sich nicht zuordnen.</p>}
                         {item.review_status !== 'rejected' && !stale && openCriteria.length === 0 && <p className="mt-2 text-xs text-muted-foreground">Keine offenen Kriterien ohne diese Zuordnung verfügbar.</p>}

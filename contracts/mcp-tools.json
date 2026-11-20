@@ -1411,7 +1411,7 @@
     },
     {
       "name": "runs_report_result",
-      "description": "Report-ID dedupliziert zusätzlich zum Idempotency-Key. Principal, Attempt, Taskrevision und Referenzen müssen passen. Erfolgsmeldung setzt nicht succeeded.",
+      "description": "Report-ID dedupliziert zusätzlich zum Idempotency-Key. Principal, Attempt, Taskrevision und Referenzen müssen passen. artifacts[].criterion_ids verweist ausschließlich auf Kriterien aus dem eingefrorenen Run-Snapshot. Erfolgsmeldung setzt nicht succeeded.",
       "operation_id": "runs_report_result",
       "http_mapping": {
         "method": "POST",
@@ -1507,13 +1507,24 @@
                   "type": "string",
                   "maxLength": 10000,
                   "minLength": 1
+                },
+                "criterion_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "minItems": 0,
+                  "maxItems": 100,
+                  "uniqueItems": true,
+                  "description": "IDs von Kriterien aus dem eingefrorenen Snapshot dieses Runs, die dieser Nachweis belegt."
                 }
               },
               "required": [
                 "kind",
                 "label"
               ],
-              "description": "Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. Die Anwendung lädt keinen Linkinhalt.",
+              "description": "Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. criterion_ids ordnet den Nachweis optional Kriterien des eingefrorenen Run-Snapshots zu. Die Anwendung lädt keinen Linkinhalt.",
               "anyOf": [
                 {
                   "required": [

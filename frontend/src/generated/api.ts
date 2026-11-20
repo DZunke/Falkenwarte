@@ -3004,6 +3004,17 @@ export interface components {
         } | unknown | {
             link_ids: unknown;
         };
+        /** @description Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. criterion_ids ordnet den Nachweis optional Kriterien des eingefrorenen Run-Snapshots zu. */
+        RunResultArtifactCandidate: {
+            kind: components["schemas"]["ArtifactKind"];
+            label: string;
+            link_ids?: components["schemas"]["Id"][];
+            text?: string;
+            /** @description IDs von Kriterien aus dem eingefrorenen Snapshot dieses Runs, die dieser Nachweis belegt. */
+            criterion_ids?: components["schemas"]["Id"][];
+        } | unknown | {
+            link_ids: unknown;
+        };
         /** @description Agent-Behauptung. Selbst reported_success setzt den Run nicht auf succeeded. Authentifizierter Principal und gespeicherte Attempt-Zuordnung werden geprüft. */
         RunResultReportRequest: {
             report_id: components["schemas"]["Id"];
@@ -3012,7 +3023,7 @@ export interface components {
             /** @enum {string} */
             outcome: "reported_success" | "needs_changes" | "blocked" | "failed";
             summary: string;
-            artifacts: components["schemas"]["ArtifactCandidate"][];
+            artifacts: components["schemas"]["RunResultArtifactCandidate"][];
             open_questions?: string[];
         };
         RunResultReport: {
@@ -3056,6 +3067,8 @@ export interface components {
             criterion_ids: components["schemas"]["Id"][];
             /** @description Bei Registrierung serverseitig kopierte Linkdaten. Menschliche Bestätigung bezieht sich genau auf diese URLs, Titel und Beziehungswerte; keine aktuelle Liveauflösung. */
             link_snapshot: components["schemas"]["TaskLink"][];
+            /** @description Gültigkeit für die aktuelle Ticketrevision und den aktuellen Link-Snapshot; bei Listen- und Einzelabruf gesetzt. */
+            current_for_task?: boolean;
         };
         /** @description Taskbezogene Meldung mit Text oder Linkreferenzen; optional Run/Attempt. Technische Principals erzeugen ausschließlich reported. task_revision ist Pflicht; Pfad-/Body-/Projektzuordnung serverseitig prüfen. */
         EvidenceRegister: {

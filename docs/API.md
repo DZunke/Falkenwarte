@@ -86,6 +86,8 @@ Die MCP-Eingabe für `tasks_create` benötigt `project_id`, `title` und `client_
 
 ## Den Ticketablauf lesen
 
+Ein meldender Agent kann bei `runs_report_result` je Eintrag in `artifacts` die optionalen `criterion_ids` aus der eingefrorenen Ticketübergabe angeben. Damit erscheint ein angenommener Nachweis bei genau den Erfolgskriterien, die er belegt. Das vorhandene Recht `runs.report` genügt. Artefakte ohne dieses Feld bleiben als Nachweise des Laufs lesbar und können später im Ticket zugeordnet werden. Die fachliche Bestätigung erfolgt im Eigentümerzugang.
+
 Die Eigentümersitzung kann über `GET /api/v1/tasks/{task_id}/flow` die Workflowdurchläufe und Einzelläufe eines Tickets abrufen. Die Antwort enthält die beim Start gültigen Phasen, zugehörige Versuche, Ergebnisberichte und Phasenentscheidungen. Das Übergabeprotokoll stammt aus dem gespeicherten Stand des empfangenden Laufs. Weitere Durchläufe lassen sich mit `next_cursor` und dem Abfrageparameter `cursor` laden. [Ablauf im Ticket](user/AGENTS_AND_WORKFLOWS.md#den-ablauf-eines-tickets-lesen)
 
 ## Wiederholungen und Versionen

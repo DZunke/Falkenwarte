@@ -27,7 +27,15 @@ Lege ein Falkenwarte-Ticket nur auf ausdrücklichen Auftrag an. `tasks_create` b
 
 Rufe unmittelbar vor dem Bericht `runs_get({"run_id":"<Run-ID>"})` auf. Die Antwortfelder `id`, `attempt_no`, `snapshot.task_revision` müssen zu deinem Startauftrag passen; verwende `version` als `expected_version`. Wenn Lesen oder aktuelle Version fehlen, rate nicht, sondern bitte um `runs.read`.
 
-Melde mit `runs_report_result` die Werte `run_id`, `report_id`, `attempt_no`, `task_revision`, `expected_version`, `client_request_id`, `outcome`, `summary` und `artifacts`. `report_id` ist eine UUID; `client_request_id` ist ein Idempotenzschlüssel. Ein erfolgreicher Aufruf kann zum Beispiel so aussehen:
+Melde mit `runs_report_result` die Werte `run_id`, `report_id`, `attempt_no`, `task_revision`, `expected_version`, `client_request_id`, `outcome`, `summary` und `artifacts`. `report_id` ist eine UUID; `client_request_id` ist ein Idempotenzschlüssel.
+
+Schreibe `summary` für die Person, die das Ticket abnimmt. Nenne zuerst das konkrete Ergebnis, etwa welche Abhängigkeiten von welcher auf welche Version aktualisiert wurden. Trenne Änderungen, Prüfergebnisse und verbleibende Grenzen durch Leerzeilen. Gehe auf jedes Erfolgskriterium des Tickets ein. Wenn du eine Prüfung ausgelassen hast, nenne den Grund. Zahlen, Versionsstände und Prüfresultate stammen ausschließlich aus deiner Arbeit im Zielprojekt.
+
+Gib Nachweisen kurze, aussagekräftige Bezeichnungen. In einem Prüfnachweis steht pro Zeile ein ausgeführter Befehl mit Ergebnis, etwa die Zahl bestandener Tests. Fasse lange Logs zusammen. Falls eine gewünschte Aktualisierung blockiert ist, nenne die betroffene Abhängigkeit und die konkrete Einschränkung. Falkenwarte übernimmt die Zeilenumbrüche aus deinen Textfeldern.
+
+Lies die IDs und Texte der Erfolgskriterien aus der Übergabe. Gib bei jedem Artefakt in `criterion_ids` genau die IDs an, für die **dieser Nachweis** eine Aussage belegt. Ein Installationsprotokoll kann beispielsweise das Installationskriterium belegen, ein Testprotokoll das Prüfkriterium. Deckt derselbe Nachweis beide ab, kannst du beide IDs zuordnen. Bleibt ein Kriterium ungeprüft, nenne es in der Zusammenfassung. Bei einem älteren Server, dessen Werkzeugschema keine `criterion_ids` im Artefakt anbietet, schreibe die Zuordnung in den Nachweistext. Die fachliche Bestätigung trifft der Eigentümer.
+
+Beispiel für einen erfolgreichen Aufruf:
 
 ```text
 runs_report_result({
@@ -38,11 +46,12 @@ runs_report_result({
   expected_version: <runs_get.version>,
   client_request_id: "<neue UUID>",
   outcome: "reported_success",
-  summary: "Die Kriterien dieser Phase sind erfüllt.",
+  summary: "<Änderung und Auswirkung auf das Projekt>.\n\n<Was Installation, Lint und Tests ergeben haben>.\n\n<Verbleibende Versionsgrenze und Grund, falls vorhanden>.",
   artifacts: [{
     kind: "test_report",
-    label: "Prüfungen",
-    text: "<tatsächlich ausgeführte Befehle und ihre Ergebnisse>"
+    label: "Installation und Tests",
+    criterion_ids: ["<ID des Installationskriteriums>", "<ID des Prüfkriteriums>"],
+    text: "<Installationsbefehl>: <Ergebnis>\n<Lint-Befehl>: <Ergebnis>\n<Testbefehl>: <beobachtete Anzahl bestandener und fehlgeschlagener Tests>"
   }],
   open_questions: []
 })

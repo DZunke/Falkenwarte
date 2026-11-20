@@ -60,7 +60,7 @@ Beim direkten Providerziel stammen Instanz-ID und Modell-ID aus der aktuellen T3
 | `succeeded`, `failed`, `cancelled` | Der Run hat einen geklärten lokalen Abschlusszustand erreicht. |
 | `abandoned` | Der Eigentümer hat die lokale Weiterbearbeitung aufgegeben. Der Run-Datensatz enthält keinen T3-Abschlussstatus. `abandoned` steht nicht in `ACTIVE_RUN_STATES`. Deshalb kann `RunHandler::requestRun()` für dieselbe T3-Projektbindung einen neuen Run anlegen. |
 
-Ein Ergebnisbericht ist eine Agentmeldung und kann Nachweise mit Status `reported` anlegen. `RunHandler` verarbeitet ihn als aktuell, wenn Versuch, Aufgabenrevision und Runzustand zum gemeldeten Stand passen. Andernfalls speichert es den Bericht als nicht akzeptiert.
+Ein Ergebnisbericht ist eine Agentmeldung und kann Nachweise mit Status `reported` anlegen. Für jedes Artefakt kann der Agent die Kriterien aus der eingefrorenen Aufgabe benennen, die der Nachweis belegt. Eine gültige Zuordnung erscheint am Kriterium als Agentenmeldung. Die menschliche Bestätigung bleibt eine eigene Entscheidung. `RunHandler` verarbeitet ihn als aktuell, wenn Versuch, Aufgabenrevision und Runzustand zum gemeldeten Stand passen. Andernfalls speichert es den Bericht als nicht akzeptiert.
 
 `RunCompletionEvaluator` prüft T3-Beobachtung und gespeicherte Phasenpolicy, bevor der Run abgeschlossen wird. Ein Approval bindet Aufgabenrevision, Runversuch und Ergebnisdigest. Bei geändertem Bezug setzt `RunHandler` den Status auf `invalidated`.
 

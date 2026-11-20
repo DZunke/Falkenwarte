@@ -33,7 +33,11 @@ Ein archiviertes Projekt bleibt lesbar, nimmt aber keine neuen Tickets an. Öffn
 
 Über **Meldung hinzufügen** hängst du einen Nachweis an ein Erfolgskriterium. Die Meldung hält fest, was ein Mensch oder Agent berichtet hat. Sie ist keine automatische Code- oder CI-Prüfung.
 
-Wenn ein passender Nachweis vorliegt, wählst du **Bestätigen** und gibst eine Begründung ein.
+Bei einem Agentenlauf ordnet der Agent die Nachweise im Ergebnisbericht den Erfolgskriterien zu, die sie belegen. Diese Zuordnung ist eine Agentenmeldung und keine fachliche Bestätigung.
+
+Für einen bestehenden, noch nicht zugeordneten Nachweis öffnest du **Details → Gemeldete Nachweise**, klickst **Kriterien zuordnen**, wählst offene Kriterien aus und speicherst mit **Zuordnung speichern**. Inhalt und Herkunft der Meldung bleiben erhalten. Zurückgewiesene oder veraltete Nachweise lassen sich nicht zuordnen. Bereits zugeordnete Kriterien zeigt Falkenwarte an und bietet sie nicht erneut zur Auswahl an.
+
+Prüfe die Meldungen am jeweiligen Erfolgskriterium. Für die fachliche Bestätigung wählst du **Bestätigen**, gibst eine Begründung ein und klickst auf **Fachlich bestätigen**. Beim Verschieben der Karte in **Erledigt** bleiben deine Bestätigung und der zugehörige Nachweis erhalten. Die im Nachweis angegebene Ticketversion zeigt, auf welchen Stand er sich bezieht.
 
 Für externe Referenzen wählst du **Link hinzufügen**, benennst Sammlung und Link und registrierst die URL. Falkenwarte speichert diese Referenz, ruft aber den Inhalt und Status der externen Seite nicht selbst ab.
 

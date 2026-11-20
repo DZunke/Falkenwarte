@@ -15,6 +15,9 @@ use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\CanonicalData;
 use App\Shared\Domain\Problem;
+use App\WorkManagement\Application\TaskEvidenceEligibility;
+use App\WorkManagement\Application\TaskEvidenceProjectionReader;
+use Symfony\Component\Uid\Uuid;
 
 final class RunHandler implements OperationHandler
 {
@@ -29,6 +32,8 @@ final class RunHandler implements OperationHandler
         private readonly WorkflowPolicy $workflowPolicy,
         private readonly RunCompletionEvaluator $completionEvaluator,
         private readonly RunDelegationPolicy $delegationPolicy,
+        private readonly TaskEvidenceProjectionReader $taskEvidenceProjection,
+        private readonly TaskEvidenceEligibility $taskEvidenceEligibility,
     ) {
         $this->bridge = $bridge;
     }
@@ -576,22 +581,53 @@ final class RunHandler implements OperationHandler
 
             return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
         }
+        $snapshotCriteriaIds = [];
+        foreach (($run['snapshot']['criteria'] ?? []) as $criterion) {
+            if (isset($criterion['id']) && is_string($criterion['id'])) {
+                $snapshotCriteriaIds[strtolower($criterion['id'])] = $criterion['id'];
+            }
+        }
+        $artifacts = $body['artifacts'] ?? [];
+        if (!is_array($artifacts) || !array_is_list($artifacts) || count($artifacts) > 100) {
+            throw new Problem(422, 'validation_failed', 'Der Bericht darf höchstens 100 Nachweise als Liste enthalten.');
+        }
+        $artifactCriterionIds = [];
+        foreach ($artifacts as $artifact) {
+            $criterionIds = $artifact['criterion_ids'] ?? [];
+            if (!is_array($criterionIds) || !array_is_list($criterionIds) || count($criterionIds) > 100) {
+                throw new Problem(422, 'validation_failed', 'criterion_ids muss eine Liste mit höchstens 100 UUIDs sein.');
+            }
+            $seenCriterionIds = [];
+            $normalizedCriterionIds = [];
+            foreach ($criterionIds as $criterionId) {
+                if (!is_string($criterionId) || !Uuid::isValid($criterionId)) {
+                    throw new Problem(422, 'validation_failed', 'criterion_ids muss eindeutige UUIDs enthalten.');
+                }
+                $normalizedCriterionId = strtolower($criterionId);
+                if (isset($seenCriterionIds[$normalizedCriterionId])) {
+                    throw new Problem(422, 'validation_failed', 'criterion_ids muss eindeutige UUIDs enthalten.');
+                }
+                if (!isset($snapshotCriteriaIds[$normalizedCriterionId])) {
+                    throw new Problem(409, 'criterion_not_found', 'Ein Nachweis verweist auf ein unbekanntes Kriterium im eingefrorenen Run-Snapshot.');
+                }
+                $seenCriterionIds[$normalizedCriterionId] = true;
+                $normalizedCriterionIds[] = $snapshotCriteriaIds[$normalizedCriterionId];
+            }
+            $artifactCriterionIds[] = $normalizedCriterionIds;
+        }
         $isCurrent = (int) $body['task_revision'] === (int) $run['snapshot']['task_revision']
             && (int) $body['task_revision'] === (int) $task['version']
             && $attempt['attempt_no'] === (int) $run['attempt_no']
             && !in_array($run['state'], ['succeeded', 'failed', 'cancelled', 'abandoned'], true);
-        $linkSnapshots = [];
-        $linkIds = [];
-        foreach ($body['artifacts'] as $artifact) {
+        $linksById = [];
+        foreach ($artifacts as $artifact) {
             foreach (($artifact['link_ids'] ?? []) as $linkId) {
-                $link = $this->taskLink((string) $task['id'], (string) $linkId);
-                $linkIds[] = $linkId;
-                $linkSnapshots[] = $link;
+                $linksById[$linkId] ??= $this->taskLink((string) $task['id'], (string) $linkId);
             }
         }
         $evidenceIds = [];
-        foreach ($body['artifacts'] as $artifact) {
-            $artifactLinks = array_values(array_intersect($artifact['link_ids'] ?? [], $linkIds));
+        foreach ($artifacts as $artifactIndex => $artifact) {
+            $artifactLinks = $artifact['link_ids'] ?? [];
             $evidence = $this->store->save('evidence', [
                 'project_id' => $run['project_id'], 'task_id' => $run['task_id'], 'run_id' => $id,
                 'attempt_no' => $attempt['attempt_no'], 'task_revision' => (int) $body['task_revision'],
@@ -599,7 +635,8 @@ final class RunHandler implements OperationHandler
                 'text' => $artifact['text'] ?? null, 'link_ids' => $artifactLinks, 'review_status' => 'reported',
                 'reported_by' => $actor->ref(),
                 'reviewed_at' => null, 'reviewed_by' => null, 'review_reason' => null,
-                'criterion_ids' => [], 'link_snapshot' => array_values(array_filter($linkSnapshots, static fn (array $link): bool => in_array($link['id'], $artifactLinks, true))),
+                'criterion_ids' => $artifactCriterionIds[$artifactIndex],
+                'link_snapshot' => array_map(static fn (string $linkId): array => $linksById[$linkId], $artifactLinks),
             ], 'evidence.reported');
             $evidenceIds[] = $evidence['id'];
         }
@@ -1946,13 +1983,17 @@ final class RunHandler implements OperationHandler
     {
         $task = $this->record('tasks', $taskId);
         $actor->requireProject((string) $task['project_id']);
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$taskId] ?? ['task' => $task, 'evidence' => [], 'reports' => []];
+        $task = $projection['task'];
         $run = isset($p['source_run_id']) ? $this->store->find('runs', (string) $p['source_run_id']) : null;
         if (isset($p['source_run_id']) && (null === $run || $run['task_id'] !== $taskId || $run['project_id'] !== $task['project_id'])) {
             throw new Problem(404, 'resource_not_found', 'Der angeforderte Ausgangslauf gehört nicht zu dieser Aufgabe.');
         }
         $evidence = array_values(array_filter(
             $this->store->all('evidence', (string) $task['project_id']),
-            static fn (array $item): bool => $item['task_id'] === $taskId && 'rejected' !== $item['review_status'],
+            fn (array $item): bool => $item['task_id'] === $taskId
+                && 'rejected' !== ($item['review_status'] ?? null)
+                && $this->taskEvidenceEligibility->isCurrent($item, $task, $projection),
         ));
         $collections = array_values(array_filter($this->store->all('link_collections', (string) $task['project_id']), static fn (array $collection): bool => $collection['task_id'] === $taskId));
 
@@ -2385,18 +2426,19 @@ final class RunHandler implements OperationHandler
         }
         $attempt = $this->attempt($source, (int) $source['attempt_no']);
         $report = $this->currentReport($source, false);
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$task['id']] ?? ['evidence' => []];
+        $currentEvidenceIds = [];
+        foreach ($projection['evidence'] as $evidence) {
+            if (($evidence['run_id'] ?? null) === $source['id']
+                && in_array($evidence['id'] ?? null, $report['evidence_ids'] ?? [], true)) {
+                $currentEvidenceIds[] = $evidence['id'];
+            }
+        }
         $references = [];
         foreach ($task['link_collection_ids'] ?? [] as $collectionId) {
             $collection = $this->store->find('link_collections', $collectionId);
             if (null !== $collection && $collection['task_id'] === $task['id'] && $collection['project_id'] === $task['project_id']) {
                 $references[] = array_intersect_key($collection, array_flip(['id', 'task_id', 'name', 'kind', 'links'])) + ['task_version' => $task['version']];
-            }
-        }
-        $evidenceIds = [];
-        foreach ($report['evidence_ids'] ?? [] as $evidenceId) {
-            $evidence = $this->store->find('evidence', $evidenceId);
-            if (null !== $evidence && $evidence['run_id'] === $source['id'] && 'rejected' !== $evidence['review_status']) {
-                $evidenceIds[] = $evidenceId;
             }
         }
 
@@ -2413,7 +2455,7 @@ final class RunHandler implements OperationHandler
                 'outcome' => $report['outcome'] ?? $source['state'],
                 'context_summary' => mb_substr(trim($task['title']."\n\n".$task['description']), 0, 20000),
                 'open_questions' => $report['_open_questions'] ?? [],
-                'reported_evidence_ids' => $evidenceIds,
+                'reported_evidence_ids' => array_values(array_unique($currentEvidenceIds)),
                 'link_collections' => $references,
             ],
         ];
@@ -2757,17 +2799,32 @@ final class RunHandler implements OperationHandler
         if ([] === $conditions) {
             return true;
         }
+        $projection = $this->taskEvidenceProjection->projectTasks([$task])[$task['id']] ?? [
+            'evidence' => [],
+            'reports' => [],
+        ];
+        $compatibleRunIds = [];
+        foreach ($projection['reports'] as $entry) {
+            if (is_string($entry['run']['id'] ?? null)) {
+                $compatibleRunIds[$entry['run']['id']] = true;
+            }
+        }
         $runs = array_filter(
             $this->store->all('runs', (string) $task['project_id']),
             static fn (array $run): bool => $run['task_id'] === $task['id']
-                && (int) $run['snapshot']['task_revision'] === (int) $task['version']
+                && ((int) $run['snapshot']['task_revision'] === (int) $task['version'] || isset($compatibleRunIds[$run['id']]))
                 && (null === $instance || $run['workflow_instance_id'] === $instance['id']),
         );
         $runsById = array_column($runs, null, 'id');
-        $taskEvidence = array_filter(
-            $this->store->all('evidence', (string) $task['project_id']),
-            static fn (array $item): bool => $item['task_id'] === $task['id'] && (int) $item['task_revision'] === (int) $task['version'],
-        );
+        $taskEvidenceById = [];
+        foreach ($this->store->all('evidence', (string) $task['project_id']) as $item) {
+            if ($item['task_id'] === $task['id']
+                && 'rejected' !== ($item['review_status'] ?? null)
+                && $this->taskEvidenceEligibility->isCurrent($item, $task, $projection)) {
+                $taskEvidenceById[$item['id']] = $item;
+            }
+        }
+        $taskEvidence = array_values($taskEvidenceById);
         $approvals = array_filter($this->store->all('approvals', (string) $task['project_id']), static function (array $approval) use ($runsById): bool {
             $run = $runsById[$approval['run_id']] ?? null;
 
@@ -2876,7 +2933,7 @@ final class RunHandler implements OperationHandler
     {
         $snapshot = $run['snapshot'];
         $template = strtr($template, ['{{task.title}}' => (string) $snapshot['title'], '{{task.description}}' => (string) $snapshot['description']]);
-        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'], $snapshot['criteria'] ?? []);
+        $criteria = array_map(static fn (array $criterion): string => '- '.$criterion['text'].' (ID: '.$criterion['id'].')', $snapshot['criteria'] ?? []);
         $workflowVersion = (int) ($snapshot['workflow_version'] ?? 0);
         $workflowVersionLine = $workflowVersion > 0 ? "Workflowversion: {$workflowVersion}\n" : '';
         $handoffArguments = 'task_id='.(string) $run['task_id'];
@@ -2896,6 +2953,7 @@ final class RunHandler implements OperationHandler
             .(string) $snapshot['description'];
         if ([] !== $criteria) {
             $body .= "\n\nAkzeptanzkriterien:\n".implode("\n", $criteria);
+            $body .= "\nGib im Ergebnisbericht für jeden Nachweis unter artifacts[].criterion_ids die IDs genau der Kriterien an, die er belegt. Nenne die durchgeführten Prüfungen mit ihren tatsächlichen Ergebnissen.";
         }
         if ('' !== trim($template)) {
             $body .= "\n\nRollenhinweise:\n".$template;

@@ -7910,6 +7910,46 @@ components:
         properties:
           link_ids:
             minItems: 1
+    RunResultArtifactCandidate:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        label:
+          type: string
+          maxLength: 200
+          minLength: 1
+        link_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          minItems: 0
+          maxItems: 100
+        text:
+          type: string
+          maxLength: 10000
+          minLength: 1
+        criterion_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+          minItems: 0
+          maxItems: 100
+          uniqueItems: true
+          description: IDs von Kriterien aus dem eingefrorenen Snapshot dieses Runs, die dieser Nachweis belegt.
+      required:
+      - kind
+      - label
+      description: Agentenmeldung mit Text und/oder bereits registrierten Ticketlinks. criterion_ids ordnet den Nachweis optional Kriterien des eingefrorenen Run-Snapshots zu.
+      anyOf:
+      - required:
+        - text
+      - required:
+        - link_ids
+        properties:
+          link_ids:
+            minItems: 1
     RunResultReportRequest:
       type: object
       additionalProperties: false
@@ -7936,7 +7976,7 @@ components:
         artifacts:
           type: array
           items:
-            $ref: '#/components/schemas/ArtifactCandidate'
+            $ref: '#/components/schemas/RunResultArtifactCandidate'
           maxItems: 100
         open_questions:
           type: array
@@ -8090,6 +8130,9 @@ components:
           maxItems: 100
           description: Bei Registrierung serverseitig kopierte Linkdaten. Menschliche Bestätigung bezieht sich genau auf diese URLs,
             Titel und Beziehungswerte; keine aktuelle Liveauflösung.
+        current_for_task:
+          type: boolean
+          description: Gültigkeit für die aktuelle Ticketrevision und den aktuellen Link-Snapshot; bei Listen- und Einzelabruf gesetzt.
       required:
       - id
       - version
