@@ -267,6 +267,7 @@ function TaskWorkflows({ item, criteria, profileNames, onOpenDetails }: { item: 
         {item.phases.length > 0 ? <ol className="space-y-3 border-l pl-4 sm:pl-5">
           {[...item.phases].sort((left, right) => left.position - right.position).map((phase) => {
             const phaseRuns = runsByStage.get(phase.id) ?? []
+            const phaseBlocker = phase.blocker_reason && phase.blocker_reason.trim() !== item.pause_reason?.trim() ? phase.blocker_reason : null
             return <li key={phase.id} className="relative min-w-0 space-y-2">
               <span className="absolute -left-[1.32rem] top-1.5 size-2.5 rounded-full border-2 border-background bg-primary sm:-left-[1.57rem]" aria-hidden="true" />
               <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
@@ -276,7 +277,7 @@ function TaskWorkflows({ item, criteria, profileNames, onOpenDetails }: { item: 
                 </div>
                 <Badge variant={phase.status === 'completed' ? 'secondary' : phase.status === 'blocked' ? 'destructive' : phase.status === 'current' ? 'default' : 'outline'}>{phaseStates[phase.status]}</Badge>
               </div>
-              {phase.blocker_reason && <p className="whitespace-pre-wrap break-words rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-950">{phase.blocker_reason}</p>}
+              {phaseBlocker && <p className="whitespace-pre-wrap break-words rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-950">{phaseBlocker}</p>}
               {phase.entry_conditions.length > 0 && <p className="text-xs text-muted-foreground">Eingangsbedingungen: {phase.entry_conditions.map(conditionText).join(' · ')}</p>}
               {completionPolicyText(phase.run_completion_policy, criteria).length > 0 && <details className="rounded-md border bg-background">
                 <summary className="cursor-pointer px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Abschlussregeln ansehen</summary>

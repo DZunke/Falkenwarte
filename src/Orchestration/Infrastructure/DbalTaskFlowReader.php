@@ -48,17 +48,18 @@ final readonly class DbalTaskFlowReader implements TaskFlowReader
             return [];
         }
 
+        // Keep the small page of run IDs first so SQLite can seek directly into the report index.
         return $this->fetchRecords(<<<'SQL'
         SELECT report.data
         FROM json_each(:run_ids) AS selected_run
-        INNER JOIN records AS run
-            ON run.type = 'runs'
-           AND run.id = selected_run.value
-           AND run.project_id = :project_id
-        INNER JOIN records AS report
-            ON report.type = 'run_reports'
-           AND json_extract(report.data, '$.run_id') = run.id
-           AND (json_extract(report.data, '$.project_id') IS NULL OR json_extract(report.data, '$.project_id') = run.project_id)
+        CROSS JOIN records AS run
+        CROSS JOIN records AS report
+        WHERE run.type = 'runs'
+          AND run.id = selected_run.value
+          AND run.project_id = :project_id
+          AND report.type = 'run_reports'
+          AND json_extract(report.data, '$.run_id') = selected_run.value
+          AND (json_extract(report.data, '$.project_id') IS NULL OR json_extract(report.data, '$.project_id') = run.project_id)
         ORDER BY report.seq ASC
         SQL, ['run_ids' => json_encode($runIds, JSON_THROW_ON_ERROR), 'project_id' => $projectId]);
     }
@@ -73,15 +74,15 @@ final readonly class DbalTaskFlowReader implements TaskFlowReader
         return $this->fetchRecords(<<<'SQL'
         SELECT approval.data
         FROM json_each(:run_ids) AS selected_run
-        INNER JOIN records AS run
-            ON run.type = 'runs'
-           AND run.id = selected_run.value
-           AND run.project_id = :project_id
-        INNER JOIN records AS approval
-            ON approval.type = 'approvals'
-           AND approval.project_id = :project_id
-           AND json_extract(approval.data, '$.project_id') = run.project_id
-           AND json_extract(approval.data, '$.run_id') = run.id
+        CROSS JOIN records AS run
+        CROSS JOIN records AS approval
+        WHERE run.type = 'runs'
+          AND run.id = selected_run.value
+          AND run.project_id = :project_id
+          AND approval.type = 'approvals'
+          AND approval.project_id = run.project_id
+          AND json_extract(approval.data, '$.project_id') = run.project_id
+          AND json_extract(approval.data, '$.run_id') = selected_run.value
         ORDER BY approval.seq ASC
         SQL, ['run_ids' => json_encode($runIds, JSON_THROW_ON_ERROR), 'project_id' => $projectId]);
     }
