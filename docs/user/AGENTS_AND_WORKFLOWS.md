@@ -16,15 +16,26 @@ Richte den Skill im Arbeitsprojekt oder für den von T3 verwendeten Agenten ein.
 
 Eine Verbindung mit **Eingeschränkt**, **Nicht erreichbar** oder **Protokoll prüfen** ist nicht startbereit. Lies die Diagnose zu Netzwerk, Autorisierung, MCP-Verbindung und Fähigkeiten. Bei einem Netzwerkfehler prüfe, ob der Backend-Container die eingetragene HTTPS-Adresse erreicht. Tickets und Boards kannst du währenddessen weiterverwenden.
 
-## Rollen verwalten
+## T3-Projekt einem Falkenwarte-Projekt zuordnen
 
-Die Rollenverwaltung ist über `/#/roles` auf derselben Falkenwarte-Adresse erreichbar. Sie hat derzeit keinen Eintrag in der Hauptnavigation.
+Wähle nach dem Laden in der gewünschten T3-Projektzeile **Projekt verbinden**. Im Dialog **T3-Projekt verbinden** kannst du unter **Vorhandenes Projekt wählen** ein Falkenwarte-Projekt auswählen oder unter **Neues Falkenwarte-Projekt anlegen** ein neues Projekt mit **Projektname** und **Kurzname** anlegen. Mit **Projekt anlegen und verbinden** legt Falkenwarte das Projekt an und speichert anschließend seine Zuordnung. Falls die Zuordnung fehlschlägt, zeigt der Dialog das bereits angelegte Projekt an. Du kannst die Bindung dort erneut speichern.
 
-Lege dort eine Rolle mit Name, Aufgabenrolle, T3-Verbindung und mindestens einem erlaubten Projekt an. Als Ausführungsziel kannst du den T3-Projektstandard oder einen vorhandenen T3-Referenzthread wählen. Eine optionale Auftragsvorlage ergänzt den Rollenhinweis.
+Die aktive Zuordnung bleibt in Falkenwarte gespeichert. Nach dem Laden der Seite öffnet **{Projektname} öffnen** in der T3-Projektzeile das zugeordnete Falkenwarte-Projekt. Ein Falkenwarte-Projekt hat jeweils eine aktive T3-Projektbindung.
+
+Nach der Zuordnung kannst du über **Agentrolle einrichten** direkt eine Rolle für dieses Falkenwarte-Projekt und die verwendete T3-Verbindung anlegen.
+
+## Agentrollen verwalten
+
+Öffne **Agentrollen** in der Hauptnavigation und lege dort eine Rolle mit Name, Aufgabenrolle, T3-Verbindung und mindestens einem erlaubten Falkenwarte-Projekt an. **Agentrolle einrichten** aus einer Projektzeile übernimmt das Projekt und die T3-Verbindung. Das Ausführungsziel **T3-Projektstandard** verwendet beim Start die Agentkonfiguration des gebundenen T3-Projekts einschließlich der dort gewählten Provider und Modelle.
+
+Für einen konkreten vorhandenen T3-Thread wähle als Ausführungsziel **Vorhandener Referenzthread**. Danach kannst du unter **Referenzthread aus T3** einen angebotenen Thread wählen oder mit **ID manuell eingeben** selbst eine Thread-ID angeben.
+
+Die Projektbindung ordnet das Falkenwarte-Projekt einem T3-Projekt zu. Das Ausführungsziel der Rolle bestimmt, ob T3 seinen Projektstandard oder den ausgewählten Referenzthread für einen Auftrag verwendet. Beide Einstellungen werden in Falkenwarte gespeichert.
+
+Die Projektbindung und das Ausführungsziel benötigen keinen eingerichteten MCP-Zugang des Agents. Stelle den technischen MCP-Zugang separat einmalig für Agents aus, die Ticketkontext lesen oder Ergebnisse an Falkenwarte melden sollen. [Agent-Skill und MCP-Zugang einrichten](AGENT_SKILL.md)
 
 Eine Rolle lässt sich nur starten, wenn sie aktiviert, korrekt konfiguriert und für das aktuelle Projekt freigegeben ist. Pro Rolle ist höchstens ein gleichzeitiger Auftrag vorgesehen.
 
-Die Projektbindung zu einem vorhandenen T3-Projekt kannst du im Browser nicht setzen. Dafür gibt es `PUT /api/v1/projects/{project_id}/binding`. Details stehen im [Binding-Vertrag](../../contracts/openapi.yaml).
 
 ## Einzellauf starten und verfolgen
 

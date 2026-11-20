@@ -44,13 +44,16 @@ Der Client handelt ausschließlich MCP `2025-06-18` aus und deaktiviert Protokol
 | T3-Werkzeug | Verwendung in Falkenwarte |
 |---|---|
 | `orchestrator_capabilities` | Serverversion, Provider und unterstützte Aktionen lesen |
-| `t3_project_list` | Projekte für ein Projektbinding auflisten |
+| `t3_project_list` | Projekte für die Zuordnung in **Agents & T3** auflisten |
+| `t3_thread_list` (optional) | Referenzthreads des gebundenen T3-Projekts für die Rollenansicht auflisten |
 | `t3_thread_launch` | Einen neuen Thread mit eingefrorener Nachricht und stabiler Request-ID starten |
 | `t3_thread_read` | Thread und Laufstatus beobachten |
 | `t3_thread_send` | Nachricht mit Modus `queue` in einen bestehenden Thread senden |
 | `t3_thread_interrupt` | Bekannten Lauf unterbrechen |
 
 Der Client prüft die verfügbaren Werkzeuge vor dem jeweiligen Aufruf und behandelt MCP `isError` als Fehlschlag. Für `t3_thread_read` verwendet er derzeit einen einzelnen Abruf mit `afterPosition=0`, höchstens 100 Threadeinträgen, 50 Läufen und 20.000 Zeichen je Eintrag. Cursorfortsetzung und weitere Seiten werden von diesem Adapter nicht abgerufen.
+
+Für die Threadauswahl fragt die Eigentümeroberfläche `GET /api/v1/projects/{project_id}/t3-threads` ab. Die Bridge verwendet die externe Projekt-ID der gespeicherten Bindung. Der Browser erhält Titel und Thread-ID und kann weitere Seiten laden. Bei einem T3-Server ohne dieses Werkzeug stehen der Projektstandard und die manuelle Eingabe einer bekannten Referenzthread-ID zur Verfügung. [T3-Threadlistenvertrag in v0.1.11](https://github.com/pingdotgg/t3code/blob/v0.1.11/packages/contracts/src/orchestratorMcp.ts)
 
 Referenzthreads können eine belegte Provider-/Modellreferenz an einen neuen Start weitergeben. Fehlen diese Werte oder gehört der Thread nicht zum gebundenen Projekt, wird der Start blockiert. Der Modus `t3_project_default` lässt T3 seinen Projektstandard auswählen. Falkenwarte verwaltet keine Provider- oder Modellkonfiguration.
 

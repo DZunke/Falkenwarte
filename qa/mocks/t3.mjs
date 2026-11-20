@@ -177,8 +177,17 @@ function allTools() {
     },
     t3_project_list: {
       type: 'object', additionalProperties: false,
-      properties: { cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 } },
+      properties: { cursor: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 } },
       required: [],
+    },
+    t3_thread_list: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        projectId: { type: 'string' },
+        cursor: { type: 'integer', minimum: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 100 },
+      },
+      required: ['projectId'],
     },
     t3_thread_read: {
       type: 'object', additionalProperties: false,
@@ -260,7 +269,47 @@ function callTool(namespace, name, args, scenario) {
     }) };
   }
   if (name === 't3_project_list') {
-    return { result: toolResult({ projects: [{ id: 'qa-t3-project-1', title: 'QA T3 Project', workspaceLabel: 'QA Workspace' }], nextCursor: null }) };
+    const cursor = args.cursor ?? 0;
+    const limit = args.limit ?? 20;
+    if (!Number.isSafeInteger(cursor) || cursor < 0
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      return { result: toolError('validation_failed', 'Project listing requires a non-negative numeric cursor and a limit between 1 and 100.') };
+    }
+
+    const projects = [
+      { id: 'qa-t3-project-1', title: 'QA T3 Project', workspaceRoot: '/qa/workspace' },
+      { id: 'qa-t3-project-2', title: 'QA Archive', workspaceRoot: '/qa/second-workspace' },
+    ];
+    const page = projects.slice(cursor, cursor + limit);
+    const nextCursor = cursor + limit < projects.length ? cursor + limit : null;
+
+    return { result: toolResult({ projects: page, nextCursor }) };
+  }
+  if (name === 't3_thread_list') {
+    if (typeof args.projectId !== 'string' || args.projectId.trim() === ''
+      || !Number.isSafeInteger(args.cursor ?? 0) || (args.cursor ?? 0) < 0
+      || !Number.isSafeInteger(args.limit ?? 50) || (args.limit ?? 50) < 1 || (args.limit ?? 50) > 100) {
+      return { result: toolError('validation_failed', 'Thread listing requires a projectId and a non-negative numeric cursor.') };
+    }
+
+    const threads = Object.values(state.externalActivities)
+      .filter((activity) => scenario === 'foreign_thread_list' || activity.externalProjectId === args.projectId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((activity) => ({
+        threadId: activity.threadId,
+        projectId: activity.externalProjectId,
+        title: activity.title,
+        status: 'running',
+        latestRunId: activity.runId,
+        providerInstanceId: 'qa-inherited-provider',
+        model: 'qa-inherited-model',
+      }));
+    const cursor = args.cursor ?? 0;
+    const limit = Math.min(args.limit ?? 50, 100);
+    const page = threads.slice(cursor, cursor + limit);
+    const nextCursor = cursor + page.length < threads.length ? cursor + page.length : null;
+
+    return { result: toolResult({ projectId: args.projectId, currentThreadId: null, threads: page, nextCursor, total: threads.length }) };
   }
   if (name === 't3_thread_launch') return launch(namespace, args, scenario);
   if (name === 't3_thread_wait') {
@@ -338,7 +387,8 @@ function externalActivity(body) {
       }
       return { status: 200, body: { status: existing.status, thread_id: threadId, run_id: runId, external_project_id: externalProjectId } };
     }
-    state.externalActivities[runId] = { threadId, runId, externalProjectId, status: 'running' };
+    const title = typeof body.title === 'string' && body.title.trim() !== '' ? body.title.trim() : `QA T3 thread ${sequence}`;
+    state.externalActivities[runId] = { threadId, runId, externalProjectId, title, createdAt: new Date().toISOString(), status: 'running' };
     state.runs[runId] = { threadId, status: 'running', result: null, namespace: 'external' };
     appendJournal({ method: 'external_activity_create', external_thread_id: threadId, external_run_id: runId, outcome: 'created_running' });
     persist();
@@ -475,8 +525,12 @@ async function mcpRequest(request, response) {
     return sendJson(response, 400, { jsonrpc: '2.0', id: body?.id, error: { code: -32002, message: 'Initialize notification required.' } });
   }
   if (body?.method === 'tools/list') {
-    appendJournal({ ...entry, outcome: 'success' });
-    return sendJson(response, 200, jsonRpc(body.id, { tools: allTools() }));
+    const tools = allTools();
+    const compatibleTools = state.scenario === 'without_thread_list'
+      ? tools.filter((tool) => tool.name !== 't3_thread_list')
+      : tools;
+    appendJournal({ ...entry, outcome: 'success', tool_names: compatibleTools.map((tool) => tool.name) });
+    return sendJson(response, 200, jsonRpc(body.id, { tools: compatibleTools }));
   }
   if (body?.method === 'tools/call') {
     const name = body.params?.name;
@@ -487,7 +541,18 @@ async function mcpRequest(request, response) {
     }
     const fault = state.scenario;
     const outcome = callTool(namespace, name, args, fault);
-    appendJournal({ ...entry, outcome: outcome.unexpected ? 'unexpected_tool' : outcome.result.isError ? 'tool_error' : 'success', launch_payload_hash: name === 't3_thread_launch' ? hash(args) : undefined });
+    const threadListResult = name === 't3_thread_list' ? outcome.result.structuredContent : null;
+    appendJournal({
+      ...entry,
+      outcome: outcome.unexpected ? 'unexpected_tool' : outcome.result.isError ? 'tool_error' : 'success',
+      launch_payload_hash: name === 't3_thread_launch' ? hash(args) : undefined,
+      ...(name === 't3_thread_list' ? {
+        thread_list_project_id: args.projectId ?? null,
+        thread_list_cursor: args.cursor ?? null,
+        thread_list_limit: args.limit ?? null,
+        thread_list_result_threads: threadListResult?.threads?.map((thread) => ({ threadId: thread.threadId, projectId: thread.projectId })) ?? [],
+      } : {}),
+    });
     persist();
     if (fault === 'lost_reply_after_accept' && name === 't3_thread_launch' && outcome.accepted) {
       state.scenario = 'default';
@@ -542,7 +607,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/reset' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario ?? 'default';
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list'] });
     state = { ...emptyState(), scenario: next };
     waitingLaunches = [];
     agentCallback = null;
@@ -552,7 +617,7 @@ const handleRequest = async (request, response) => {
   if (pathname === '/__qa/scenario' && request.method === 'POST') {
     const body = await readJson(request);
     const next = body?.scenario;
-    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending'] });
+    if (next !== 'default' && !faultIds.has(next) && !['unknown_capability', 'unknown_run_state', 'lost_reply_then_hold_retry', 'hold_retry', 'run_pending', 'without_thread_list', 'foreign_thread_list'].includes(next)) return sendJson(response, 400, { error: `Unknown T3 scenario: ${next}`, available: [...faultIds, 'run_pending', 'without_thread_list', 'foreign_thread_list'] });
     state.scenario = next;
     persist();
     return sendJson(response, 200, { scenario: state.scenario });

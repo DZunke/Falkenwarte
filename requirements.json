@@ -34,11 +34,13 @@
       ],
       "implementation": [
         "src/AgentCatalog",
-        "src/Orchestration"
+        "src/Orchestration",
+        "frontend/src/features/integrations.tsx",
+        "frontend/src/features/roles.tsx"
       ],
       "documentation": [
         "docs/T3_INTEGRATION.md",
-        "docs/USER_GUIDE.md"
+        "docs/user/AGENTS_AND_WORKFLOWS.md"
       ]
     },
     {

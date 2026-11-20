@@ -188,6 +188,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/t3-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /** T3-Referenzthreads des gebundenen Projekts auflisten */
+        get: operations["project_t3_threads_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/statuses": {
         parameters: {
             query?: never;
@@ -2297,6 +2316,8 @@ export interface components {
         Id: string;
         /** @description Opaque Cursor; nicht selbst zusammensetzen. */
         Cursor: string;
+        /** @description Dezimale, nichtnegative T3-Threadlistenposition. */
+        T3ThreadCursor: string;
         Slug: string;
         Sha256: string;
         AllowedAction: {
@@ -4179,6 +4200,16 @@ export interface components {
             next_cursor: components["schemas"]["Cursor"] | null;
             has_more: boolean;
         };
+        T3Thread: {
+            id: string;
+            title: string;
+        };
+        /** @description T3-Offsetseite des gebundenen Projekts; archived Threads sind in T3 v0.1.11 nicht Teil von t3_thread_list. */
+        T3ThreadPage: {
+            items: components["schemas"]["T3Thread"][];
+            next_cursor: components["schemas"]["T3ThreadCursor"] | null;
+            has_more: boolean;
+        };
         /** @description Cursorseite mit stabiler erlaubter Sortierung; kein unbeschränkter Export. */
         CustomFieldDefinitionPage: {
             items: components["schemas"]["CustomFieldDefinition"][];
@@ -5275,6 +5306,15 @@ export interface components {
                 "application/json": components["schemas"]["RemoteProjectPage"];
             };
         };
+        /** @description Referenzthread-Seite aus dem gebundenen T3-Projekt. */
+        T3ThreadPage: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["T3ThreadPage"];
+            };
+        };
         /** @description CustomFieldDefinitionPage-Darstellung. */
         CustomFieldDefinitionPage: {
             headers: {
@@ -5445,6 +5485,8 @@ export interface components {
     parameters: {
         /** @description Opaque nächste Seite. */
         Cursor: components["schemas"]["Cursor"];
+        /** @description Nichtnegative Dezimaldarstellung des T3-Offsets, die unverändert aus next_cursor übernommen wird. */
+        T3ThreadCursor: components["schemas"]["T3ThreadCursor"];
         /** @description Höchstens 100 Einträge. */
         Limit: number;
         /** @description Auf ein erlaubtes Projekt begrenzen. */
@@ -5778,6 +5820,27 @@ export interface operations {
             409: components["responses"]["Conflict"];
             412: components["responses"]["PreconditionFailed"];
             428: components["responses"]["PreconditionRequired"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    project_t3_threads_list: {
+        parameters: {
+            query?: {
+                /** @description Nichtnegative Dezimaldarstellung des T3-Offsets, die unverändert aus next_cursor übernommen wird. */
+                cursor?: components["parameters"]["T3ThreadCursor"];
+                /** @description Höchstens 100 Einträge. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["T3ThreadPage"];
+            409: components["responses"]["Conflict"];
             default: components["responses"]["Problem"];
         };
     };

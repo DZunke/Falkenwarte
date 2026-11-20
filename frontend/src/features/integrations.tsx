@@ -4,12 +4,14 @@ import { ArrowUpRight, BookOpen, Cable, CircleCheck, CircleHelp, Download, Refre
 import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request } from '@/lib/api'
+import { fetchAllPages, useConnections, useProjects } from '@/lib/queries'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import ProjectBindingDialog, { bindingsForT3Project, type BoundProject } from './integrations/ProjectBindingDialog'
 
 const healthLabels: Record<string, string> = { unconfigured: 'Noch nicht verbunden', ready: 'Bereit', degraded: 'Eingeschränkt', unreachable: 'Nicht erreichbar', incompatible: 'Protokoll prüfen' }
 const authLabels: Record<string, string> = { missing: 'Autorisierung fehlt', pending: 'Autorisierung läuft', valid: 'Autorisiert', expiring: 'Zugang läuft ab', expired: 'Zugang abgelaufen', revoked: 'Widerrufen' }
@@ -18,11 +20,14 @@ const stageLabels: Record<components['schemas']['ConnectionCheck']['network'], s
 
 export default function IntegrationsView() {
   const client = useQueryClient()
-  const connectionsQuery = useQuery({ queryKey: ['connections'], queryFn: () => request(api.GET('/connections', { params: { query: { limit: 100 } } })) })
+  const connectionsQuery = useConnections()
+  const projectsQuery = useProjects()
   const connections = connectionsQuery.data?.items ?? []
+  const internalProjects = projectsQuery.data?.items ?? []
   const [name, setName] = useState('T3 Code')
   const [url, setUrl] = useState('')
   const [selectedId, setSelectedId] = useState<string>()
+  const [bindingTarget, setBindingTarget] = useState<components['schemas']['RemoteProject']>()
   const selected = connectionsQuery.isError ? undefined : connections.find((item) => item.id === selectedId) ?? connections[0]
   const effectiveId = selected?.id
   const canLoadProjects = Boolean(effectiveId && selected?.auth_status === 'valid')
@@ -37,10 +42,22 @@ export default function IntegrationsView() {
     } : skipToken,
     refetchInterval: (query) => query.state.data?.status === 'queued' ? 750 : false,
   })
-  const projectsQuery = useQuery({
+  const remoteProjectsQuery = useQuery({
     queryKey: ['connection-projects', effectiveId],
     enabled: canLoadProjects,
-    queryFn: effectiveId ? () => request(api.GET('/connections/{connection_id}/projects', { params: { path: { connection_id: effectiveId }, query: { limit: 100 } } })) : skipToken,
+    queryFn: effectiveId ? () => fetchAllPages((cursor) => request(api.GET('/connections/{connection_id}/projects', { params: { path: { connection_id: effectiveId }, query: { limit: 100, cursor } } }))) : skipToken,
+  })
+  const bindingIndexQuery = useQuery({
+    queryKey: ['project-binding-index', internalProjects.map((project) => `${project.id}:${project.version}:${project.active_binding_id ?? ''}`).join('|')],
+    enabled: canLoadProjects && projectsQuery.isSuccess,
+    queryFn: async () => {
+      const boundProjects = internalProjects.filter((project) => project.active_binding_id !== null)
+      return Promise.all(boundProjects.map(async (project): Promise<BoundProject> => {
+        const response = await api.GET('/projects/{project_id}/binding', { params: { path: { project_id: project.id } } })
+        if (response.response.status === 404) throw new Error(`Die gespeicherte Projektzuordnung für „${project.name}“ konnte nicht gelesen werden. Aktualisiere die Seite, bevor du weitere T3-Projekte verbindest.`)
+        return { project, binding: await request(Promise.resolve(response)) }
+      }))
+    },
   })
 
   const refresh = async () => {
@@ -72,6 +89,8 @@ export default function IntegrationsView() {
     onSuccess: (result) => { window.location.assign(result.authorization_url) },
     onError: (error) => toast.error(formatError(error)),
   })
+
+  const openBindingDialog = (project: components['schemas']['RemoteProject']) => setBindingTarget(project)
 
   if (connectionsQuery.isPending) return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
   if (connectionsQuery.isError) return <Card><CardContent className="p-6"><h2 className="font-semibold">T3-Verbindungen konnten nicht geladen werden</h2><p className="mt-2 text-sm text-muted-foreground">{formatError(connectionsQuery.error)}</p><Button variant="outline" className="mt-4" onClick={() => void connectionsQuery.refetch()}>Erneut laden</Button></CardContent></Card>
@@ -131,14 +150,31 @@ export default function IntegrationsView() {
         <Card>
           <CardHeader><CardTitle>Vorhandene T3-Projekte</CardTitle></CardHeader>
           <CardContent className="space-y-3">
-            <Button variant="outline" size="sm" disabled={!canLoadProjects || projectsQuery.isFetching} onClick={() => void projectsQuery.refetch()}><RefreshCw className={projectsQuery.isFetching ? 'animate-spin' : ''} />Projekte laden</Button>
+            <Button variant="outline" size="sm" disabled={!canLoadProjects || remoteProjectsQuery.isFetching} onClick={() => void remoteProjectsQuery.refetch()}><RefreshCw className={remoteProjectsQuery.isFetching ? 'animate-spin' : ''} />Projekte laden</Button>
             {!canLoadProjects && <p className="text-sm text-muted-foreground">Melde dich bei T3 an, bevor du Projekte lädst.</p>}
-            {canLoadProjects && projectsQuery.isError && <p className="text-sm text-muted-foreground">{formatError(projectsQuery.error)}</p>}
-            {canLoadProjects && (projectsQuery.data?.items ?? []).map((project) => <div key={project.external_project_id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{project.title}</p><p className="text-xs text-muted-foreground">{project.workspace_label ?? 'T3-Projekt'} · {project.external_project_id}</p></div><Badge variant="outline">Referenz</Badge></div>)}
-            {canLoadProjects && projectsQuery.data?.items.length === 0 && <p className="py-3 text-sm text-muted-foreground">Für diese Verbindung wurden keine T3-Projekte gemeldet.</p>}
+            {canLoadProjects && remoteProjectsQuery.isError && <div role="alert" className="text-sm text-destructive">{formatError(remoteProjectsQuery.error)} <Button variant="ghost" size="sm" onClick={() => void remoteProjectsQuery.refetch()}>Erneut laden</Button></div>}
+            {canLoadProjects && remoteProjectsQuery.data && projectsQuery.isPending && <p role="status" className="text-sm text-muted-foreground">Falkenwarte-Projekte werden geladen…</p>}
+            {canLoadProjects && remoteProjectsQuery.data && projectsQuery.isError && <div role="alert" className="text-sm text-destructive">Falkenwarte-Projekte konnten nicht geladen werden. {formatError(projectsQuery.error)} <Button variant="ghost" size="sm" onClick={() => void projectsQuery.refetch()}>Erneut laden</Button></div>}
+            {canLoadProjects && remoteProjectsQuery.data && projectsQuery.isSuccess && bindingIndexQuery.isError && <div role="alert" className="text-sm text-destructive">Projektzuordnungen konnten nicht geladen werden. {formatError(bindingIndexQuery.error)} <Button variant="ghost" size="sm" onClick={() => void bindingIndexQuery.refetch()}>Erneut laden</Button></div>}
+            {canLoadProjects && remoteProjectsQuery.data && projectsQuery.isSuccess && bindingIndexQuery.isFetching && <p role="status" className="text-sm text-muted-foreground">Bestehende Projektzuordnungen werden geladen…</p>}
+            {canLoadProjects && (remoteProjectsQuery.data?.items ?? []).map((project) => {
+              const bindings = bindingIndexQuery.data ? bindingsForT3Project(bindingIndexQuery.data, selected.id, project.external_project_id) : []
+              return <div key={project.external_project_id} data-testid="t3-project-row" className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0"><p className="truncate text-sm font-medium">{project.title}</p><p className="text-xs text-muted-foreground">{project.workspace_label ?? 'T3-Projekt'} · {project.external_project_id}</p></div>
+                {bindings.length > 0 ? <div data-testid="t3-project-binding" className="flex flex-col items-start gap-2 text-sm">
+                  {bindings.map(({ project: localProject }) => <div key={localProject.id} className="flex flex-wrap items-center gap-3">
+                    <Badge variant="secondary">Verbunden</Badge>
+                    <a className="font-medium underline underline-offset-4" href={`#/project/${encodeURIComponent(localProject.id)}/board`}>{localProject.name} öffnen</a>
+                    <a className="underline underline-offset-4" href={`#/roles/${encodeURIComponent(localProject.id)}/${encodeURIComponent(selected.id)}`}>Agentrolle einrichten</a>
+                  </div>)}
+                </div> : <Button variant="outline" size="sm" disabled={!projectsQuery.isSuccess || !bindingIndexQuery.isSuccess || Boolean(bindingIndexQuery.isFetching)} onClick={() => openBindingDialog(project)}>Projekt verbinden</Button>}
+              </div>
+            })}
+            {canLoadProjects && remoteProjectsQuery.data?.items.length === 0 && <p className="py-3 text-sm text-muted-foreground">Für diese Verbindung wurden keine T3-Projekte gemeldet.</p>}
           </CardContent>
         </Card>
       </section>}
+      {bindingTarget && selected && bindingIndexQuery.data && projectsQuery.data && <ProjectBindingDialog key={`${selected.id}:${bindingTarget.external_project_id}`} connectionId={selected.id} remoteProject={bindingTarget} projects={internalProjects} boundProjects={bindingIndexQuery.data} onClose={() => setBindingTarget(undefined)} />}
     </main>
   )
 }

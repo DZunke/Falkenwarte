@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bot, Check, Plus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, formatError, mutationParams, request } from '@/lib/api'
-import { useProjects } from '@/lib/queries'
+import { fetchAllPages, useConnections, useProjects } from '@/lib/queries'
+import { ReferenceThreadPicker } from './ReferenceThreadPicker'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,20 +14,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 
-export default function RolesView() {
+export default function RolesView({ initialProjectId, initialConnectionId }: { initialProjectId?: string; initialConnectionId?: string }) {
   const client = useQueryClient()
-  const connectionsQuery = useQuery({ queryKey: ['connections'], queryFn: () => request(api.GET('/connections', { params: { query: { limit: 100 } } })) })
-  const profilesQuery = useQuery({ queryKey: ['agent-profiles'], queryFn: () => request(api.GET('/agent-profiles', { params: { query: { limit: 100 } } })) })
+  const connectionsQuery = useConnections()
+  const profilesQuery = useQuery({
+    queryKey: ['agent-profiles', 'all'],
+    queryFn: () => fetchAllPages((cursor) => request(api.GET('/agent-profiles', { params: { query: { limit: 100, cursor } } }))),
+  })
   const projectsQuery = useProjects()
   const [name, setName] = useState('')
   const [role, setRole] = useState('Implementierung')
-  const [connectionId, setConnectionId] = useState('')
-  const [projectIds, setProjectIds] = useState<string[]>([])
+  const [chosenConnection, setConnectionId] = useState(initialConnectionId ?? '')
+  const [chosenProjects, setProjectIds] = useState<string[]>(initialProjectId ? [initialProjectId] : [])
   const [targetMode, setTargetMode] = useState<'t3_project_default' | 't3_reference_thread'>('t3_project_default')
   const [referenceThread, setReferenceThread] = useState('')
   const [prompt, setPrompt] = useState('')
   const connections = connectionsQuery.data?.items ?? []
   const projects = projectsQuery.data?.items ?? []
+  const connectionId = connections.find((connection) => connection.id === chosenConnection)?.id ?? ''
+  const projectIds = chosenProjects.filter((id) => projects.some((project) => project.id === id))
   const projectNames = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects])
 
   const refresh = async () => Promise.all([
@@ -53,7 +59,7 @@ export default function RolesView() {
         },
       }))
     },
-    onSuccess: async () => { setName(''); setPrompt(''); setProjectIds([]); await refresh(); toast.success('Rolle angelegt') },
+    onSuccess: async () => { setName(''); setPrompt(''); setProjectIds([]); setReferenceThread(''); await refresh(); toast.success('Rolle angelegt') },
     onError: (error) => toast.error(formatError(error)),
   })
 
@@ -80,7 +86,7 @@ export default function RolesView() {
   const profiles = profilesQuery.data.items
   return (
     <main className="space-y-6">
-      <header><p className="text-sm text-muted-foreground">Vorhandene T3-Ausführungsziele</p><h1 className="text-2xl font-semibold tracking-tight">Agentrollen</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Rollen verbinden Projekte mit bestehenden T3-Zielen. Modell-, Provider-, Home- und Toolkonfiguration bleiben in T3.</p></header>
+      <header><h1 className="text-2xl font-semibold tracking-tight">Agentrollen</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Rollen verbinden Projekte mit bestehenden T3-Zielen. Modell-, Provider-, Home- und Toolkonfiguration bleiben in T3.</p></header>
 
       <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
         <Card>
@@ -90,10 +96,20 @@ export default function RolesView() {
               <div className="space-y-1.5"><Label htmlFor="profile-name">Name</Label><Input id="profile-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Implementierungs-Agent" maxLength={120} /></div>
               <div className="space-y-1.5"><Label htmlFor="profile-role">Rolle</Label><Input id="profile-role" value={role} onChange={(event) => setRole(event.target.value)} maxLength={100} /></div>
             </div>
-            <div className="space-y-1.5"><Label>T3-Verbindung</Label><Select value={connectionId} onValueChange={setConnectionId}><SelectTrigger><SelectValue placeholder="Verbindung wählen" /></SelectTrigger><SelectContent>{connections.map((connection) => <SelectItem key={connection.id} value={connection.id}>{connection.name} · {connection.health}</SelectItem>)}</SelectContent></Select></div>
-            <fieldset className="space-y-2"><legend className="text-sm font-medium">Erlaubte Projekte</legend><div className="grid gap-2 sm:grid-cols-2">{projects.map((project) => <label key={project.id} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={projectIds.includes(project.id)} onChange={(event) => setProjectIds((current) => event.target.checked ? [...current, project.id] : current.filter((id) => id !== project.id))} /><span className="truncate">{project.name}</span></label>)}</div></fieldset>
-            <div className="space-y-1.5"><Label>Ausführungsziel in T3</Label><Select value={targetMode} onValueChange={(value) => setTargetMode(value as typeof targetMode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="t3_project_default">T3-Projektstandard</SelectItem><SelectItem value="t3_reference_thread">Vorhandener Referenzthread</SelectItem></SelectContent></Select></div>
-            {targetMode === 't3_reference_thread' && <div className="space-y-1.5"><Label htmlFor="profile-thread">T3-Referenzthread-ID</Label><Input id="profile-thread" value={referenceThread} onChange={(event) => setReferenceThread(event.target.value)} maxLength={256} /></div>}
+            <div className="space-y-1.5"><Label htmlFor="profile-connection">T3-Verbindung</Label><Select value={connectionId} onValueChange={(id) => { setConnectionId(id); setReferenceThread('') }}><SelectTrigger id="profile-connection"><SelectValue placeholder="Verbindung wählen" /></SelectTrigger><SelectContent>{connections.map((connection) => <SelectItem key={connection.id} value={connection.id}>{connection.name} · {connection.health}</SelectItem>)}</SelectContent></Select></div>
+            <fieldset className="space-y-2"><legend className="text-sm font-medium">Erlaubte Projekte</legend><div className="grid gap-2 sm:grid-cols-2">{projects.map((project) => <label key={project.id} className="flex items-center gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={projectIds.includes(project.id)} onChange={(event) => { setReferenceThread(''); setProjectIds(event.target.checked ? [...projectIds, project.id] : projectIds.filter((id) => id !== project.id)) }} /><span className="truncate">{project.name}</span></label>)}</div></fieldset>
+            <div className="space-y-1.5"><Label htmlFor="profile-target">Ausführungsziel in T3</Label><Select value={targetMode} onValueChange={(value) => { setTargetMode(value as typeof targetMode); setReferenceThread('') }}><SelectTrigger id="profile-target"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="t3_project_default">T3-Projektstandard</SelectItem><SelectItem value="t3_reference_thread">Vorhandener Referenzthread</SelectItem></SelectContent></Select></div>
+            {targetMode === 't3_project_default' ? (
+              <p className="text-sm text-muted-foreground">Beim Start verwendet T3 die Agentkonfiguration des gebundenen Projekts.</p>
+            ) : (
+              <ReferenceThreadPicker
+                key={JSON.stringify([connectionId, ...projectIds])}
+                connectionId={connectionId}
+                projects={projects.filter((project) => projectIds.includes(project.id))}
+                value={referenceThread}
+                onChange={setReferenceThread}
+              />
+            )}
             <div className="space-y-1.5"><Label htmlFor="profile-prompt">Auftragsvorlage <span className="font-normal text-muted-foreground">(optional)</span></Label><Textarea id="profile-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={30000} placeholder="Zusätzlicher Rollenhinweis für Übergaben" /></div>
             <Button disabled={!name.trim() || !role.trim() || !connectionId || projectIds.length === 0 || (targetMode === 't3_reference_thread' && !referenceThread.trim()) || createProfile.isPending} onClick={() => createProfile.mutate()}><Plus />Rolle anlegen</Button>
           </CardContent>

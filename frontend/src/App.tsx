@@ -2,7 +2,7 @@ import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
-  Activity, ArrowUpRight, Archive, BookOpen, Check, Command, FolderKanban, Layers3,
+  Activity, ArrowUpRight, Archive, BookOpen, Bot, Check, Command, FolderKanban, Layers3,
   LayoutDashboard, LogOut, Menu, Moon, Search, Settings, Shield, Sun, Tags, Workflow, X,
 } from 'lucide-react'
 import { api, formatError, mutationParams, request, setCsrfToken, type Project, type Session } from '@/lib/api'
@@ -30,7 +30,7 @@ const MetricsView = lazy(() => import('@/features/metrics'))
 const LabelsView = lazy(() => import('@/features/labels'))
 const DocsView = lazy(() => import('@/features/docs'))
 
-type Route = { page: string; projectId?: string; taskId?: string; createTask?: boolean; docPath?: string }
+type Route = { page: string; projectId?: string; taskId?: string; createTask?: boolean; docPath?: string; roleProjectId?: string; roleConnectionId?: string }
 
 function readRoute(): Route {
   const parts = window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
@@ -38,6 +38,7 @@ function readRoute(): Route {
     const query = new URLSearchParams(parts[2]?.split('?')[1] ?? '')
     return { page: 'project', projectId: parts[1], taskId: query.get('task') ?? undefined, createTask: query.get('new') === '1' }
   }
+  if (parts[0] === 'roles') return { page: 'roles', roleProjectId: parts[1], roleConnectionId: parts[2] }
   if (parts[0] === 'docs') return { page: 'docs', docPath: parts.slice(1).join('/') }
   return { page: parts[0] || 'dashboard' }
 }
@@ -148,7 +149,7 @@ export default function App() {
           {route.page === 'dashboard' && <Suspense fallback={<PageSkeleton />}><DashboardView /></Suspense>}
           {route.page === 'labels' && <Suspense fallback={<PageSkeleton />}><LabelsView /></Suspense>}
           {route.page === 'agents' && <Suspense fallback={<PageSkeleton />}><IntegrationsView /></Suspense>}
-          {route.page === 'roles' && <Suspense fallback={<PageSkeleton />}><RolesView /></Suspense>}
+          {route.page === 'roles' && <Suspense fallback={<PageSkeleton />}><RolesView key={JSON.stringify([route.roleProjectId, route.roleConnectionId])} initialProjectId={route.roleProjectId} initialConnectionId={route.roleConnectionId} /></Suspense>}
           {route.page === 'workflows' && <Suspense fallback={<PageSkeleton />}><WorkflowsView /></Suspense>}
           {route.page === 'plugins' && <Suspense fallback={<PageSkeleton />}><PluginsView /></Suspense>}
           {route.page === 'metrics' && <Suspense fallback={<PageSkeleton />}><MetricsView /></Suspense>}
@@ -188,6 +189,7 @@ function Navigation({ route, projects, onNavigate }: { route: Route; projects: P
     { path: 'projects', label: 'Projekte', Icon: FolderKanban },
     { path: 'labels', label: 'Labels', Icon: Tags },
     { path: 'agents', label: 'Agents & T3', Icon: Activity },
+    { path: 'roles', label: 'Agentrollen', Icon: Bot },
     { path: 'workflows', label: 'Workflows', Icon: Workflow },
     { path: 'plugins', label: 'Plugins', Icon: Layers3 },
     { path: 'metrics', label: 'Metriken', Icon: Activity },

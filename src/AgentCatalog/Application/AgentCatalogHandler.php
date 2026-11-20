@@ -32,7 +32,7 @@ final class AgentCatalogHandler implements OperationHandler
     public function handles(string $op): bool
     {
         return in_array($op, [
-            'project_binding_get', 'project_binding_set',
+            'project_binding_get', 'project_binding_set', 'project_t3_threads_list',
             'connections_list', 'connections_create', 'connections_get', 'connections_update', 'connections_check', 'connection_check_get',
             'connection_capabilities_get', 'connection_projects_list', 'connection_oauth_start', 'connection_oauth_callback', 'connection_credentials_remove',
             'agent_profiles_list', 'agent_profiles_create', 'agent_profiles_get', 'agent_profiles_replace',
@@ -45,6 +45,7 @@ final class AgentCatalogHandler implements OperationHandler
         return match ($op) {
             'project_binding_get' => $this->getBinding($this->pathId($p, 'project_id'), $actor),
             'project_binding_set' => $this->setBinding($this->pathId($p, 'project_id'), $body, $actor),
+            'project_t3_threads_list' => $this->listProjectThreads($this->pathId($p, 'project_id'), $p, $actor),
             'connections_list' => $this->listConnections($p, $actor),
             'connections_create' => $this->createConnection($body, $actor),
             'connections_get' => $this->getConnection($this->pathId($p, 'connection_id'), $actor),
@@ -208,12 +209,42 @@ final class AgentCatalogHandler implements OperationHandler
         } catch (T3ConnectionFailure $exception) {
             throw new Problem(502, 't3_unavailable', $exception->getMessage());
         }
-        $page = $this->store->page($result['items'], $p);
-        if (isset($result['next_cursor'])) {
-            $page['next_cursor'] = $result['next_cursor'];
+        $nextCursor = $result['next_cursor'] ?? null;
+
+        return [
+            'items' => array_values($result['items']),
+            'next_cursor' => null === $nextCursor ? null : (string) $nextCursor,
+            'has_more' => $result['has_more'] ?? (null !== $nextCursor),
+        ];
+    }
+
+    /** @param array<string, mixed> $p @return array{items: list<array{id: string, title: string}>, next_cursor: ?string, has_more: bool} */
+    private function listProjectThreads(string $projectId, array $p, Actor $actor): array
+    {
+        $actor->requireOwner();
+        $this->record('projects', $projectId);
+        $binding = $this->catalog->bindingForProject($projectId);
+        if (null === $binding
+            || empty($binding['active'])
+            || ($binding['project_id'] ?? null) !== $projectId
+            || !is_string($binding['connection_id'] ?? null)
+            || !is_string($binding['external_project_id'] ?? null)
+            || '' === $binding['external_project_id']) {
+            throw new Problem(409, 't3_project_unbound', 'Binde zuerst ein T3-Projekt, bevor du dessen Referenzthreads laden kannst.');
         }
 
-        return $page;
+        $connection = $this->catalog->connection($binding['connection_id']);
+        try {
+            return $this->bridge->threads(
+                $connection,
+                $this->connectionToken((string) $connection['id']),
+                $binding['external_project_id'],
+                isset($p['cursor']) ? (string) $p['cursor'] : null,
+                min(100, max(1, (int) ($p['limit'] ?? 50))),
+            );
+        } catch (T3ConnectionFailure $exception) {
+            throw new Problem(502, 't3_unavailable', $exception->getMessage());
+        }
     }
 
     /** @param array<string, mixed> $body @return array<string, mixed> */

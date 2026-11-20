@@ -47,22 +47,102 @@ final class T3McpBridge implements AgentExecutionBridge, AgentCatalogMcpClient
     /** @param array<string, mixed> $connection @return array<string, mixed> */
     public function projects(array $connection, string $token, ?string $cursor = null, int $limit = 50): array
     {
-        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($cursor, $limit): array {
+        $nativeCursor = 0;
+        if (null !== $cursor) {
+            $nativeCursor = filter_var($cursor, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 9007199254740991]]);
+            if (false === $nativeCursor) {
+                $legacyOffset = base64_decode($cursor, true);
+                $nativeCursor = false === $legacyOffset
+                    ? false
+                    : filter_var($legacyOffset, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 9007199254740991]]);
+            }
+            if (false === $nativeCursor) {
+                throw new T3BridgeException('Der T3-Projektcursor ist ungültig.');
+            }
+        }
+
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($nativeCursor, $limit): array {
             $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
             $this->requireTools($names, ['t3_project_list']);
-            $result = $this->tool($client, 't3_project_list', array_filter(['cursor' => $cursor, 'limit' => $limit], static fn (mixed $value): bool => null !== $value));
+            $result = $this->tool($client, 't3_project_list', ['cursor' => $nativeCursor, 'limit' => $limit]);
             $projects = $result['projects'] ?? $result['items'] ?? [];
             if (!is_array($projects)) {
                 throw new T3BridgeException('T3 lieferte keine gültige Projektliste.');
+            }
+            $nextCursor = $result['nextCursor'] ?? $result['next_cursor'] ?? null;
+            if (null !== $nextCursor) {
+                if (!is_int($nextCursor) && !is_string($nextCursor)) {
+                    throw new T3BridgeException('T3 lieferte einen ungültigen Projektcursor.');
+                }
+                $nextCursor = filter_var((string) $nextCursor, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 9007199254740991]]);
+                if (false === $nextCursor || $nextCursor <= $nativeCursor) {
+                    throw new T3BridgeException('T3 lieferte einen ungültigen Projektcursor.');
+                }
             }
 
             return [
                 'items' => array_map(static fn (array $project): array => [
                     'external_project_id' => (string) ($project['id'] ?? $project['projectId'] ?? ''),
                     'title' => (string) ($project['title'] ?? $project['name'] ?? ''),
-                    'workspace_label' => (string) ($project['workspaceLabel'] ?? $project['workspace'] ?? ''),
+                    'workspace_label' => (string) ($project['workspaceRoot'] ?? $project['workspaceLabel'] ?? $project['workspace'] ?? ''),
                 ], array_values(array_filter($projects, 'is_array'))),
-                'next_cursor' => $result['nextCursor'] ?? null,
+                'next_cursor' => null === $nextCursor ? null : (string) $nextCursor,
+                'has_more' => null !== $nextCursor,
+            ];
+        });
+    }
+
+    /** @param array<string, mixed> $connection @return array{items: list<array{id: string, title: string}>, next_cursor: ?string, has_more: bool} */
+    public function threads(array $connection, string $token, string $projectId, ?string $cursor = null, int $limit = 50): array
+    {
+        return $this->withSession($connection, $token, function (ServerConnectionInterface $client, array $tools) use ($projectId, $cursor, $limit): array {
+            $names = array_map(static fn (array $tool): string => (string) ($tool['name'] ?? ''), $tools);
+            if (!in_array('t3_thread_list', $names, true)) {
+                throw new T3BridgeException('Diese T3-Version stellt keine Threadliste bereit. Wähle den T3-Projektstandard oder gib eine bekannte Referenzthread-ID ein.');
+            }
+
+            $offset = null === $cursor ? null : filter_var($cursor, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+            if (null !== $cursor && false === $offset) {
+                throw new T3BridgeException('Der T3-Threadseiten-Cursor ist ungültig. Lade die erste Seite erneut.');
+            }
+            $arguments = ['projectId' => $projectId, 'limit' => $limit];
+            if (null !== $offset) {
+                $arguments['cursor'] = $offset;
+            }
+            $result = $this->tool($client, 't3_thread_list', $arguments);
+            if (($result['projectId'] ?? null) !== $projectId) {
+                throw new T3BridgeException('T3 lieferte eine Threadliste ohne übereinstimmende Projektzugehörigkeit.');
+            }
+            $threads = $result['threads'] ?? null;
+            if (!is_array($threads)) {
+                throw new T3BridgeException('T3 lieferte keine gültige Threadliste.');
+            }
+
+            $items = [];
+            foreach ($threads as $thread) {
+                if (!is_array($thread) || ($thread['projectId'] ?? null) !== $projectId) {
+                    continue;
+                }
+                $id = $thread['threadId'] ?? null;
+                $title = $thread['title'] ?? null;
+                if (!is_string($id) || '' === $id || mb_strlen($id) > 256 || !is_string($title) || mb_strlen($title) > 1000) {
+                    throw new T3BridgeException('T3 lieferte einen ungültigen Thread für das gebundene Projekt.');
+                }
+                $items[] = ['id' => $id, 'title' => $title];
+            }
+
+            if (!array_key_exists('nextCursor', $result)) {
+                throw new T3BridgeException('T3 lieferte keine gültige Folgeseiteninformation.');
+            }
+            $nextCursor = $result['nextCursor'];
+            if (null !== $nextCursor && (!is_int($nextCursor) || $nextCursor < 0 || strlen((string) $nextCursor) > 15 || (null !== $offset && $nextCursor <= $offset))) {
+                throw new T3BridgeException('T3 lieferte einen ungültigen Folgeseiten-Cursor. Lade die erste Seite erneut.');
+            }
+
+            return [
+                'items' => $items,
+                'next_cursor' => null === $nextCursor ? null : (string) $nextCursor,
+                'has_more' => null !== $nextCursor,
             ];
         });
     }

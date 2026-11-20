@@ -454,6 +454,34 @@ paths:
       - browser_session: []
         csrf_token: []
       - technical_token: []
+  /projects/{project_id}/t3-threads:
+    parameters:
+    - name: project_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    get:
+      operationId: project_t3_threads_list
+      tags:
+      - projects
+      summary: T3-Referenzthreads des gebundenen Projekts auflisten
+      parameters:
+      - $ref: '#/components/parameters/T3ThreadCursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/T3ThreadPage'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Problem'
+      x-application-operation: project_t3_threads_list
+      x-required-capabilities:
+      - agents.read
+      security:
+      - browser_session: []
+      x-owner-only: true
   /projects/{project_id}/statuses:
     parameters:
     - name: project_id
@@ -4758,6 +4786,13 @@ components:
       schema:
         $ref: '#/components/schemas/Cursor'
       description: Opaque nächste Seite.
+    T3ThreadCursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/T3ThreadCursor'
+      description: Nichtnegative Dezimaldarstellung des T3-Offsets, die unverändert aus next_cursor übernommen wird.
     Limit:
       name: limit
       in: query
@@ -5386,6 +5421,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/RemoteProjectPage'
+    T3ThreadPage:
+      description: Referenzthread-Seite aus dem gebundenen T3-Projekt.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/T3ThreadPage'
     CustomFieldDefinitionPage:
       description: CustomFieldDefinitionPage-Darstellung.
       content:
@@ -5546,6 +5587,12 @@ components:
       minLength: 1
       maxLength: 512
       description: Opaque Cursor; nicht selbst zusammensetzen.
+    T3ThreadCursor:
+      type: string
+      pattern: ^(0|[1-9][0-9]*)$
+      minLength: 1
+      maxLength: 15
+      description: Dezimale, nichtnegative T3-Threadlistenposition.
     Slug:
       type: string
       pattern: ^[a-z][a-z0-9-]{1,62}$
@@ -11751,6 +11798,40 @@ components:
       - next_cursor
       - has_more
       description: Cursorseite mit stabiler erlaubter Sortierung; kein unbeschränkter Export.
+    T3Thread:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        title:
+          type: string
+          maxLength: 1000
+      required:
+      - id
+      - title
+    T3ThreadPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/T3Thread'
+          maxItems: 100
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/T3ThreadCursor'
+          - type: 'null'
+        has_more:
+          type: boolean
+      required:
+      - items
+      - next_cursor
+      - has_more
+      description: T3-Offsetseite des gebundenen Projekts; archived Threads sind in T3 v0.1.11 nicht Teil von t3_thread_list.
     CustomFieldDefinitionPage:
       type: object
       additionalProperties: false
