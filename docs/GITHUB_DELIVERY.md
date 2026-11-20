@@ -16,6 +16,8 @@ Die lokale Praxis und die Make-Ziele stehen in [Lokal entwickeln und testen](TES
 | `e2e` | Prüft das Image über Browser-, JSON-HTTP- und MCP-Schnittstellen sowie beim Plugin-Image-Upgrade. |
 | `quality-gate` | Besteht nur, wenn alle sechs vorherigen Jobs erfolgreich abgeschlossen sind. |
 
+Composer und npm verwenden Download-Caches für die Lockdateien. Jeder Job installiert die gesperrten Abhängigkeiten in seinem eigenen Checkout. BuildKit speichert die Docker-Layer für App, Chromium-Runner und HTTP-Mocks in getrennten GitHub-Actions-Caches. Die beiden Browserprüfungen eines Jobs verwenden dieselben Runner- und Mock-Images. Bei einem leeren Cache baut der Workflow die Images aus den gepinnten Quellen. Das App-Image wird als Artefakt an E2E übergeben und anhand seiner Image-ID geprüft.
+
 Der Schutz für `main` verlangt den Statuscheck `quality-gate`. Bei einem manuellen QA-Dispatch wird zusätzlich die erwartete SHA mit dem ausgecheckten Commit verglichen. Der Workflow lädt das App-Image und bereinigte Acceptance-Belege als zeitlich begrenzte Actions-Artefakte hoch.
 
 Pull Requests aus Forks verwenden denselben `pull_request`-Workflow mit Leserechten und ohne produktive Secrets. GitHub kann eine erste Ausführung zur Freigabe zurückhalten. Der Releaseworkflow reagiert ausschließlich auf einen erfolgreichen Push-QA-Lauf aus demselben Repository auf `main` und prüft vor der Veröffentlichung, dass Tag, Commit und QA-Lauf zusammenpassen.

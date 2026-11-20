@@ -57,7 +57,9 @@ watch_resets() {
 }
 
 mkdir -p var/ci-evidence
-"${compose[@]}" build t3-mock decisions-mock e2e
+if [[ ${FALKENWARTE_QA_IMAGES_PREBUILT:-0} != 1 ]]; then
+    "${compose[@]}" build t3-mock e2e
+fi
 bash scripts/ci-production.sh
 "${compose[@]}" up --no-build --wait --wait-timeout 150 app t3-mock decisions-mock
 watch_resets &
