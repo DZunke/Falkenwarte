@@ -24,6 +24,7 @@ Nach der Einrichtung kannst du dein erstes Projekt und Ticket anlegen. Die Konfi
 | Ich möchte … | Einstieg |
 | --- | --- |
 | Meinen T3-Agents beibringen, Falkenwarte zu verwenden | [Agent-Skill im eigenen Projekt installieren](docs/user/AGENT_SKILL.md) |
+| Mit einem Agenten an Falkenwarte selbst entwickeln | [Projektskills für die Arbeit im Falkenwarte-Checkout](AGENTS.md) |
 | Einen Arbeitsablauf im Handbuch nachschlagen | [Handbuch](docs/README.md) |
 | Eine Fachregel ändern und das zuständige Modul finden | [Architektur](docs/ARCHITECTURE.md) und [Fachmodell](docs/domain/BOUNDED_CONTEXTS.md) |
 | Einen Client oder ein MCP-Werkzeug anbinden | [Öffentliche Verträge](contracts/README.md) |

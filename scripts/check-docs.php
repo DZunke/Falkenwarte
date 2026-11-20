@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 $root = dirname(__DIR__);
 $errors = [];
-$markdownFiles = [$root.'/README.md', $root.'/contracts/README.md'];
+$markdownFiles = array_merge(
+    [$root.'/README.md', $root.'/contracts/README.md', $root.'/AGENTS.md'],
+    glob($root.'/.agents/skills/*/SKILL.md') ?: [],
+);
 $docsRoot = $root.'/docs';
 
 if (!is_file($docsRoot.'/README.md')) {
@@ -78,6 +81,13 @@ foreach ($markdownFiles as $sourcePath) {
     }
 
     $lines = preg_split('/\R/', $markdown) ?: [];
+    // YAML frontmatter precedes the Markdown body in project skills.
+    if ('---' === $lines[0]) {
+        $end = array_search('---', array_slice($lines, 1, null, true), true);
+        if (false !== $end) {
+            $lines = array_slice($lines, $end + 1, null, true);
+        }
+    }
     $insideCode = false;
     $previousProse = false;
     $h1Count = 0;
@@ -152,4 +162,4 @@ if ([] !== $errors) {
     exit(1);
 }
 
-fwrite(STDOUT, "Handbook and public entry links resolve locally; prose paragraphs use one source line.\n");
+fwrite(STDOUT, "Handbook and project documentation links resolve locally; prose paragraphs use one source line.\n");
