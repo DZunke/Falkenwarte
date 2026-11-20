@@ -73,7 +73,11 @@ Ein Ergebnisbericht ist eine Agentmeldung und kann Nachweise mit Status `reporte
 
 Eine Workflowdefinition enthält versionierte Phasen, Bedingungen, Übergänge und Laufzeitgrenzen. `WorkflowDefinitionPolicy` prüft Grenzen, Übergänge und zeitlich erreichbare Bedingungen. Eine gestartete Instanz verwendet den Snapshot ihrer Definition.
 
+Jede Agentenphase bestimmt ihre Rolle und kann einen eigenen Arbeitsauftrag enthalten. Ein projektgebundener Workflow kann beim Phasenstart zusätzlich eine Boardspalte vorgeben. WorkManagement verwendet dafür den Zielstatus der Spalte. Kann das Ticket etwa wegen einer harten WIP-Grenze nicht dorthin wechseln, pausiert die Instanz vor dem Agentenauftrag. Eine Phase ohne Boardziel lässt das Ticket in seiner bisherigen Spalte.
+
 `RunHandler` verwaltet Workflowinstanzen in den Zuständen `running`, `paused`, `succeeded` und `cancelled`. Die Automation-Regel wählt den Übergang anhand des Run-Outcomes. Offene Bedingungen und erreichte Wiederholungs- oder Laufzeitgrenzen pausieren die Instanz.
+
+Für dasselbe Phasenergebnis können ein Standardübergang und mehrere mit Themenlabels bezeichnete Alternativen existieren. Die meldende Rolle kann unter den für ihren Lauf angebotenen Routen wählen. Überlässt sie die Auswahl dem Workflow, wertet er die passenden Themenlabels am Ticket aus. Bei konkurrierenden Labels muss der Eigentümer die Zuordnung klären. Ein Rücksprung mit `needs_changes` und ein labelgesteuerter Rücksprung in eine bereits besuchte frühere Phase zählen als Überarbeitungsrunde. Ist das konfigurierte Limit erreicht, kann der Eigentümer nach Prüfung des Berichts eine einzelne zusätzliche Überarbeitung freigeben. Sein Hinweis gehört zum Übergabeprotokoll dieser Runde.
 
 Ein gewählter Phasenübergang hält die Ausgangsphase, die Zielphase und den auslösenden Lauf fest. Die nächste Rolle erhält bei ihrer Beauftragung den gespeicherten Übergabestand mit Bericht, Versuch, Ticketrevision, offenen Fragen und registrierten Referenzen. Die Ablaufansicht kann deshalb auch nach einer Ticketänderung zeigen, womit das Review begonnen hat. Für ältere Instanzen kennzeichnet sie fehlende oder unvollständige Übergangshistorien.
 

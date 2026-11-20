@@ -73,7 +73,7 @@ Der Modus `t3_reference_thread` liest den gewählten Thread aus T3, prüft seine
 
 ## Datenfluss eines Laufs
 
-1. `RunHandler` speichert Taskrevision, Agentprofil, Projektbinding, Policy, T3-Verbindung und Versuch als dauerhaften Snapshot.
+1. `RunHandler` speichert Taskrevision, Agentprofil, Projektbindung, Policy, T3-Verbindung und Versuch. Bei einer Workflowphase hält der Lauf außerdem den Phasennamen und den hinterlegten Auftrag fest. So kann dieselbe Rolle je nach Phase etwa eine Lösung entwerfen oder ihre Umsetzung prüfen.
 2. Vor dem Netzaufruf speichert Falkenwarte einen Dispatch-Request mit Hash und stabiler `clientRequestId`.
 3. T3 liefert Thread- und gegebenenfalls Runreferenz. Falkenwarte speichert die Zuordnung und plant Beobachtung.
 4. Der Maintenance-Prozess stellt Beobachtungsaufträge ein. Der nächste Laufstatus wird etwa alle 5 Sekunden angefragt.

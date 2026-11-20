@@ -21,6 +21,7 @@ import { CustomFieldInputs, customFieldsPayload, missingRequiredCustomFields, ty
 import ProjectCustomFields from './ProjectCustomFields'
 import TaskSheet from './TaskSheet'
 import ProjectIcon from './ProjectIcon'
+import BoardWorkflowSettings from './BoardWorkflowSettings'
 
 const categoryLabels: Record<string, string> = {
   backlog: 'Backlog', ready: 'Bereit', active: 'In Arbeit', review: 'Review', done: 'Erledigt', cancelled: 'Abgebrochen',
@@ -223,6 +224,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={openStatuses}><Settings2 />Status bearbeiten</Button>
           {selectedBoard && <Button variant="outline" size="sm" onClick={openColumns}><Settings2 />Spalten bearbeiten</Button>}
+          {selectedBoard && boardDefinition && <BoardWorkflowSettings board={boardDefinition} projectId={project.id} onSaved={refresh} />}
           <Button variant="outline" size="sm" onClick={() => setBoardOpen(true)}><Settings2 />{boards.length ? 'Board anlegen' : 'Board einrichten'}</Button>
           <ProjectCustomFields project={project} />
           <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!statuses.length || project.archived}><Plus />Neues Ticket</Button>
@@ -286,7 +288,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
         </Card>
       )}
 
-      <TaskSheet taskId={taskId} project={project} statuses={statuses} onClose={() => setTaskId(undefined)} onChanged={refresh} />
+      <TaskSheet taskId={taskId} project={project} board={boardDefinition} statuses={statuses} onClose={() => setTaskId(undefined)} onChanged={refresh} />
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-xl">

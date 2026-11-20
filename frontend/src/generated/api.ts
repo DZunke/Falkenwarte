@@ -2624,6 +2624,11 @@ export interface components {
             /** @enum {string} */
             swimlane_by: "none" | "agent_profile" | "priority" | "task_type";
             visible_fields: ("key" | "title" | "priority" | "labels" | "agent_profile" | "criteria" | "due_at" | "run_state")[];
+            workflow_policy?: components["schemas"]["BoardWorkflowPolicyConfig"];
+        };
+        BoardWorkflowPolicyConfig: {
+            workflow_id: components["schemas"]["Id"];
+            manual_label_id?: components["schemas"]["Id"];
         };
         Board: {
             id: components["schemas"]["Id"];
@@ -2858,6 +2863,8 @@ export interface components {
         /** @enum {string} */
         RunState: "queued" | "dispatching" | "running" | "waiting_input" | "auth_blocked" | "reconciling" | "cancel_requested" | "result_reported" | "verifying" | "succeeded" | "failed" | "cancelled" | "abandoned";
         WorkflowHandoffSnapshot: {
+            /** @description Begründung des Eigentümers für diese zusätzliche Überarbeitungsrunde. */
+            owner_guidance?: string;
             source_report_id: components["schemas"]["Id"] | null;
             source_result_digest: string | null;
             source_attempt_id: components["schemas"]["Id"];
@@ -2885,6 +2892,11 @@ export interface components {
             workflow_version: number | null;
             prompt_template_version: number;
             run_completion_policy: components["schemas"]["RunCompletionPolicy"];
+            stage_name?: string;
+            stage_kind?: string;
+            stage_instructions?: string;
+            stage_board_target?: components["schemas"]["WorkflowStageBoardTarget"];
+            workflow_routes?: components["schemas"]["WorkflowRouteOption"][];
             execution_target: components["schemas"]["T3ExecutionTarget"];
             bridge_plugin_id?: string | null;
             classification_id: components["schemas"]["Id"] | null;
@@ -3024,6 +3036,8 @@ export interface components {
             outcome: "reported_success" | "needs_changes" | "blocked" | "failed";
             summary: string;
             artifacts: components["schemas"]["RunResultArtifactCandidate"][];
+            /** @description UUID wählt einen eingefrorenen benannten Abzweig. null wählt ausdrücklich den eingefrorenen Standardübergang. Ohne Feld werden Ticket-Themenlabels ausgewertet. */
+            route_label_id?: components["schemas"]["Id"] | null;
             open_questions?: string[];
         };
         RunResultReport: {
@@ -3034,6 +3048,8 @@ export interface components {
             /** @enum {string} */
             outcome: "reported_success" | "needs_changes" | "blocked" | "failed";
             summary: string;
+            route_label_id?: components["schemas"]["Id"] | null;
+            route_label_name?: string | null;
             evidence_ids: components["schemas"]["Id"][];
             /** Format: date-time */
             received_at: string;
@@ -3403,15 +3419,35 @@ export interface components {
             id: string;
             kind: string;
             name: string;
+            /** @description Freie phasenspezifische Arbeitsanweisung, die in dieser Workflowversion und im gestarteten Run eingefroren wird. */
+            instructions?: string;
+            board_target?: components["schemas"]["WorkflowStageBoardTarget"];
             agent_profile_id: components["schemas"]["Id"] | null;
             entry_conditions: components["schemas"]["WorkflowCondition"][];
             run_completion_policy: components["schemas"]["RunCompletionPolicy"];
         };
+        /** @description Optionales Boardziel beim Eintritt in diese Phase. Ohne board_target bleibt die aktuelle Boardzuordnung bestehen. */
+        WorkflowStageBoardTarget: {
+            board_id: components["schemas"]["Id"];
+            column_id: components["schemas"]["Id"];
+        };
+        /** @description Im Run eingefrorene ausgehende Workflowoption. route_label_id ist eine damals aktive Themenlabel-ID aus der Workflowversion. null bezeichnet den Standardübergang. */
+        WorkflowRouteOption: {
+            /** @enum {string} */
+            on: "accepted" | "needs_changes" | "blocked" | "failed";
+            to_stage_id: string;
+            to_stage_name: string;
+            is_default: boolean;
+            route_label_id: components["schemas"]["Id"] | null;
+            route_label_name: string | null;
+        };
+        /** @description route_label_id verweist auf ein aktives Themenlabel des Workflowprojekts. Je Quellphase und Ergebnis sind Label-IDs eindeutig; höchstens ein Übergang darf route_label_id als Standard auslassen. */
         WorkflowTransition: {
             from_stage_id: string;
             to_stage_id: string;
             /** @enum {string} */
             on: "accepted" | "needs_changes" | "blocked" | "failed";
+            route_label_id?: components["schemas"]["Id"];
             conditions: components["schemas"]["WorkflowCondition"][];
         };
         Workflow: {
@@ -3444,9 +3480,18 @@ export interface components {
         TaskFlowPage: {
             task_id: components["schemas"]["Id"];
             project_id: components["schemas"]["Id"];
+            board_workflow_policy: components["schemas"]["TaskBoardWorkflowPolicy"];
             items: components["schemas"]["TaskFlowItem"][];
             next_cursor: string | null;
             has_more: boolean;
+        };
+        TaskBoardWorkflowPolicy: {
+            /** @enum {string} */
+            state: "available" | "excluded" | "ambiguous" | "unconfigured" | "unavailable";
+            board_id: components["schemas"]["Id"] | null;
+            workflow_id: components["schemas"]["Id"] | null;
+            definition_version: number | null;
+            reason: string | null;
         };
         TaskFlowItem: components["schemas"]["TaskFlowWorkflowInstance"] | components["schemas"]["TaskFlowRunItem"];
         TaskFlowRunItem: {
@@ -3487,6 +3532,8 @@ export interface components {
             position: number;
             name: string;
             kind: string;
+            instructions?: string;
+            board_target?: components["schemas"]["WorkflowStageBoardTarget"];
             agent_profile_id: components["schemas"]["Id"] | null;
             entry_conditions: components["schemas"]["WorkflowCondition"][];
             run_completion_policy: components["schemas"]["RunCompletionPolicy"];
@@ -3495,6 +3542,7 @@ export interface components {
             blocker_reason: string | null;
         };
         TaskFlowCandidateTransition: {
+            route_label_id?: components["schemas"]["Id"];
             from_stage_id: string;
             to_stage_id: string;
             /** @enum {string} */
@@ -3504,6 +3552,9 @@ export interface components {
             selection_status: "selected" | "possible" | "not_selected" | "unknown";
         };
         TaskFlowSelectedTransition: {
+            route_label_id?: components["schemas"]["Id"] | null;
+            route_label_name?: string;
+            owner_guidance?: string;
             from_stage_id: string;
             to_stage_id: string;
             /** @enum {string} */
@@ -3547,6 +3598,8 @@ export interface components {
             /** @enum {string} */
             outcome: "reported_success" | "needs_changes" | "blocked" | "failed";
             summary: string;
+            route_label_id?: components["schemas"]["Id"] | null;
+            route_label_name?: string | null;
             evidence_ids: components["schemas"]["Id"][];
             open_questions: string[];
             /** Format: date-time */
@@ -3570,6 +3623,7 @@ export interface components {
             reason: string | null;
         };
         TaskFlowHandoff: {
+            owner_guidance?: string;
             source_run_id: components["schemas"]["Id"] | null;
             source_report_id: components["schemas"]["Id"] | null;
             source_attempt_no: number | null;
@@ -3588,6 +3642,7 @@ export interface components {
             workflow_id: components["schemas"]["Id"];
             definition_version: number;
             task_revision: number;
+            board_id?: components["schemas"]["Id"];
         };
         WorkflowInstance: {
             id: components["schemas"]["Id"];
@@ -3606,11 +3661,15 @@ export interface components {
             current_stage_id: string | null;
             run_ids: components["schemas"]["Id"][];
             repair_round: number;
+            /** @description Nur während der Entscheidung über eine weitere Überarbeitung vorhanden. Verweist auf den auslösenden Lauf. */
+            repair_decision_run_id?: components["schemas"]["Id"];
+            /** @description Vorgesehene Zielphase der offenen Überarbeitungsentscheidung. */
+            repair_decision_stage_name?: string;
             pause_reason: string | null;
         };
         WorkflowControl: {
             /** @enum {string} */
-            action: "pause" | "resume" | "cancel";
+            action: "pause" | "resume" | "authorize_repair" | "cancel";
             reason: string;
         };
         Schedule: {
@@ -6432,6 +6491,8 @@ export interface operations {
     task_flow_get: {
         parameters: {
             query?: {
+                /** @description Boardkontext der geöffneten Aufgabe für Workflow-Standard und manuelles Ausschlusslabel. */
+                board_id?: components["schemas"]["Id"];
                 /** @description Opaque nächste Seite. */
                 cursor?: components["parameters"]["Cursor"];
                 /** @description Höchstens 100 Einträge. */

@@ -153,6 +153,7 @@ function HandoffDetails({ handoff, profileNames, reports, onOpenDetails }: { han
       </div>
       <p className="text-xs text-muted-foreground">Herkunft: Versuch {handoff.source_attempt_no ?? 'nicht überliefert'} · Ticketrevision {handoff.task_revision ?? 'nicht überliefert'}</p>
       <TextBlock label="Zusammenfassung der Übergabe" children={handoff.summary} />
+      {handoff.owner_guidance && <TextBlock label="Hinweis des Eigentümers zur Überarbeitung" children={handoff.owner_guidance} />}
       <p className="text-sm"><span className="text-muted-foreground">Gemeldetes Ergebnis:</span> {displayName(handoff.outcome, outcomes)}</p>
       {sourceReport && <div className="rounded-md bg-muted/40 p-3">
         <p className="text-xs font-medium text-muted-foreground">Übernommene Agentenmeldung · {displayName(sourceReport.outcome, outcomes)}</p>
@@ -215,6 +216,7 @@ function RunDetails({ run, ordinal, profileNames, reports, onOpenDetails }: { ru
         {run.reports.map((report) => <article key={report.id} className="min-w-0 rounded-md bg-muted/40 p-3">
           <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{displayName(report.outcome, outcomes)}</Badge><span className="text-xs text-muted-foreground">Versuch {report.attempt_no} · Revision {report.task_revision}</span></div>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm">{report.summary}</p>
+          {report.route_label_id !== undefined && <p className="mt-1 text-sm">Vom Agenten gewählte Route: {report.route_label_name ?? report.route_label_id ?? 'Standardroute'}</p>}
           <p className="mt-2 text-xs text-muted-foreground">Eingegangen: {dateTime(report.received_at) ?? 'Zeitpunkt nicht überliefert'} · {report.accepted_for_reconciliation ? 'Für die Prüfung übernommen' : 'Nicht für die Prüfung übernommen'}</p>
           {report.rejection_reason && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-destructive">Zurückweisung: {report.rejection_reason}</p>}
           {report.open_questions.length > 0 && <div className="mt-3 space-y-1">
@@ -237,7 +239,7 @@ function RunDetails({ run, ordinal, profileNames, reports, onOpenDetails }: { ru
   </details>
 }
 
-function TaskWorkflows({ item, criteria, profileNames, onOpenDetails }: { item: TaskFlowWorkflowItem; criteria: Task['criteria']; profileNames: Map<string, string>; onOpenDetails: () => void }) {
+function TaskWorkflows({ item, criteria, profileNames, labelNames, onOpenDetails }: { item: TaskFlowWorkflowItem; criteria: Task['criteria']; profileNames: Map<string, string>; labelNames: Map<string, string>; onOpenDetails: () => void }) {
   const phaseNames = new Map(item.phases.map((phase) => [phase.id, phase.name]))
   const reports = new Map(item.runs.flatMap((run) => run.reports.map((report) => [report.id, report] as const)))
   const runsByStage = new Map<string, TaskFlowRun[]>()
@@ -277,6 +279,10 @@ function TaskWorkflows({ item, criteria, profileNames, onOpenDetails }: { item: 
                 </div>
                 <Badge variant={phase.status === 'completed' ? 'secondary' : phase.status === 'blocked' ? 'destructive' : phase.status === 'current' ? 'default' : 'outline'}>{phaseStates[phase.status]}</Badge>
               </div>
+              {phase.instructions && <details className="rounded-md border bg-background">
+                <summary className="cursor-pointer px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Phasenauftrag ansehen</summary>
+                <p className="whitespace-pre-wrap break-words border-t p-3 text-sm">{phase.instructions}</p>
+              </details>}
               {phaseBlocker && <p className="whitespace-pre-wrap break-words rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-950">{phaseBlocker}</p>}
               {phase.entry_conditions.length > 0 && <p className="text-xs text-muted-foreground">Eingangsbedingungen: {phase.entry_conditions.map(conditionText).join(' · ')}</p>}
               {completionPolicyText(phase.run_completion_policy, criteria).length > 0 && <details className="rounded-md border bg-background">
@@ -307,6 +313,8 @@ function TaskWorkflows({ item, criteria, profileNames, onOpenDetails }: { item: 
           {item.selected_transitions.map((transition, index) => <li key={`${transition.source_run_id}-${transition.selected_at}-${index}`} className="min-w-0 rounded-md bg-muted/40 p-3">
             <p className="break-words text-sm font-medium">{phaseNames.get(transition.from_stage_id) ?? 'Vorherige Phase'} → {phaseNames.get(transition.to_stage_id) ?? 'Folgephase'}</p>
             <p className="mt-1 text-sm">Ausgewählter Ausgang: {displayName(transition.outcome, outcomes)}</p>
+            {transition.route_label_id !== undefined && <p className="mt-1 text-sm">{transition.route_label_id ? `Routenlabel: ${transition.route_label_name ?? labelNames.get(transition.route_label_id) ?? transition.route_label_id}` : 'Standardroute'}</p>}
+            {transition.owner_guidance && <p className="mt-1 whitespace-pre-wrap break-words text-sm">Weitere Überarbeitung freigegeben: {transition.owner_guidance}</p>}
             <p className="mt-1 text-xs text-muted-foreground">Ausgewählt: {dateTime(transition.selected_at) ?? 'Zeitpunkt nicht überliefert'}{transition.report_id ? ' · Agentenmeldung ist zugeordnet' : ''}</p>
           </li>)}
         </ol> : <p className="text-sm text-muted-foreground">Für diesen Ablauf ist noch kein tatsächlicher Übergang gespeichert.</p>}
@@ -319,6 +327,7 @@ function TaskWorkflows({ item, criteria, profileNames, onOpenDetails }: { item: 
           <ul className="space-y-2">{item.candidate_transitions.map((transition, index) => <li key={`${transition.from_stage_id}-${transition.to_stage_id}-${transition.on}-${index}`} className="rounded-md bg-muted/40 p-3 text-sm">
             <div className="flex flex-wrap items-start justify-between gap-2"><p className="break-words font-medium">{phaseNames.get(transition.from_stage_id) ?? 'Phase'} → {phaseNames.get(transition.to_stage_id) ?? 'Folgephase'}</p><Badge variant={transition.selection_status === 'selected' ? 'secondary' : 'outline'}>{transitionSelectionStates[transition.selection_status]}</Badge></div>
             <p className="mt-1">Bei: {displayName(transition.on, outcomes)}</p>
+            {transition.route_label_id && <p className="mt-1">Routenlabel: {labelNames.get(transition.route_label_id) ?? transition.route_label_id}</p>}
             {transition.conditions.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Zusätzliche Bedingungen: {transition.conditions.map(conditionText).join(' · ')}</p>}
           </li>)}</ul>
         </div>
@@ -343,10 +352,11 @@ function TaskRunItem({ item, profileNames, onOpenDetails }: { item: Extract<Task
   </Card>
 }
 
-export default function TaskFlow({ task, projectId, statuses, flow, loading, error, loadingMore, hasMore, onOpenDetails, onOpenExecution, onRetry, onLoadMore }: {
+export default function TaskFlow({ task, projectId, statuses, labelNames, flow, loading, error, loadingMore, hasMore, onOpenDetails, onOpenExecution, onRetry, onLoadMore }: {
   task: Task
   projectId: string
   statuses: TaskStatus[]
+  labelNames: Map<string, string>
   flow?: TaskFlowPage
   loading: boolean
   error?: string
@@ -421,7 +431,7 @@ export default function TaskFlow({ task, projectId, statuses, flow, loading, err
         </div>
           : flow?.items.length ? <div className="space-y-4">
             {flow.items.map((item) => item.kind === 'workflow_instance'
-              ? <TaskWorkflows key={`${item.kind}-${item.id}`} item={item} criteria={task.criteria} profileNames={profileNames} onOpenDetails={onOpenDetails} />
+              ? <TaskWorkflows key={`${item.kind}-${item.id}`} item={item} criteria={task.criteria} profileNames={profileNames} labelNames={labelNames} onOpenDetails={onOpenDetails} />
               : <TaskRunItem key={`${item.kind}-${item.run.id}`} item={item} profileNames={profileNames} onOpenDetails={onOpenDetails} />)}
             {hasMore && <div className="flex justify-center"><Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? 'Weitere Abläufe werden geladen …' : 'Ältere Abläufe laden'}</Button></div>}
           </div>

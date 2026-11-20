@@ -52,17 +52,17 @@ function evidenceIsCurrentForTask(evidence: components['schemas']['Evidence'], t
     : evidence.task_revision === task.version
 }
 
-export default function TaskSheet({ taskId, project, statuses, onClose, onChanged }: { taskId?: string; project: Project; statuses: TaskStatus[]; onClose: () => void; onChanged: () => Promise<void> }) {
+export default function TaskSheet({ taskId, project, board, statuses, onClose, onChanged }: { taskId?: string; project: Project; board?: components['schemas']['Board']; statuses: TaskStatus[]; onClose: () => void; onChanged: () => Promise<void> }) {
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('details')
   const [restoreActionId, setRestoreActionId] = useState<string>()
   const taskQuery = useTask(taskId)
   const taskFlowQuery = useInfiniteQuery({
-    queryKey: ['task-flow', taskId],
-    enabled: Boolean(taskId && activeTab === 'flow'),
+    queryKey: ['task-flow', taskId, board?.id],
+    enabled: Boolean(taskId && (activeTab === 'flow' || activeTab === 'execution')),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => request(api.GET('/tasks/{task_id}/flow', {
-      params: { path: { task_id: taskId! }, query: { limit: 10, ...(pageParam ? { cursor: pageParam } : {}) } },
+      params: { path: { task_id: taskId! }, query: { board_id: board?.id, limit: 10, ...(pageParam ? { cursor: pageParam } : {}) } },
     })),
     getNextPageParam: (page) => page.has_more ? page.next_cursor ?? undefined : undefined,
   })
@@ -459,6 +459,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                     task={task}
                     projectId={project.id}
                     statuses={statuses}
+                    labelNames={new Map(labelsQuery.data?.items.map((label) => [label.id, label.name]))}
                     flow={taskFlow}
                     loading={taskFlowQuery.isPending}
                     error={taskFlowQuery.isError && !taskFlow ? formatError(taskFlowQuery.error) : undefined}
@@ -474,7 +475,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                   <TaskDecisions task={task} project={project} onChanged={invalidate} />
                 </TabsContent>
                 <TabsContent value="execution" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
-                  <TaskExecution task={task} project={project} onChanged={invalidate} onOpenDecisions={() => setActiveTab('decisions')} />
+                  <TaskExecution task={task} project={project} boardId={board?.id} boardPolicy={taskFlow?.board_workflow_policy} boardPolicyError={taskFlowQuery.isError ? formatError(taskFlowQuery.error) : undefined} retryBoardPolicy={() => void taskFlowQuery.refetch()} onChanged={invalidate} onOpenDecisions={() => setActiveTab('decisions')} />
                 </TabsContent>
                 <TabsContent value="history" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   {restoreActionQuery.data && <div className={`mb-5 rounded-lg border p-3 text-sm ${restoreActionQuery.data.status === 'failed' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-primary/20 bg-accent text-accent-foreground'}`} role="status"><p className="font-medium">{restoreActionQuery.data.status === 'succeeded' ? 'Wiederherstellung abgeschlossen' : restoreActionQuery.data.status === 'failed' ? 'Wiederherstellung fehlgeschlagen' : 'Wiederherstellung läuft'}</p><p className="mt-1 text-xs">Action {restoreActionQuery.data.id}</p></div>}

@@ -1411,7 +1411,7 @@
     },
     {
       "name": "runs_report_result",
-      "description": "Report-ID dedupliziert zusätzlich zum Idempotency-Key. Principal, Attempt, Taskrevision und Referenzen müssen passen. artifacts[].criterion_ids verweist ausschließlich auf Kriterien aus dem eingefrorenen Run-Snapshot. Erfolgsmeldung setzt nicht succeeded.",
+      "description": "Report-ID dedupliziert zusätzlich zum Idempotency-Key. Principal, Attempt, Taskrevision und Referenzen müssen passen. artifacts[].criterion_ids verweist ausschließlich auf Kriterien aus dem eingefrorenen Run-Snapshot. route_label_id muss eine im Run eingefrorene Route wählen; null wählt den eingefrorenen Standardübergang, ohne Feld werden Ticket-Themenlabels ausgewertet. Erfolgsmeldung setzt nicht succeeded.",
       "operation_id": "runs_report_result",
       "http_mapping": {
         "method": "POST",
@@ -1463,6 +1463,18 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 30000
+          },
+          "route_label_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UUID wählt einen im Run eingefrorenen benannten Abzweig. null wählt ausdrücklich den eingefrorenen Standardübergang. Ohne Feld werden Ticket-Themenlabels ausgewertet."
           },
           "artifacts": {
             "type": "array",

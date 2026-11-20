@@ -15,5 +15,5 @@ interface WorkflowPolicy
      *
      * @return array<string, mixed>|null
      */
-    public function selectTransition(array $transitions, string $fromStageId, string $outcome): ?array;
+    public function selectTransition(array $transitions, string $fromStageId, string $outcome, ?string $routeLabelId = null): ?array;
 }

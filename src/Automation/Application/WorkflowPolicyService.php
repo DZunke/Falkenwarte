@@ -31,8 +31,8 @@ final readonly class WorkflowPolicyService implements WorkflowPolicy
      *
      * @return array<string, mixed>|null
      */
-    public function selectTransition(array $transitions, string $fromStageId, string $outcome): ?array
+    public function selectTransition(array $transitions, string $fromStageId, string $outcome, ?string $routeLabelId = null): ?array
     {
-        return $this->transitions->select($transitions, $fromStageId, $outcome);
+        return $this->transitions->select($transitions, $fromStageId, $outcome, $routeLabelId);
     }
 }

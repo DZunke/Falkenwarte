@@ -226,24 +226,32 @@ test('Eine globale Agentrolle erscheint nur bei passender aktiver T3-Projektbind
 
   await ownerPage.goto('/#/workflows');
   await expect(ownerPage.getByRole('heading', { name: 'Workflows' })).toBeVisible();
-  const workflowForm = ownerPage.locator('[data-slot="card"]').filter({ hasText: 'Zwei-Phasen-Workflow' });
+  const workflowForm = ownerPage.getByTestId('workflow-editor-create');
   const workflowProjectPicker = workflowForm.getByLabel('Projekt');
   await workflowProjectPicker.click();
   await ownerPage.getByRole('option', { name: project.name, exact: true }).click();
   await expect(workflowProjectPicker).toContainText(project.name);
-  await expect(workflowForm.getByText('Angeboten werden nur aktivierte Rollen, die für dieses Projekt freigegeben und an dieselbe T3-Verbindung gebunden sind.', { exact: true })).toBeVisible();
-  const workflowRolePicker = workflowForm.getByLabel('Agentrolle für beide Phasen');
+  await expect(workflowForm.getByText('Je Phase werden nur aktivierte Rollen angeboten, die für dieses Projekt freigegeben und an dieselbe T3-Verbindung gebunden sind.', { exact: true })).toBeVisible();
+  const workflowRolePicker = workflowForm.getByLabel('Agentrolle für Phase 1');
   await workflowRolePicker.click();
   const workflowRoleOptions = ownerPage.getByRole('option');
   await expect(workflowRoleOptions).toHaveText([
-    'Keine Rolle festlegen',
+    'Keine Agentrolle',
     `${globalRole.name} · Implementierung`,
+  ]);
+  await expect(ownerPage.getByRole('option', { name: new RegExp(otherConnectionRole.name) })).toHaveCount(0);
+  await ownerPage.keyboard.press('Escape');
+  const reviewRolePicker = workflowForm.getByLabel('Agentrolle für Phase 2');
+  await reviewRolePicker.click();
+  await expect(ownerPage.getByRole('option')).toHaveText([
+    'Keine Agentrolle',
+    globalRole.name + ' · Implementierung',
   ]);
   await expect(ownerPage.getByRole('option', { name: new RegExp(otherConnectionRole.name) })).toHaveCount(0);
   await ownerPage.keyboard.press('Escape');
 
   recordEvidence(
     'Eine globale Rolle wird für alle Projekte berücksichtigt, aber im Startselector nur angeboten, wenn das Projekt eine aktive Bindung an genau ihre T3-Verbindung hat.',
-    `Das gebundene Projekt ${project.id} bot die globale Rolle ${globalRole.id} mit Verbindung ${matchingConnection.id} als startbereit an. Dieselbe Auswahl im Workflowformular enthielt nur die globale Rolle dieser Verbindung; die ebenfalls globale Rolle mit anderer Verbindung ${otherConnection.id} fehlte in beiden Selektoren. Es wurde kein Auftrag gestartet.`,
+    `Das gebundene Projekt ${project.id} bot die globale Rolle ${globalRole.id} mit Verbindung ${matchingConnection.id} als startbereit an. Beide Workflow-Phasenselektoren enthielten nur die globale Rolle dieser Verbindung; die ebenfalls globale Rolle mit anderer Verbindung ${otherConnection.id} fehlte in beiden Selektoren. Es wurde kein Auftrag gestartet.`,
   );
 });

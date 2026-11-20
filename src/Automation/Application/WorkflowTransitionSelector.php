@@ -12,5 +12,5 @@ interface WorkflowTransitionSelector
      *
      * @return array<string, mixed>|null
      */
-    public function select(array $transitions, string $fromStageId, string $outcome): ?array;
+    public function select(array $transitions, string $fromStageId, string $outcome, ?string $routeLabelId = null): ?array;
 }

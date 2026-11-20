@@ -399,13 +399,13 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     await expect(handoffProtocol.getByRole('link', { name: 'Abnahmequelle' })).toHaveAttribute('href', 'https://example.test/m4/handoff');
     await ownerPage.getByRole('tab', { name: 'Ausführung' }).click();
     const execution = ownerPage.getByRole('tabpanel', { name: 'Ausführung' });
-    await execution.getByRole('button', { name: /^review · Versuch 1/ }).click();
+    await execution.getByRole('button', { name: /^Review · Versuch 1/ }).click();
     const frozen = execution.locator('details').filter({ hasText: 'Übergabe aus der vorigen Phase' });
     await frozen.locator('summary').click();
     await expect(frozen.getByText(implementationSummary, { exact: true })).toBeVisible();
     await expect(frozen.getByRole('link', { name: 'Abnahmequelle' })).toHaveAttribute('href', 'https://example.test/m4/handoff');
     await frozen.getByRole('button', { name: 'Ausgangslauf und Nachweise ansehen' }).click();
-    await expect(execution.getByRole('heading', { name: 'implementation · Versuch 1' })).toBeVisible();
+    await expect(execution.getByRole('heading', { name: 'Umsetzung · Versuch 1' })).toBeVisible();
     await ownerPage.getByRole('tab', { name: 'Details' }).click();
     const statusPicker = ownerPage.getByRole('combobox', { name: 'Ticketstatus' });
     await statusPicker.click();
@@ -456,11 +456,11 @@ test('M4 implementation hands a frozen report to review and the owner completes 
   }
 });
 
-test('M4 stops the configured repair loop at its limit without launching another T3 run', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+test('M4 requires an owner-guided decision before one extra repair round beyond the configured limit', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
   test.setTimeout(240_000);
   test.info().annotations.push({ type: 'acceptance', description: 'A12' });
   test.info().annotations.push({ type: 'scenario', description: 'E25' });
-  test.info().annotations.push({ type: 'expected', description: 'Ein Workflow mit max_repair_rounds=1 darf genau einen Folgelauf nach needs_changes anlegen und muss nach dessen zweitem Änderungsbericht pausieren, ohne dritten T3-Launch.' });
+  test.info().annotations.push({ type: 'expected', description: 'Nach Ausschöpfen von max_repair_rounds darf ein generisches Fortsetzen keinen Run starten. Eine begründete Eigentümerentscheidung startet genau eine zusätzliche Runde mit eingefrorenem Hinweis; der nächste Änderungsbedarf pausiert erneut.' });
   await qaMocks.setT3Scenario('default');
   const project = await ownerApi.createProject({ name: `M4 Reparaturlimit ${randomUUID().slice(0, 6)}` });
   const { connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, 'M4 Reparaturlimit T3');
@@ -497,10 +497,12 @@ test('M4 stops the configured repair loop at its limit without launching another
         expect(repairRun.data.snapshot.handoff_snapshot.source_report_id).toBe(result.reportId);
       }
     }
-    const paused = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.state === 'paused', 'Nach Ausschöpfen des konfigurierten Reparaturlimits muss der Workflow anhalten.');
+    const paused = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.state === 'paused' && item.repair_decision_run_id === item.run_ids.at(-1), 'Nach Ausschöpfen des konfigurierten Reparaturlimits muss der Workflow auf eine Eigentümerentscheidung warten.');
     expect(paused.current_stage_id).toBe('implementation');
     expect(paused.repair_round).toBe(1);
-    expect(paused.pause_reason).toBe('Die konfigurierte Zahl der Reparaturrunden ist erreicht.');
+    expect(paused.pause_reason).toContain('Die konfigurierte Zahl der Reparaturrunden ist erreicht.');
+    expect(paused.repair_decision_run_id).toBe(paused.run_ids[1]);
+    expect(paused.repair_decision_stage_name).toBe('Bearbeitung');
     expect(paused.run_ids).toHaveLength(2);
     expect(paused.run_ids).toHaveLength(new Set(paused.run_ids).size);
     const reports = await Promise.all(paused.run_ids.map((runId, index) => ownerApi.get(`/runs/${runId}/result-reports/${reportIds[index]}`)));
@@ -533,31 +535,105 @@ test('M4 stops the configured repair loop at its limit without launching another
     expect(t3.unexpected).toEqual([]);
     expect(t3.accepted_launches).toHaveLength(2);
     expect(paused.run_ids).toHaveLength(t3.accepted_launches.length);
+
+    const bypassAttempt = await ownerApi.post(`/workflow-instances/${instance.id}/control`, {
+      action: 'resume',
+      reason: 'Ich versuche, die zusätzliche Runde ohne Überarbeitungshinweis fortzusetzen.',
+    }, { version: paused.version });
+    expect(bypassAttempt.response.status(), JSON.stringify(bypassAttempt.data)).toBe(409);
+    expect(bypassAttempt.data.code).toBe('workflow_repair_decision_required');
+    const stillWaiting = (await ownerApi.get(`/workflow-instances/${instance.id}`)).data;
+    expect(stillWaiting).toMatchObject({ state: 'paused', run_ids: paused.run_ids, repair_decision_run_id: paused.repair_decision_run_id });
+    expect((await qaMocks.t3Journal()).accepted_launches).toHaveLength(2);
+
     await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}`);
     await expect(ownerPage.getByRole('heading', { name: task.title })).toBeVisible();
+    await ownerPage.getByRole('tab', { name: 'Ausführung' }).click();
+    const execution = ownerPage.getByRole('tabpanel', { name: 'Ausführung' });
+    const authorizeRepair = execution.getByRole('button', { name: 'Eine Überarbeitung freigeben', exact: true });
+    await expect(authorizeRepair).toBeVisible();
+    await expect(execution.getByRole('button', { name: 'Fortsetzen', exact: true })).toHaveCount(0);
+    await expect(execution.getByRole('button', { name: 'Workflow abbrechen', exact: true })).toBeVisible();
+    await expect(execution.getByText('Die zusätzliche Runde wird in der Phase Bearbeitung ausgeführt.', { exact: true })).toBeVisible();
+    const ownerGuidance = 'Prüfe den zweiten Änderungsbericht, ergänze die fehlende Nachweisstelle und benenne die verbleibende Einschränkung ausdrücklich.';
+    await execution.getByLabel('Hinweis für die nächste Überarbeitung').fill(ownerGuidance);
+    await authorizeRepair.click();
+
+    const authorized = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.state === 'running' && item.run_ids.length === 3, 'Die begründete Eigentümerentscheidung muss genau eine zusätzliche Phase starten.');
+    expect(authorized.run_ids.slice(0, 2)).toEqual(paused.run_ids);
+    expect(authorized.repair_decision_run_id).toBeUndefined();
+    const extraRepairRunId = authorized.run_ids[2];
+    const extraRepairRun = await readUntil(ownerApi, `/runs/${extraRepairRunId}`, (run) => run.snapshot?.handoff_snapshot?.owner_guidance === ownerGuidance, 'Der Hinweis muss im eingefrorenen Übergabesnapshot des zusätzlichen Laufs stehen.');
+    expect(extraRepairRun).toMatchObject({
+      stage: 'implementation',
+      snapshot: {
+        agent_profile_id: implementer.id,
+        handoff_source_run_id: paused.run_ids[1],
+        handoff_snapshot: { owner_guidance: ownerGuidance },
+      },
+    });
+    const extraReport = await submitReport(ownerApi, reporter.agent, extraRepairRunId, task.version, {
+      outcome: 'needs_changes',
+      summary: 'Auch nach dem zusätzlichen Versuch bleibt Änderungsbedarf.',
+      label: 'Freigegebener Zusatzversuch',
+      text: 'Der Hinweis wurde berücksichtigt, ein weiterer Änderungsbedarf bleibt dennoch offen.',
+    });
+    const pausedAgain = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.state === 'paused' && item.repair_decision_run_id === extraRepairRunId, 'Ein erneuter Änderungsbedarf muss nach der freigegebenen Zusatzrunde wieder eine Eigentümerentscheidung verlangen.');
+    expect(pausedAgain.run_ids).toHaveLength(3);
+    expect(pausedAgain.repair_round).toBe(2);
+    expect(pausedAgain.repair_decision_run_id).toBe(extraRepairRunId);
+    expect((await ownerApi.get(`/runs/${extraRepairRunId}/result-reports/${extraReport.reportId}`)).data.outcome).toBe('needs_changes');
+    const taskAfterRepair = await ownerApi.get(`/tasks/${task.id}`);
+    expect(taskAfterRepair.response.status(), JSON.stringify(taskAfterRepair.data)).toBe(200);
+    expect(taskAfterRepair.data.status_category).toBe('ready');
+    await expect(execution.getByRole('button', { name: 'Eine Überarbeitung freigeben', exact: true })).toBeVisible();
+    await expect(execution.getByRole('button', { name: 'Fortsetzen', exact: true })).toHaveCount(0);
+
+    const finalFlowPage = await readUntil(ownerApi, `/tasks/${task.id}/flow`, (page) => page.items?.some((item) => item.id === instance.id && item.runs?.length === 3), 'Der Ticketablauf muss den freigegebenen Zusatzversuch und erneuten Stillstand zeigen.');
+    const finalFlowInstance = finalFlowPage.items.find((item) => item.id === instance.id);
+    expect(finalFlowInstance).toMatchObject({ state: 'paused', branch_history_status: 'complete' });
+    expect(finalFlowInstance.selected_transitions).toHaveLength(2);
+    expect(finalFlowInstance.selected_transitions[1]).toMatchObject({
+      from_stage_id: 'implementation',
+      to_stage_id: 'implementation',
+      outcome: 'needs_changes',
+      source_run_id: paused.run_ids[1],
+      owner_guidance: ownerGuidance,
+    });
+    expect(finalFlowInstance.runs[2].handoff).toMatchObject({ source_run_id: paused.run_ids[1], owner_guidance: ownerGuidance });
+    expect(finalFlowInstance.runs.map((run) => run.id)).toEqual(pausedAgain.run_ids);
+    expect(finalFlowInstance.runs.map((run) => run.reports.map((report) => report.summary))).toEqual([
+      ['Die Implementierungsrolle meldet Änderungsbedarf 1.'],
+      ['Die Implementierungsrolle meldet Änderungsbedarf 2.'],
+      ['Auch nach dem zusätzlichen Versuch bleibt Änderungsbedarf.'],
+    ]);
+
     await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
     const flow = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
     await expect(flow.getByText(`Workflow: ${workflow.name} · Version ${workflow.definition_version}`, { exact: true })).toBeVisible();
     await expect(flow.getByRole('heading', { name: 'Bearbeitung', exact: true })).toBeVisible();
     const actualTransitions = flow.getByRole('heading', { name: 'Tatsächliche Übergänge' }).locator('..');
-    await expect(actualTransitions.getByText('Bearbeitung → Bearbeitung', { exact: true })).toBeVisible();
+    await expect(actualTransitions.getByText('Bearbeitung → Bearbeitung', { exact: true })).toHaveCount(2);
     await expect(flow.getByText('Blockiert', { exact: true })).toBeVisible();
     const pausedStatus = flow.getByRole('status').filter({ hasText: 'Warum pausiert' });
     await expect(pausedStatus.getByText('Warum pausiert', { exact: true })).toBeVisible();
-    await expect(pausedStatus).toContainText(paused.pause_reason);
+    await expect(pausedStatus).toContainText(pausedAgain.pause_reason);
     const runList = flow.getByRole('list', { name: 'Läufe der Phase Bearbeitung' });
     const runDetails = runList.locator(':scope > li > details > summary');
-    await expect(runDetails).toHaveCount(2);
+    await expect(runDetails).toHaveCount(3);
     await runDetails.nth(0).click();
     const firstRepairRun = runList.locator(':scope > li > details').nth(0);
     await expect(firstRepairRun.getByText('Die Implementierungsrolle meldet Änderungsbedarf 1.', { exact: true })).toBeVisible();
     await runDetails.nth(1).click();
     const secondRepairRun = runList.locator(':scope > li > details').nth(1);
     await expect(secondRepairRun.getByText('Die Implementierungsrolle meldet Änderungsbedarf 2.', { exact: true })).toBeVisible();
+    await runDetails.nth(2).click();
+    const extraRepairDetails = runList.locator(':scope > li > details').nth(2);
+    await expect(extraRepairDetails.getByText('Auch nach dem zusätzlichen Versuch bleibt Änderungsbedarf.', { exact: true })).toBeVisible();
     recordEvidence(
-      'M4: `max_repair_rounds=1` erlaubt genau einen Reparatur-Folgelauf und stoppt vor einem dritten T3-Launch.',
-      `Workflow ${instance.id} speicherte zwei unterschiedliche needs_changes-Reports und zwei T3-Launches. repair_round blieb bei 1; die Instanz pausierte mit workflow_repair_limit, ohne dritten Run oder externe Zusatzarbeit anzulegen.`,
-      { t3 },
+      'M4: Das Reparaturlimit stoppt automatisch. Nur eine begründete Eigentümerfreigabe startet genau eine zusätzliche Runde; deren Hinweis bleibt in der eingefrorenen Übergabe.',
+      `Workflow ${instance.id} stoppte nach zwei needs_changes-Reports und zwei T3-Launches; resume wurde mit ${bypassAttempt.data.code} abgewiesen. Die Eigentümerin gab genau eine Runde mit Hinweis frei. Run ${extraRepairRunId} fror diesen Hinweis in seiner Übergabe ein und meldete erneut needs_changes. Die Instanz pausierte wieder mit genau drei Runs und drei T3-Launches; der vierte Run wurde nicht gestartet. Ticket ${task.id} blieb im Status ready.`,
+      { t3: await qaMocks.t3Journal() },
     );
   } finally {
     await reporter.close();

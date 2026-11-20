@@ -19,6 +19,10 @@ Nutze nur Werkzeuge, Zugänge und Projektpfade, die deine Umgebung tatsächlich 
 
 ## Rückfragen und Intake
 
+Wenn dein Phasenauftrag Übergänge mit Labels anbietet, kannst du einen davon im Ergebnisbericht auswählen. Nimm den zum tatsächlichen Ergebnis passenden `outcome` und übermittle die angebotene Label-ID als `route_label_id`. Soll die Discovery eine Fachfrage klären, schreibe die konkrete Frage in `open_questions`, beschreibe in `summary`, was davon abhängt, und verwende das dafür konfigurierte Label. Falkenwarte übergibt deinen Bericht an die nächste Rolle. Enthält die Übergabe einen Hinweis des Eigentümers zur Überarbeitung, richte deine Bearbeitung daran aus.
+
+Lass `route_label_id` weg, wenn Falkenwarte anhand der Themenlabels am Ticket entscheiden soll. Willst du ausdrücklich den im Auftrag angebotenen Standardübergang für dein Ergebnis wählen, sende `route_label_id: null`. Bei einem Einzellauf lässt du das Feld weg.
+
 Stelle eine Rückfrage über den sichtbaren T3- oder Nutzer-Dialog, wenn dieser eine Antwort aufnehmen kann. Wenn eine fehlende Antwort die Arbeit stoppt und kein solcher Weg verfügbar ist, melde sie konkret in `summary` und `open_questions` und verwende `blocked`; erfinde keine Antwort. T3-Berechtigungsanfragen müssen in T3 selbst freigegeben werden.
 
 Lege ein Falkenwarte-Ticket nur auf ausdrücklichen Auftrag an. `tasks_create` benötigt `project_id`, `title` und eine neue `client_request_id`; `outcome=accepted` quittiert die Anlage, nicht den Abschluss der asynchronen Klassifikation. Lies den Intake mit `tasks_intake_get({"task_id":"<task_id>"})` und der Fähigkeit `tasks.read`. Bei `needs_information` darfst du nur an den ursprünglichen Melder gerichtete Felder mit `tasks_supply_information` beantworten: `task_id`, `answers` als Liste aus `{"field_key":"...","value":"..."}`, neue `client_request_id` und aktuelle Taskversion als `expected_version`. Beide schreibenden Werkzeuge benötigen `tasks.write`; lies danach den Intake erneut. Eigentümerentscheidungen triffst du nicht.

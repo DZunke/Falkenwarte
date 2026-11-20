@@ -20,7 +20,7 @@ final readonly class SymfonyWorkflowTransitionSelector implements WorkflowTransi
      *
      * @return array<string, mixed>|null
      */
-    public function select(array $transitions, string $fromStageId, string $outcome): ?array
+    public function select(array $transitions, string $fromStageId, string $outcome, ?string $routeLabelId = null): ?array
     {
         $places = [$fromStageId => $fromStageId];
         $workflowTransitions = [];
@@ -30,7 +30,11 @@ final readonly class SymfonyWorkflowTransitionSelector implements WorkflowTransi
             $source = $transition['from_stage_id'] ?? null;
             $transitionOutcome = $transition['on'] ?? null;
 
-            if (!is_string($source) || !is_string($transitionOutcome)) {
+            if (!is_string($source)
+                || !is_string($transitionOutcome)
+                || $source !== $fromStageId
+                || $transitionOutcome !== $outcome
+                || ($transition['route_label_id'] ?? null) !== $routeLabelId) {
                 continue;
             }
 

@@ -8,11 +8,15 @@ use App\Shared\Application\Actor;
 use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\Problem;
+use App\WorkManagement\Application\BoardWorkflowPolicyReader;
 
 final readonly class TaskFlowHandler implements OperationHandler
 {
-    public function __construct(private Store $store, private TaskFlowReader $taskFlowReader)
-    {
+    public function __construct(
+        private Store $store,
+        private TaskFlowReader $taskFlowReader,
+        private BoardWorkflowPolicyReader $boardWorkflowPolicy,
+    ) {
     }
 
     public function handles(string $operation): bool
@@ -41,6 +45,10 @@ final readonly class TaskFlowHandler implements OperationHandler
         }
         $projectId = (string) $task['project_id'];
         $actor->requireProject($projectId);
+        $boardId = $parameters['board_id'] ?? null;
+        if (null !== $boardId && (!is_string($boardId) || '' === $boardId)) {
+            throw new Problem(422, 'validation_failed', 'Die Boardauswahl ist ungültig.');
+        }
 
         $taskRuns = array_values(array_filter(
             $this->taskFlowReader->runs($taskId, $projectId),
@@ -129,7 +137,7 @@ final readonly class TaskFlowHandler implements OperationHandler
         }
         $page['items'] = $items;
 
-        return ['task_id' => $taskId, 'project_id' => $projectId] + $page;
+        return ['task_id' => $taskId, 'project_id' => $projectId, 'board_workflow_policy' => $this->boardWorkflowPolicy->resolve($task, $boardId)] + $page;
     }
 
     /** @param array<string, mixed> $instance @param list<array<string, mixed>> $allRuns @return list<array<string, mixed>> */
@@ -236,7 +244,7 @@ final readonly class TaskFlowHandler implements OperationHandler
                 $historyStatus,
                 [] !== $definition,
             );
-            $phases[] = [
+            $phaseItem = [
                 'id' => $stageId,
                 'position' => $position,
                 'name' => (string) ($stage['name'] ?? ''),
@@ -250,6 +258,13 @@ final readonly class TaskFlowHandler implements OperationHandler
                 'status' => $phase['status'],
                 'blocker_reason' => $phase['blocker_reason'],
             ];
+            if (is_string($stage['instructions'] ?? null)) {
+                $phaseItem['instructions'] = $stage['instructions'];
+            }
+            if (is_array($stage['board_target'] ?? null)) {
+                $phaseItem['board_target'] = $stage['board_target'];
+            }
+            $phases[] = $phaseItem;
         }
 
         return [
@@ -306,7 +321,9 @@ final readonly class TaskFlowHandler implements OperationHandler
         $fromStageId = (string) ($transition['from_stage_id'] ?? '');
         $toStageId = (string) ($transition['to_stage_id'] ?? '');
         $outcome = (string) ($transition['on'] ?? '');
-        $selected = [] !== array_filter($selectedTransitions, static fn (array $record): bool => $record['from_stage_id'] === $fromStageId && $record['to_stage_id'] === $toStageId && $record['outcome'] === $outcome);
+        $routeLabelId = $transition['route_label_id'] ?? null;
+        $selected = [] !== array_filter($selectedTransitions, static fn (array $record): bool => $record['from_stage_id'] === $fromStageId
+            && $record['to_stage_id'] === $toStageId && $record['outcome'] === $outcome && ($record['route_label_id'] ?? null) === $routeLabelId);
         $sourceHasRuns = [] !== ($stageRuns[$fromStageId] ?? []);
         $selectionStatus = match (true) {
             $selected => 'selected',
@@ -325,7 +342,7 @@ final readonly class TaskFlowHandler implements OperationHandler
                 array_filter($transition['conditions'] ?? [], 'is_array'),
             )),
             'selection_status' => $selectionStatus,
-        ];
+        ] + (null === $routeLabelId ? [] : ['route_label_id' => $routeLabelId]);
     }
 
     /** @param array<string, mixed> $condition @return array<string, mixed> */
@@ -414,7 +431,7 @@ final readonly class TaskFlowHandler implements OperationHandler
                 'source_run_id' => (string) ($transition['source_run_id'] ?? ''),
                 'report_id' => is_string($transition['report_id'] ?? null) ? $transition['report_id'] : null,
                 'selected_at' => (string) ($transition['selected_at'] ?? ''),
-            ];
+            ] + array_intersect_key($transition, array_flip(['owner_guidance', 'route_label_id', 'route_label_name']));
         }
 
         return $transitions;
@@ -457,7 +474,7 @@ final readonly class TaskFlowHandler implements OperationHandler
 
         $reports = [];
         foreach ($reportsByRun[$run['id']] ?? [] as $report) {
-            $reports[] = [
+            $reportItem = [
                 'id' => $report['id'],
                 'attempt_no' => (int) $report['attempt_no'],
                 'task_revision' => (int) $report['task_revision'],
@@ -469,6 +486,11 @@ final readonly class TaskFlowHandler implements OperationHandler
                 'rejection_reason' => $report['rejection_reason'] ?? null,
                 'accepted_for_reconciliation' => (bool) $report['accepted_for_reconciliation'],
             ];
+            if (array_key_exists('route_label_id', $report)) {
+                $reportItem['route_label_id'] = is_string($report['route_label_id']) ? $report['route_label_id'] : null;
+                $reportItem['route_label_name'] = is_string($report['route_label_name'] ?? null) ? $report['route_label_name'] : null;
+            }
+            $reports[] = $reportItem;
         }
 
         $approvals = [];
@@ -547,6 +569,6 @@ final readonly class TaskFlowHandler implements OperationHandler
             'link_collections' => $collections,
             'source_agent_profile_id' => is_string($sourceRun['snapshot']['agent_profile_id'] ?? null) ? $sourceRun['snapshot']['agent_profile_id'] : null,
             'target_agent_profile_id' => is_string($run['snapshot']['agent_profile_id'] ?? null) ? $run['snapshot']['agent_profile_id'] : null,
-        ];
+        ] + array_intersect_key($snapshot, ['owner_guidance' => true]);
     }
 }
