@@ -10,7 +10,7 @@ services:
       args:
         VCS_REF: ${FALKENWARTE_TEST_COMMIT:-unknown}
         # x-release-please-start-version
-        APP_VERSION: ${APP_VERSION:-0.2.1}
+        APP_VERSION: ${APP_VERSION:-0.2.2}
         # x-release-please-end
     environment:
       APP_ENV: prod
