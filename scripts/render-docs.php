@@ -15,7 +15,11 @@ if (!is_file($manifestPath)) {
 
 $manifest = json_decode((string) file_get_contents($manifestPath), true, flags: JSON_THROW_ON_ERROR);
 $pages = $manifest['documents'] ?? [];
-$converter = new GithubFlavoredMarkdownConverter(['html_input' => 'escape', 'allow_unsafe_links' => false]);
+$converter = new GithubFlavoredMarkdownConverter([
+    'html_input' => 'escape',
+    'allow_unsafe_links' => false,
+    'table' => ['wrap' => ['enabled' => true, 'attributes' => ['class' => 'handbook-table']]],
+]);
 $escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 $names = array_column($pages, 'title', 'path');
 $pageUrl = static fn (string $path): string => '/docs/'.('README.md' === $path ? 'index.html' : substr($path, 0, -3).'.html');

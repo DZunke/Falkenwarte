@@ -135,6 +135,7 @@
 
 .prose-falkenwarte { color: var(--foreground); font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
 .prose-falkenwarte > * + * { margin-top: 1.1rem; }
+.prose-falkenwarte [id] { scroll-margin-top: 5rem; }
 .prose-falkenwarte h1, .prose-falkenwarte h2, .prose-falkenwarte h3, .prose-falkenwarte h4 { margin-top: 2rem; font-weight: 600; line-height: 1.3; letter-spacing: -0.02em; }
 .prose-falkenwarte h1 { font-size: 1.75rem; }
 .prose-falkenwarte h2 { font-size: 1.35rem; }
@@ -148,8 +149,9 @@
 .prose-falkenwarte blockquote { border-left: 3px solid var(--primary); padding-left: 1rem; color: var(--muted-foreground); }
 .prose-falkenwarte :not(pre) > code { border-radius: 4px; background: var(--muted); padding: 0.15rem 0.35rem; font-size: 0.87em; }
 .prose-falkenwarte pre { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--sidebar); padding: 1rem; font-size: 0.85rem; line-height: 1.6; }
-.prose-falkenwarte table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.prose-falkenwarte th, .prose-falkenwarte td { border: 1px solid var(--border); padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+.prose-falkenwarte .handbook-table { overflow-x: auto; }
+.prose-falkenwarte table { width: 100%; border-collapse: collapse; font-size: 0.85rem; overflow-wrap: normal; }
+.prose-falkenwarte th, .prose-falkenwarte td { min-width: min(20ch, 50vw); border: 1px solid var(--border); padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
 .prose-falkenwarte th { background: var(--muted); font-weight: 600; }
 .prose-falkenwarte img { max-width: 100%; height: auto; }
 
