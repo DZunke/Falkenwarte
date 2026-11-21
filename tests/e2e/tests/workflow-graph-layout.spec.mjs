@@ -672,7 +672,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
   await expect(sourceNode).toHaveAccessibleName(`Ausgangsphase wählen: ${stageNames[0]}`);
   await sourceNode.focus();
   await sourceNode.press('Enter');
-  await expect(sourceNode).toHaveAccessibleName(`Zielphase wählen: ${stageNames[0]}`);
+  await expect(sourceNode).toHaveAccessibleName(`Ausgangsphase ausgewählt: ${stageNames[0]}`);
   const targetNode = noLabelGraph.graph.getByTestId('workflow-graph-stage-publish');
   await expect(targetNode).toHaveAccessibleName(`Zielphase wählen: ${stageNames[2]}`);
   await targetNode.focus();

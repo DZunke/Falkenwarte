@@ -108,6 +108,8 @@ type WorkflowStageNodeData = {
   disabled: boolean
   connecting: boolean
   connectionSource: boolean
+  hasConnectionSource: boolean
+  connectionTargetAvailable: boolean
   onSelectRun: (run: components['schemas']['TaskFlowRun']) => void
   onActivate: () => void
 }
@@ -158,6 +160,13 @@ const outcomes: Record<PhaseOutcome, string> = {
   needs_changes: 'Änderungen nötig',
   blocked: 'Blockiert',
   failed: 'Fehlgeschlagen',
+}
+
+const selectionStatusLabels: Record<components['schemas']['TaskFlowCandidateTransition']['selection_status'], string> = {
+  selected: 'Gewählt',
+  possible: 'Möglich',
+  not_selected: 'Nicht gewählt',
+  unknown: 'Unbekannt',
 }
 
 const sourceHandleId = 'workflow-source-main'
@@ -412,8 +421,12 @@ function StageNodeView({ data, selected }: NodeProps<WorkflowStageNode>) {
         data-current={data.stage.current || undefined}
         aria-label={data.connecting
           ? data.connectionSource
-            ? `Zielphase wählen: ${data.stage.name}`
-            : `Ausgangsphase wählen: ${data.stage.name}`
+            ? `Ausgangsphase ausgewählt: ${data.stage.name}`
+            : data.hasConnectionSource
+              ? data.connectionTargetAvailable
+                ? `Zielphase wählen: ${data.stage.name}`
+                : `Kein Übergang nach ${data.stage.name} verfügbar`
+              : `Ausgangsphase wählen: ${data.stage.name}`
           : `Phase auswählen: ${data.stage.name}`}
         title={data.stage.missing ? `Phasen-ID: ${data.stage.id}` : data.stage.name}
         disabled={data.stage.missing || data.disabled}
@@ -574,9 +587,6 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
   const definitionTestId = data.graphKind === 'definition' ? `workflow-graph-transition-${data.transitionIndex}` : undefined
   const testId = definitionTestId
     ?? (data.graphKind === 'planned' ? `workflow-graph-planned-transition-${data.transitionIndex}` : `workflow-graph-run-route-${data.edgeIndex}`)
-  const selectionStatusLabels: Record<NonNullable<WorkflowTransitionEdgeData['selectionStatus']>, string> = {
-    selected: 'Gewählt', possible: 'Möglich', not_selected: 'Nicht gewählt', unknown: 'Unbekannt',
-  }
   const routeAction = () => {
     if (data.graphKind === 'actual') {
       if (visitCount === 1) {
@@ -724,6 +734,10 @@ function WorkflowGraphCanvas({
         disabled,
         connecting,
         connectionSource: isConnectionSource,
+        hasConnectionSource: Boolean(connectionSource),
+        connectionTargetAvailable: Boolean(connectionSource && !stage.missing
+          && connectionSource !== stage.id
+          && canCreateRoute(transitions, connectionSource, stage.id)),
         onSelectRun: (run: components['schemas']['TaskFlowRun']) => onSelectRun?.(run),
         onActivate: () => {
           if (stage.missing || disabled) return
@@ -776,7 +790,7 @@ function WorkflowGraphCanvas({
             ?? routeLabelNames?.get(transition.route_label_id)
             ?? 'Themenlabel nicht verfügbar'
     const hasRouteLabel = Boolean(transition.route_label_id)
-    const accessibleStatus = transition.graphKind === 'planned' ? `Eingefrorene Route, ${transition.selectionStatus ?? 'Auswahl unbekannt'}` : transition.graphKind === 'actual' ? `${transition.eventIndexes?.length ?? 0} tatsächliche Besuche` : ''
+    const accessibleStatus = transition.graphKind === 'planned' ? `Eingefrorene Route, ${selectionStatusLabels[transition.selectionStatus ?? 'unknown']}` : transition.graphKind === 'actual' ? `${transition.eventIndexes?.length ?? 0} tatsächliche Besuche` : ''
     const accessibleLabel = `${accessibleStatus ? `${accessibleStatus}: ` : ''}${sourceName} → ${targetName}, ${outcomes[transition.on]}, ${routeLabel}${isReturn ? ', Rückweg' : ''}${transition.conditionsCount > 0 ? `, ${transition.conditionsCount} Bedingungen` : ''}`
     const layoutEdge = graphLayout.edges.get(index)
     const selected = mode === 'definition'
