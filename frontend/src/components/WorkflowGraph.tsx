@@ -836,6 +836,12 @@ function transitionPath(props: EdgeProps<WorkflowTransitionEdge>): TransitionPat
 }
 
 type RouteLabelObstacle = { x: number; y: number; width: number; height: number; clearance: number }
+type RouteLabelPositions = {
+  layoutKey: string
+  pathKey: string
+  measurementKey: string
+  positions: ReadonlyMap<number, { x: number; y: number }>
+}
 
 function routeLabelPosition(
   path: SVGPathElement,
@@ -1111,7 +1117,7 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
               routeAction()
             }}
             className={cn(
-              'flex min-h-8 min-w-24 max-w-[280px] items-center gap-1.5 overflow-hidden rounded-full border bg-card px-2 py-1 text-left text-[10px] font-medium leading-4 text-card-foreground shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'flex min-h-8 min-w-[100px] max-w-[280px] items-center gap-1.5 overflow-hidden rounded-full border bg-card px-2 py-1 text-left text-[10px] font-medium leading-4 text-card-foreground shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               props.selected || data.graphKind === 'actual' ? 'border-primary ring-2 ring-primary/35' : 'border-border hover:border-primary/60',
               data.graphKind === 'planned' && 'border-dashed',
               data.isReturn && 'border-dashed',
@@ -1183,7 +1189,7 @@ function WorkflowGraphCanvas({
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [connectionStatus, setConnectionStatus] = useState('')
   const [openVisitsEdgeIndex, setOpenVisitsEdgeIndex] = useState<number | null>(null)
-  const [routeLabelPositions, setRouteLabelPositions] = useState<{ key: string; positions: ReadonlyMap<number, { x: number; y: number }> }>({ key: '', positions: new Map() })
+  const [routeLabelPositions, setRouteLabelPositions] = useState<RouteLabelPositions>({ layoutKey: '', pathKey: '', measurementKey: '', positions: new Map() })
   const reconnectingTransitionIndex = useRef<number | null>(null)
   const layout: GraphLayout = containerWidth > 0 && containerWidth < 600 ? 'vertical' : 'horizontal'
   const stageIndexById = useMemo(() => new Map(stageNodes.map((stage, index) => [stage.id, index])), [stageNodes])
@@ -1197,6 +1203,7 @@ function WorkflowGraphCanvas({
   const routeLabelLayoutKey = JSON.stringify([
     mode,
     layout,
+    containerWidth,
     stageNodes.map(({ id, name }) => [id, name]),
     nodeBounds,
     transitions.map((transition) => [
@@ -1208,8 +1215,6 @@ function WorkflowGraphCanvas({
       transition.outcomeLabel,
       transition.conditionsCount,
       transition.graphKind,
-      transition.selectionStatus,
-      transition.eventIndexes?.length,
     ]),
     [...graphLayout.edges].map(([index, edge]) => [index, edge.labelMaxWidth, edge.waypoints]),
   ])
@@ -1350,7 +1355,7 @@ function WorkflowGraphCanvas({
         reconnectable: mode === 'definition' && !disabled && Boolean(onReconnectTransition),
         data: {
           edgeIndex: index,
-          labelPosition: routeLabelPositions.key === routeLabelLayoutKey ? routeLabelPositions.positions.get(index) : undefined,
+          labelPosition: routeLabelPositions.layoutKey === routeLabelLayoutKey ? routeLabelPositions.positions.get(index) : undefined,
           graphKind: transition.graphKind,
           transitionIndex: transition.transitionIndex,
           eventIndexes: transition.eventIndexes,
@@ -1394,36 +1399,109 @@ function WorkflowGraphCanvas({
     })
   }, [transitions, mode, stageIndexById, stageNodes, routeLabels, routeLabelNames, graphLayout, routeLabelLayoutKey, routeLabelPositions, controlledSelection, onReconnectTransition, onSelectRunTransition, onSelectPlannedTransition, onTogglePlannedRouteBundle, openPlannedRouteBundle, plannedRouteBundlePanelId, runActivity, layout, setSelection, disabled])
 
+  const graphEdgesRef = useRef(graphEdges)
+  graphEdgesRef.current = graphEdges
+  const routeLabelPositionsRef = useRef(routeLabelPositions)
+  routeLabelPositionsRef.current = routeLabelPositions
+
   useLayoutEffect(() => {
-    if (routeLabelPositions.key === routeLabelLayoutKey || !canvasRef.current || !viewportInitialized) return
+    const canvas = canvasRef.current
+    if (!canvas || !viewportInitialized) return
 
+    let disposed = false
     let pendingFrame = 0
-    const measureAndPlaceLabels = (attempt: number) => {
-      const canvas = canvasRef.current
-      if (!canvas) return
+    let fontsReady = document.fonts.status === 'loaded'
+    const observedElements = new Set<Element>()
+    const resizeObserver = new ResizeObserver(() => scheduleMeasurement())
+    const fontSet = document.fonts
 
-      const labelEdges = graphEdges.filter((edge) => !edge.data.bundleId || edge.data.bundleLeader)
+    const observeGeometryElements = () => {
+      const elements = [
+        canvas,
+        ...canvas.querySelectorAll('.react-flow__node, .react-flow__handle, [data-workflow-edge-index]'),
+      ]
+      for (const element of elements) {
+        if (observedElements.has(element)) continue
+        observedElements.add(element)
+        resizeObserver.observe(element)
+      }
+    }
+
+    const measureAndPlaceLabels = () => {
+      if (disposed || !fontsReady) return
+      observeGeometryElements()
+
+      const edges = graphEdgesRef.current.filter((edge) => !edge.data.bundleId || edge.data.bundleLeader)
       const buttons = [...canvas.querySelectorAll<HTMLButtonElement>('[data-workflow-edge-index]')]
       const edgeGroups = [...canvas.querySelectorAll<SVGGElement>('.react-flow__edge')]
-      const measurements = labelEdges.map((edge) => {
+      const nodeElements = [...canvas.querySelectorAll<HTMLElement>('.react-flow__node[data-id]')]
+      const handles = [...canvas.querySelectorAll<HTMLElement>('.react-flow__handle')]
+      const currentScreenToFlow = fitApiRef.current.screenToFlowPosition
+      const flowRect = (element: Element) => {
+        const rect = element.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) return null
+        const topLeft = currentScreenToFlow({ x: rect.left, y: rect.top })
+        const bottomRight = currentScreenToFlow({ x: rect.right, y: rect.bottom })
+        return { x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y }
+      }
+      const nodeBoundsById = new Map<string, { x: number; y: number; width: number; height: number }>()
+      for (const stage of stageNodes) {
+        const node = nodeElements.find((candidate) => candidate.getAttribute('data-id') === stage.id)
+        const bounds = node ? flowRect(node) : null
+        const stageHandles = handles.filter((handle) => handle.dataset.nodeid === stage.id)
+        if (!bounds || bounds.width <= 0 || bounds.height <= 0 || stageHandles.length !== 4
+          || stageHandles.some((handle) => {
+            const rect = handle.getBoundingClientRect()
+            return rect.width <= 0 || rect.height <= 0
+          })) return
+        nodeBoundsById.set(stage.id, bounds)
+      }
+      if (nodeBoundsById.size !== stageNodes.length) return
+
+      const measurements = edges.map((edge) => {
         const button = buttons.find((candidate) => candidate.dataset.workflowEdgeIndex === String(edge.data.edgeIndex))
         const group = edgeGroups.find((candidate) => candidate.getAttribute('data-id') === edge.id)
         const path = group?.querySelector<SVGPathElement>('.react-flow__edge-path')
+        if (!button || button.offsetWidth <= 0 || button.offsetHeight <= 0 || !path) return null
 
-        return button && button.offsetWidth > 0 && button.offsetHeight > 0 && path
-          ? { edge, button, path }
-          : null
+        const pathLength = path.getTotalLength()
+        if (!Number.isFinite(pathLength) || pathLength <= 0) return null
+        const sourceHandle = handles.find((handle) => handle.dataset.nodeid === edge.source && handle.dataset.handleid === edge.sourceHandle)
+        const targetHandle = handles.find((handle) => handle.dataset.nodeid === edge.target && handle.dataset.handleid === edge.targetHandle)
+        if (!sourceHandle || !targetHandle) return null
+
+        const handleCenterInFlow = (handle: HTMLElement) => {
+          const rect = handle.getBoundingClientRect()
+          return currentScreenToFlow({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+        }
+        const sourceCenter = handleCenterInFlow(sourceHandle)
+        const targetCenter = handleCenterInFlow(targetHandle)
+        const pathStart = path.getPointAtLength(0)
+        const pathEnd = path.getPointAtLength(pathLength)
+        if (Math.hypot(pathStart.x - sourceCenter.x, pathStart.y - sourceCenter.y) > 2
+          || Math.hypot(pathEnd.x - targetCenter.x, pathEnd.y - targetCenter.y) > 2) return null
+
+        return { edge, button, path, pathLength, sourceCenter, targetCenter }
       })
-      if (measurements.some((measurement) => measurement === null)) {
-        if (attempt < 2) pendingFrame = window.requestAnimationFrame(() => measureAndPlaceLabels(attempt + 1))
-        return
-      }
+      if (measurements.length === 0 || measurements.some((measurement) => measurement === null)) return
 
-      const obstacles: RouteLabelObstacle[] = nodeBounds.map((node) => ({ ...node, clearance: 8 }))
+      const completeMeasurements = measurements.filter((measurement): measurement is NonNullable<typeof measurement> => measurement !== null)
+      const actualNodeBounds = [...nodeBoundsById.entries()].map(([id, bounds]) => [id, bounds.x, bounds.y, bounds.width, bounds.height]
+        .map((value) => typeof value === 'number' ? Math.round(value * 100) / 100 : value))
+      const pathKey = JSON.stringify([
+        actualNodeBounds,
+        completeMeasurements.map(({ edge, path }) => [edge.id, path.getAttribute('d')]),
+      ])
+      const measurementKey = JSON.stringify([
+        pathKey,
+        completeMeasurements.map(({ edge, button }) => [edge.data.edgeIndex, button.offsetWidth, button.offsetHeight]),
+      ])
+      const currentPositions = routeLabelPositionsRef.current
+      if (currentPositions.layoutKey === routeLabelLayoutKey && currentPositions.measurementKey === measurementKey) return
+
+      const obstacles: RouteLabelObstacle[] = [...nodeBoundsById.values()].map((node) => ({ ...node, clearance: 8 }))
       const positions = new Map<number, { x: number; y: number }>()
-      for (const measurement of measurements) {
-        if (!measurement) continue
-        const { edge, button, path } = measurement
+      for (const { edge, button, path } of completeMeasurements) {
         const position = routeLabelPosition(path, button.offsetWidth, button.offsetHeight, obstacles)
         positions.set(edge.data.edgeIndex, position)
         obstacles.push({
@@ -1435,13 +1513,44 @@ function WorkflowGraphCanvas({
         })
       }
 
-      setRouteLabelPositions({ key: routeLabelLayoutKey, positions })
+      const nextPositions = { layoutKey: routeLabelLayoutKey, pathKey, measurementKey, positions }
+      routeLabelPositionsRef.current = nextPositions
+      setRouteLabelPositions(nextPositions)
     }
 
-    measureAndPlaceLabels(0)
+    const scheduleMeasurement = () => {
+      if (disposed || pendingFrame !== 0) return
+      pendingFrame = window.requestAnimationFrame(() => {
+        pendingFrame = 0
+        measureAndPlaceLabels()
+      })
+    }
 
-    return () => window.cancelAnimationFrame(pendingFrame)
-  }, [graphEdges, nodeBounds, routeLabelLayoutKey, routeLabelPositions.key, viewportInitialized])
+    const mutationObserver = new MutationObserver((records) => {
+      if (records.some((record) => record.type === 'childList'
+        || record.attributeName === 'd'
+        || (record.attributeName === 'style' && record.target instanceof Element && record.target.matches('.react-flow__node, .react-flow__handle'))
+        || (record.attributeName === 'data-handlepos' && record.target instanceof Element && record.target.matches('.react-flow__handle')))) {
+        scheduleMeasurement()
+      }
+    })
+    mutationObserver.observe(canvas, { subtree: true, childList: true, attributes: true, attributeFilter: ['d', 'style', 'data-handlepos'] })
+    fontSet.addEventListener('loadingdone', scheduleMeasurement)
+    void fontSet.ready.then(() => {
+      fontsReady = true
+      scheduleMeasurement()
+    })
+    observeGeometryElements()
+    scheduleMeasurement()
+
+    return () => {
+      disposed = true
+      if (pendingFrame !== 0) window.cancelAnimationFrame(pendingFrame)
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
+      fontSet.removeEventListener('loadingdone', scheduleMeasurement)
+    }
+  }, [routeLabelLayoutKey, stageNodes, viewportInitialized])
 
   const isValidConnection = useCallback((connection: Connection | WorkflowTransitionEdge) => {
     const source = connection.source
@@ -1475,13 +1584,11 @@ function WorkflowGraphCanvas({
 
   const geometryKey = JSON.stringify([
     routeLabelLayoutKey,
+    routeLabelPositions.pathKey,
     mode,
     layout,
     stageNodes.map((stage) => stage.id),
-    graphEdges.map(({ source, target, data }) => [
-      source, target, data.graphKind, data.outcome, data.routeLabel,
-      data.conditionsCount, data.selectionStatus, data.selectedVisits?.length,
-    ]),
+    graphEdges.map(({ source, target, data }) => [source, target, data.graphKind, data.outcome, data.routeLabel, data.conditionsCount]),
   ])
   const fitGraph = useCallback((duration = 180) => {
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
@@ -1524,12 +1631,13 @@ function WorkflowGraphCanvas({
     }))
   }, [])
 
+  const routeLabelsReady = routeLabelPositions.layoutKey === routeLabelLayoutKey && routeLabelPositions.pathKey !== ''
   useEffect(() => {
-    if (graphNodes.length === 0 || !viewportInitialized || containerWidth <= 0 || containerHeight <= 0) return
+    if (graphNodes.length === 0 || !routeLabelsReady || !viewportInitialized || containerWidth <= 0 || containerHeight <= 0) return
     const frame = window.requestAnimationFrame(() => fitGraph(0))
 
     return () => window.cancelAnimationFrame(frame)
-  }, [fitGraph, geometryKey, containerWidth, containerHeight, graphNodes.length, viewportInitialized])
+  }, [fitGraph, geometryKey, routeLabelsReady, containerWidth, containerHeight, graphNodes.length, viewportInitialized])
 
   const cancelConnectionMode = useCallback(() => {
     setConnecting(false)
