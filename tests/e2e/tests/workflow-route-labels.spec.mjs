@@ -413,6 +413,8 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     await expect(selectedPlannedRoute).toContainText(labelC.name);
     expect((await ownerApi.get(`/workflow-instances/${instance.id}`)).data.run_ids).toHaveLength(3);
     expect((await taskFlow(ownerApi, task.id, instance.id)).selected_transitions).toEqual(finalFlow.selected_transitions);
+    await routeBundle.click();
+    await expect(routeBundleDetails).toBeHidden();
     const plannedDefaultAlternative = workflowGraph.getByTestId(`workflow-graph-planned-transition-${defaultAlternativeIndex}`);
     await expect(plannedDefaultAlternative).toBeVisible();
     await expect(plannedDefaultAlternative).toHaveAccessibleName(/Möglich/);
