@@ -1449,7 +1449,7 @@ function WorkflowGraphCanvas({
         const node = nodeElements.find((candidate) => candidate.getAttribute('data-id') === stage.id)
         const bounds = node ? flowRect(node) : null
         const stageHandles = handles.filter((handle) => handle.dataset.nodeid === stage.id)
-        if (!bounds || bounds.width <= 0 || bounds.height <= 0 || stageHandles.length !== 4
+        if (!bounds || bounds.width <= 0 || bounds.height <= 0
           || stageHandles.some((handle) => {
             const rect = handle.getBoundingClientRect()
             return rect.width <= 0 || rect.height <= 0
@@ -1470,18 +1470,29 @@ function WorkflowGraphCanvas({
         const targetHandle = handles.find((handle) => handle.dataset.nodeid === edge.target && handle.dataset.handleid === edge.targetHandle)
         if (!sourceHandle || !targetHandle) return null
 
-        const handleCenterInFlow = (handle: HTMLElement) => {
+        const handleAttachmentInFlow = (handle: HTMLElement) => {
           const rect = handle.getBoundingClientRect()
-          return currentScreenToFlow({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+          const position = handle.dataset.handlepos
+          const point = position === 'left'
+            ? { x: rect.left, y: rect.top + rect.height / 2 }
+            : position === 'right'
+              ? { x: rect.right, y: rect.top + rect.height / 2 }
+              : position === 'top'
+                ? { x: rect.left + rect.width / 2, y: rect.top }
+                : position === 'bottom'
+                  ? { x: rect.left + rect.width / 2, y: rect.bottom }
+                  : null
+          return point ? currentScreenToFlow(point) : null
         }
-        const sourceCenter = handleCenterInFlow(sourceHandle)
-        const targetCenter = handleCenterInFlow(targetHandle)
+        const sourceAttachment = handleAttachmentInFlow(sourceHandle)
+        const targetAttachment = handleAttachmentInFlow(targetHandle)
+        if (!sourceAttachment || !targetAttachment) return null
         const pathStart = path.getPointAtLength(0)
         const pathEnd = path.getPointAtLength(pathLength)
-        if (Math.hypot(pathStart.x - sourceCenter.x, pathStart.y - sourceCenter.y) > 2
-          || Math.hypot(pathEnd.x - targetCenter.x, pathEnd.y - targetCenter.y) > 2) return null
+        if (Math.hypot(pathStart.x - sourceAttachment.x, pathStart.y - sourceAttachment.y) > 2
+          || Math.hypot(pathEnd.x - targetAttachment.x, pathEnd.y - targetAttachment.y) > 2) return null
 
-        return { edge, button, path, pathLength, sourceCenter, targetCenter }
+        return { edge, button, path, pathLength, sourceAttachment, targetAttachment }
       })
       if (measurements.length === 0 || measurements.some((measurement) => measurement === null)) return
 
@@ -1633,7 +1644,7 @@ function WorkflowGraphCanvas({
 
   const routeLabelsReady = routeLabelPositions.layoutKey === routeLabelLayoutKey && routeLabelPositions.pathKey !== ''
   useEffect(() => {
-    if (graphNodes.length === 0 || !routeLabelsReady || !viewportInitialized || containerWidth <= 0 || containerHeight <= 0) return
+    if (graphNodes.length === 0 || !viewportInitialized || containerWidth <= 0 || containerHeight <= 0) return
     const frame = window.requestAnimationFrame(() => fitGraph(0))
 
     return () => window.cancelAnimationFrame(frame)
