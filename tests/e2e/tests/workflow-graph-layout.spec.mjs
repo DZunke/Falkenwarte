@@ -689,6 +689,45 @@ test('workflow graph stays selectable, readable and within bounds across desktop
 
   const beforeGraphSave = await ownerApi.get(`/workflows/${noLabelWorkflow.id}`);
   expect(beforeGraphSave.response.status(), JSON.stringify(beforeGraphSave.data)).toBe(200);
+  const invalidSaveResponsePromise = ownerPage.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname.endsWith(`/workflows/${noLabelWorkflow.id}`));
+  await noLabelGraph.editor.getByRole('button', { name: 'Workflowversion speichern', exact: true }).click();
+  const invalidSaveResponse = await invalidSaveResponsePromise;
+  expect(invalidSaveResponse.status()).toBe(422);
+  expect(invalidSaveResponse.request().headers()['if-match']).toBe(`"${beforeGraphSave.data.version}"`);
+  expect(invalidSaveResponse.request().postDataJSON().transitions.at(-1)).toMatchObject({
+    from_stage_id: 'research',
+    to_stage_id: 'publish',
+    on: 'needs_changes',
+  });
+  const invalidSaveProblem = await invalidSaveResponse.json();
+  expect(invalidSaveProblem.code).toBe('workflow_condition_future_stage');
+  const invalidSaveDetail = 'Die Bedingung „run_succeeded“ kann vor dem Start der Phase „publish“ nur durch ein späteres Phasenergebnis erfüllt werden.';
+  expect(invalidSaveProblem.detail).toBe(invalidSaveDetail);
+  await expect(noLabelGraph.editor.getByRole('alert').filter({ hasText: invalidSaveDetail })).toHaveText(invalidSaveDetail);
+
+  await noLabelGraph.editor.getByTestId(`workflow-${noLabelWorkflow.id}-transition-${noLabelWorkflow.transitions.length}-remove`).click();
+  await expect(noLabelGraph.editor.getByRole('alert').filter({ hasText: invalidSaveDetail })).toHaveCount(0);
+
+  await connectButton.click();
+  const validSourceNode = noLabelGraph.graph.getByTestId('workflow-graph-stage-review');
+  await expect(validSourceNode).toHaveAccessibleName(`Ausgangsphase wählen: ${stageNames[1]}`);
+  await validSourceNode.focus();
+  await validSourceNode.press('Enter');
+  await expect(validSourceNode).toHaveAccessibleName(`Ausgangsphase ausgewählt: ${stageNames[1]}`);
+  const validTargetNode = noLabelGraph.graph.getByTestId('workflow-graph-stage-research');
+  await expect(validTargetNode).toHaveAccessibleName(`Zielphase wählen: ${stageNames[0]}`);
+  await validTargetNode.focus();
+  await validTargetNode.press('Enter');
+  await expect(connectButton).toHaveAttribute('aria-pressed', 'false');
+
+  const validConnectedInspector = ownerPage.getByTestId('workflow-transition-inspector');
+  await expect(validConnectedInspector.getByLabel('Von Phase')).toContainText(stageNames[1]);
+  await expect(validConnectedInspector.getByLabel('Ergebnis')).toContainText('Blockiert');
+  await expect(validConnectedInspector.getByLabel('Zu Phase')).toContainText(stageNames[0]);
+  await expect(validConnectedInspector.getByLabel('Label für diesen Übergang')).toHaveCount(0);
+  await expect(noLabelGraph.editor.getByRole('alert')).toHaveCount(0);
+
   const saveResponsePromise = ownerPage.waitForResponse((response) => response.request().method() === 'PUT'
     && new URL(response.url()).pathname.endsWith(`/workflows/${noLabelWorkflow.id}`));
   await noLabelGraph.editor.getByRole('button', { name: 'Workflowversion speichern', exact: true }).click();
@@ -715,7 +754,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
 
   const reopenedGraph = await openWorkflow(ownerPage, noLabelProject, savedGraphWorkflow.data);
   const reopenedEdge = reopenedGraph.graph.getByTestId(`workflow-graph-transition-${validGraphCreatedTransitionIndex}`);
-  await expect(reopenedEdge).toHaveAccessibleName(edgeName(stageNames[1], stageNames[0], 'Blockiert', 'Standardroute'));
+  await expect(reopenedEdge).toHaveAccessibleName(edgeName(stageNames[1], stageNames[0], 'Blockiert', 'Standardroute', true));
   await reopenedEdge.click();
   const reopenedInspector = ownerPage.getByTestId('workflow-transition-inspector');
   await expect(reopenedInspector).toBeVisible();
