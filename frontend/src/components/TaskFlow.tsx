@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CircleAlert, FileCheck2, GitBranch, ListChecks, RotateCw } from 'lucide-react'
 import type { components } from '@/generated/api'
 import { api, request, type Task, type TaskStatus } from '@/lib/api'
 import { fetchAllPages } from '@/lib/queries'
-import { WorkflowGraph, type WorkflowGraphSelection } from '@/components/WorkflowGraph'
+import { WorkflowGraph, type WorkflowGraphPlannedRouteBundle, type WorkflowGraphSelection } from '@/components/WorkflowGraph'
 import { hasDenseWorkflowRoutes, WorkflowGraphMobileNavigation } from '@/components/WorkflowGraphMobileNavigation'
 import type { WorkflowBoardColumnOption, WorkflowStageEditorProfile } from '@/components/WorkflowStagesEditor'
 import { Badge } from '@/components/ui/badge'
@@ -273,9 +273,11 @@ function RunDetails({ run, ordinal, profileNames, reports, onOpenDetails, expand
 
 function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, boardLookupError, labelNames, onOpenDetails }: { item: TaskFlowWorkflowItem; criteria: Task['criteria']; profileNames: Map<string, string>; profiles: readonly WorkflowStageEditorProfile[]; boardColumns?: readonly WorkflowBoardColumnOption[]; boardLookupError: boolean; labelNames: Map<string, string>; onOpenDetails: () => void }) {
   const [focus, setFocus] = useState<TaskFlowGraphFocus>(null)
+  const [plannedRouteBundle, setPlannedRouteBundle] = useState<WorkflowGraphPlannedRouteBundle | null>(null)
   const graphRef = useRef<HTMLDivElement>(null)
   const activityDetailsRef = useRef<HTMLElement>(null)
   const scrollAfterFocus = useRef(false)
+  const plannedRouteBundlePanelId = 'task-flow-planned-route-bundle-' + item.id
   const phaseNames = new Map(item.phases.map((phase) => [phase.id, phase.name]))
   const reports = new Map(item.runs.flatMap((run) => run.reports.map((report) => [report.id, report] as const)))
   const runsByStage = new Map<string, TaskFlowRun[]>()
@@ -294,6 +296,13 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
   const selectedPhase = selectedPhaseId ? item.phases.find((phase) => phase.id === selectedPhaseId) : undefined
   const phaseRuns = selectedPhase ? runsByStage.get(selectedPhase.id) ?? [] : []
   const selectedReportId = focus?.type === 'transition' ? focus.reportId : null
+  const togglePlannedRouteBundle = useCallback((bundle: WorkflowGraphPlannedRouteBundle) => {
+    setPlannedRouteBundle((current) => current
+      && current.sourceStageIndex === bundle.sourceStageIndex
+      && current.targetStageIndex === bundle.targetStageIndex
+      ? null
+      : bundle)
+  }, [])
   const graphSelection: WorkflowGraphSelection = focus?.type === 'phase'
     ? { type: 'stage', stageId: focus.phaseId }
     : focus?.type === 'run' && selectedRun
@@ -322,6 +331,7 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
   }, [focus])
 
   const focusActivity = (nextFocus: TaskFlowGraphFocus) => {
+    setPlannedRouteBundle(null)
     scrollAfterFocus.current = nextFocus !== null
     setFocus(nextFocus)
   }
@@ -352,7 +362,7 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
     if (item.candidate_transitions[index]) focusActivity({ type: 'plannedTransition', index })
   }
 
-  return <Card>
+  return <Card data-testid={'task-flow-workflow-' + item.id}>
     <CardContent className="space-y-5 p-4 sm:p-5">
       <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
@@ -399,6 +409,9 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
               onSelectRun={selectRun}
               onSelectRunTransition={selectRunTransition}
               onSelectPlannedTransition={selectPlannedTransition}
+              onTogglePlannedRouteBundle={togglePlannedRouteBundle}
+              openPlannedRouteBundle={plannedRouteBundle}
+              plannedRouteBundlePanelId={plannedRouteBundlePanelId}
             />
           </div>
 
@@ -446,6 +459,67 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
           </section>}
         </div>
       </section>}
+
+      <section
+        id={plannedRouteBundlePanelId}
+        data-testid={plannedRouteBundle
+          ? 'workflow-graph-route-bundle-detail-' + plannedRouteBundle.sourceStageIndex + '-' + plannedRouteBundle.targetStageIndex
+          : 'task-flow-planned-route-bundle-panel'}
+        aria-label="Bisher unbesuchte Routen"
+        hidden={!plannedRouteBundle}
+        className="min-w-0 space-y-3 rounded-lg border bg-muted/20 p-3 sm:p-4"
+      >
+        {plannedRouteBundle && <>
+          <header className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h5 className="text-sm font-semibold">Bisher unbesuchte Routen</h5>
+              <p className="mt-1 break-words text-xs text-muted-foreground">
+                {phaseNames.get(item.phases[plannedRouteBundle.sourceStageIndex]?.id ?? '') ?? 'Phase'}
+                {' → '}
+                {phaseNames.get(item.phases[plannedRouteBundle.targetStageIndex]?.id ?? '') ?? 'Folgephase'}
+              </p>
+            </div>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setPlannedRouteBundle(null)}>Auswahl schließen</Button>
+          </header>
+          <p className="text-xs text-muted-foreground">Wähle eine Route, um ihre gespeicherte Definition anzusehen. Dadurch startet kein Auftrag.</p>
+          <div role="group" aria-label="Geplante Routen">
+            <ul className="space-y-2">
+              {plannedRouteBundle.transitionIndexes.map((index) => {
+                const transition = item.candidate_transitions[index]
+                if (!transition) return null
+                const sourceName = phaseNames.get(transition.from_stage_id) ?? 'Phase nicht verfügbar'
+                const targetName = phaseNames.get(transition.to_stage_id) ?? 'Folgephase nicht verfügbar'
+                const routeLabel = transition.route_label_id
+                  ? labelNames.get(transition.route_label_id) ?? 'Themenlabel nicht verfügbar'
+                  : 'Standardroute'
+                const selectionStatus = transitionSelectionStates[transition.selection_status]
+                const visibleSelectionStatus = transition.selection_status === 'possible' ? 'Bisher unbesucht' : selectionStatus
+                const accessibleLabel = 'Eingefrorene Route, ' + selectionStatus + ': ' + sourceName + ' → ' + targetName
+                  + ', ' + displayName(transition.on, outcomes) + ', ' + routeLabel
+                  + (transition.conditions.length > 0 ? ', ' + transition.conditions.length + ' Bedingungen' : '')
+
+                return <li key={index}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex h-auto min-h-12 w-full min-w-0 items-start justify-between gap-2 whitespace-normal px-3 py-2 text-left"
+                    data-testid={'workflow-graph-route-bundle-item-' + plannedRouteBundle.sourceStageIndex + '-' + plannedRouteBundle.targetStageIndex + '-' + index}
+                    aria-label={accessibleLabel}
+                    aria-pressed={focus?.type === 'plannedTransition' && focus.index === index}
+                    onClick={() => selectPlannedTransition(index)}
+                  >
+                    <span className="min-w-0 flex-1 break-words">
+                      <span className="block font-medium">{displayName(transition.on, outcomes)} · {routeLabel}</span>
+                      {transition.conditions.length > 0 && <span className="mt-1 block text-xs text-muted-foreground">{transition.conditions.map(conditionText).join(' · ')}</span>}
+                    </span>
+                    <Badge variant={transition.selection_status === 'selected' ? 'secondary' : 'outline'} className="shrink-0">{visibleSelectionStatus}</Badge>
+                  </Button>
+                </li>
+              })}
+            </ul>
+          </div>
+        </>}
+      </section>
 
       <section aria-label="Workflowphasen" className="space-y-3">
         <h5 className="text-sm font-semibold">Phasen</h5>

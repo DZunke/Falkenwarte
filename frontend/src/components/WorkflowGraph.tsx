@@ -47,6 +47,12 @@ export type WorkflowGraphSelection =
   | { type: 'plannedTransition'; transitionIndex: number }
   | null
 
+export type WorkflowGraphPlannedRouteBundle = {
+  sourceStageIndex: number
+  targetStageIndex: number
+  transitionIndexes: readonly number[]
+}
+
 export type WorkflowGraphRunActivity = {
   currentStageId: string | null
   selectedTransitions: readonly components['schemas']['TaskFlowSelectedTransition'][] | null
@@ -69,6 +75,9 @@ export type WorkflowGraphProps = {
   onSelectRun?: (run: components['schemas']['TaskFlowRun']) => void
   onSelectRunTransition?: (index: number, event: components['schemas']['TaskFlowSelectedTransition']) => void
   onSelectPlannedTransition?: (candidateIndex: number) => void
+  onTogglePlannedRouteBundle?: (bundle: WorkflowGraphPlannedRouteBundle) => void
+  openPlannedRouteBundle?: Pick<WorkflowGraphPlannedRouteBundle, 'sourceStageIndex' | 'targetStageIndex'> | null
+  plannedRouteBundlePanelId?: string
   selection?: WorkflowGraphSelection
   onSelect?: (selection: WorkflowGraphSelection) => void
   onConnectStages?: (fromStageId: string, toStageId: string) => void
@@ -187,6 +196,9 @@ type WorkflowTransitionEdgeData = {
   branchHistoryStatus?: components['schemas']['TaskFlowWorkflowInstance']['branch_history_status']
   onSelectRunTransition?: WorkflowGraphProps['onSelectRunTransition']
   onSelectPlannedTransition?: WorkflowGraphProps['onSelectPlannedTransition']
+  onTogglePlannedRouteBundle?: WorkflowGraphProps['onTogglePlannedRouteBundle']
+  openPlannedRouteBundle?: WorkflowGraphProps['openPlannedRouteBundle']
+  plannedRouteBundlePanelId?: WorkflowGraphProps['plannedRouteBundlePanelId']
   onOpenRunVisits?: (edgeIndex: number) => void
   bundleId?: string
   bundleLabel?: string
@@ -926,6 +938,54 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
   }
 
   if (data.bundleLeader && data.bundleId && data.bundleItems?.length) {
+    if (
+      data.graphKind === 'planned'
+      && data.onTogglePlannedRouteBundle
+      && data.bundleSourceIndex !== undefined
+      && data.bundleTargetIndex !== undefined
+    ) {
+      const isOpen = data.openPlannedRouteBundle?.sourceStageIndex === data.bundleSourceIndex
+        && data.openPlannedRouteBundle.targetStageIndex === data.bundleTargetIndex
+
+      return <>
+        <BaseEdge id={props.id} path={path.path} interactionWidth={0} style={{ opacity: 0, pointerEvents: 'none' }} />
+        <EdgeLabelRenderer>
+          <div
+            className="workflow-graph__edge-label nodrag nopan absolute z-10 pointer-events-auto"
+            style={{ transform: 'translate(-50%, -50%) translate(' + labelPosition.x + 'px, ' + labelPosition.y + 'px)' }}
+          >
+            <button
+              type="button"
+              data-workflow-edge-index={data.edgeIndex}
+              data-testid={'workflow-graph-route-bundle-' + data.bundleSourceIndex + '-' + data.bundleTargetIndex}
+              aria-label={data.bundleAccessibleLabel}
+              aria-expanded={isOpen}
+              aria-controls={data.plannedRouteBundlePanelId}
+              title={data.bundleAccessibleLabel}
+              disabled={data.disabled}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                data.onTogglePlannedRouteBundle?.({
+                  sourceStageIndex: data.bundleSourceIndex!,
+                  targetStageIndex: data.bundleTargetIndex!,
+                  transitionIndexes: data.bundleItems!.map((item) => item.transitionIndex),
+                })
+              }}
+              className={cn(
+                'flex min-h-9 min-w-28 items-center justify-center gap-1.5 overflow-hidden rounded-full border bg-card px-3 py-1 text-xs font-semibold text-card-foreground shadow-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                'border-dashed border-primary/60',
+                data.isReturn && 'border-dashed',
+              )}
+            >
+              <GitBranch className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="whitespace-nowrap">{data.bundleLabel}</span>
+            </button>
+          </div>
+        </EdgeLabelRenderer>
+      </>
+    }
+
     return <>
       <BaseEdge id={props.id} path={path.path} interactionWidth={0} style={{ opacity: 0, pointerEvents: 'none' }} />
       <DropdownMenu>
@@ -1081,6 +1141,9 @@ type WorkflowGraphCanvasProps = {
   onSelectRun?: WorkflowGraphProps['onSelectRun']
   onSelectRunTransition?: WorkflowGraphProps['onSelectRunTransition']
   onSelectPlannedTransition?: WorkflowGraphProps['onSelectPlannedTransition']
+  onTogglePlannedRouteBundle?: WorkflowGraphProps['onTogglePlannedRouteBundle']
+  openPlannedRouteBundle?: WorkflowGraphProps['openPlannedRouteBundle']
+  plannedRouteBundlePanelId?: WorkflowGraphProps['plannedRouteBundlePanelId']
   onConnectStages?: WorkflowGraphProps['onConnectStages']
   onReconnectTransition?: WorkflowGraphProps['onReconnectTransition']
   disabled?: boolean
@@ -1100,6 +1163,9 @@ function WorkflowGraphCanvas({
   onSelectRun,
   onSelectRunTransition,
   onSelectPlannedTransition,
+  onTogglePlannedRouteBundle,
+  openPlannedRouteBundle,
+  plannedRouteBundlePanelId,
   onConnectStages,
   onReconnectTransition,
   disabled = false,
@@ -1305,6 +1371,9 @@ function WorkflowGraphCanvas({
           branchHistoryStatus: runActivity?.branchHistoryStatus,
           onSelectRunTransition,
           onSelectPlannedTransition,
+          onTogglePlannedRouteBundle,
+          openPlannedRouteBundle,
+          plannedRouteBundlePanelId,
           onOpenRunVisits: setOpenVisitsEdgeIndex,
           bundleId: metadata?.id,
           bundleLabel,
@@ -1323,7 +1392,7 @@ function WorkflowGraphCanvas({
         selected,
       } satisfies WorkflowTransitionEdge
     })
-  }, [transitions, mode, stageIndexById, stageNodes, routeLabels, routeLabelNames, graphLayout, routeLabelLayoutKey, routeLabelPositions, controlledSelection, onReconnectTransition, onSelectRunTransition, onSelectPlannedTransition, runActivity, layout, setSelection, disabled])
+  }, [transitions, mode, stageIndexById, stageNodes, routeLabels, routeLabelNames, graphLayout, routeLabelLayoutKey, routeLabelPositions, controlledSelection, onReconnectTransition, onSelectRunTransition, onSelectPlannedTransition, onTogglePlannedRouteBundle, openPlannedRouteBundle, plannedRouteBundlePanelId, runActivity, layout, setSelection, disabled])
 
   useLayoutEffect(() => {
     if (routeLabelPositions.key === routeLabelLayoutKey || !canvasRef.current || !viewportInitialized) return
@@ -1648,6 +1717,9 @@ export function WorkflowGraph({
   onSelectRun,
   onSelectRunTransition,
   onSelectPlannedTransition,
+  onTogglePlannedRouteBundle,
+  openPlannedRouteBundle,
+  plannedRouteBundlePanelId,
   selection,
   onSelect,
   onConnectStages,
@@ -1764,6 +1836,9 @@ export function WorkflowGraph({
                     onSelectRun={onSelectRun}
                     onSelectRunTransition={onSelectRunTransition}
                     onSelectPlannedTransition={onSelectPlannedTransition}
+                    onTogglePlannedRouteBundle={onTogglePlannedRouteBundle}
+                    openPlannedRouteBundle={openPlannedRouteBundle}
+                    plannedRouteBundlePanelId={plannedRouteBundlePanelId}
                     onConnectStages={onConnectStages}
                     onReconnectTransition={onReconnectTransition}
                     disabled={disabled}
@@ -1787,6 +1862,9 @@ export function WorkflowGraph({
               onSelectRun={onSelectRun}
               onSelectRunTransition={onSelectRunTransition}
               onSelectPlannedTransition={onSelectPlannedTransition}
+              onTogglePlannedRouteBundle={onTogglePlannedRouteBundle}
+              openPlannedRouteBundle={openPlannedRouteBundle}
+              plannedRouteBundlePanelId={plannedRouteBundlePanelId}
               onConnectStages={onConnectStages}
               onReconnectTransition={onReconnectTransition}
               disabled={disabled}

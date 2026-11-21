@@ -399,7 +399,8 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     await expect(ownerPage.getByRole('tab', { name: 'Ablauf' })).toHaveAttribute('aria-selected', 'true');
     const flowPanel = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
     await expect(flowPanel.getByText(`Workflow: ${workflow.name} · Version ${workflow.definition_version}`, { exact: true })).toBeVisible();
-    const workflowGraph = flowPanel.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
+    const workflowCard = flowPanel.getByTestId(`task-flow-workflow-${instance.id}`);
+    const workflowGraph = workflowCard.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
     await expect(workflowGraph.getByTestId('workflow-graph-stage-discovery')).toContainText('Aktuell');
     await expect(workflowGraph.getByTestId('workflow-graph-stage-reporting')).toContainText('Erledigt');
     await expect(workflowGraph.getByTestId('workflow-graph-stage-research')).toContainText('Offen');
@@ -429,25 +430,32 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     const routeBundle = workflowGraph.getByTestId(`workflow-graph-route-bundle-${sourceStageIndex}-${targetStageIndex}`);
     await expect(routeBundle).toBeVisible();
     await expect(routeBundle).toContainText(/2 (weitere )?Routen/);
-    await routeBundle.click();
-    const routeBundleDetails = ownerPage.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`);
+    const routeBundleDetails = workflowCard.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`);
+    await routeBundle.focus();
+    await ownerPage.keyboard.press('Enter');
+    await expect(routeBundle).toHaveAttribute('aria-expanded', 'true');
     await expect(routeBundleDetails).toBeVisible();
+    await expect(workflowGraph.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`)).toHaveCount(0);
     await expect(routeBundleDetails).not.toContainText(labelA.name);
-    const alternativeItems = alternativeIndexes.map((index) => ownerPage.getByTestId(`workflow-graph-route-bundle-item-${sourceStageIndex}-${targetStageIndex}-${index}`));
+    const alternativeItems = alternativeIndexes.map((index) => workflowCard.getByTestId(`workflow-graph-route-bundle-item-${sourceStageIndex}-${targetStageIndex}-${index}`));
     for (const [position, alternative] of alternativeItems.entries()) {
       const label = position === 0 ? labelB : labelC;
       await expect(alternative).toBeVisible();
       await expect(alternative).toContainText(label.name);
       await expect(alternative).toContainText('Bisher unbesucht');
+      await expect(alternative).toHaveAccessibleName(/Eingefrorene Route, Möglich:/);
     }
     const instanceBeforeInspectingAlternative = await ownerApi.get(`/workflow-instances/${instance.id}`);
     expect(instanceBeforeInspectingAlternative.data.run_ids).toHaveLength(3);
-    await alternativeItems[0].click();
+    await alternativeItems[0].focus();
+    await ownerPage.keyboard.press('Enter');
     await expect(routeBundleDetails).toBeHidden();
+    await expect(routeBundle).toHaveAttribute('aria-expanded', 'false');
     const plannedRouteDetails = flowPanel.getByTestId(`task-flow-planned-transition-${alternativeIndexes[0]}`);
     await expect(plannedRouteDetails).toContainText(labelB.name);
     await expect(plannedRouteDetails).toContainText('Diese Auswahl zeigt nur die gespeicherte Definition. Sie startet keinen Auftrag.');
     await routeBundle.click();
+    await expect(routeBundle).toHaveAttribute('aria-expanded', 'true');
     await expect(routeBundleDetails).toBeVisible();
     await expect(alternativeItems[1]).toBeVisible();
     await alternativeItems[1].click();
