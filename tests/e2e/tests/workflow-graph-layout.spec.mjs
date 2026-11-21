@@ -925,6 +925,43 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
     ], `${description}: Inspector und Graphpane überdecken sich nicht`);
   };
 
+  const assertMobileGraphPanelAndInspectorStack = async (description) => {
+    let snapshot;
+    let previousGeometry = '';
+    let stableReads = 0;
+    await expect.poll(async () => {
+      snapshot = await ownerPage.evaluate(() => {
+        const graph = document.querySelector('[data-testid="workflow-editor-graph"]');
+        const graphPanel = graph?.parentElement;
+        const inspector = document.querySelector('[data-testid="workflow-transition-inspector"]');
+        const measure = (element) => {
+          if (!element) return null;
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return {
+            x: rect.left + window.scrollX,
+            y: rect.top + window.scrollY,
+            width: rect.width,
+            height: rect.height,
+            visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+          };
+        };
+        return { graph: measure(graphPanel), inspector: measure(inspector) };
+      });
+      if (!snapshot.graph || !snapshot.inspector || !snapshot.graph.visible || !snapshot.inspector.visible) return false;
+      const geometry = [snapshot.graph, snapshot.inspector]
+        .map((item) => `${item.x.toFixed(1)},${item.y.toFixed(1)},${item.width.toFixed(1)},${item.height.toFixed(1)}`)
+        .join('|');
+      stableReads = geometry === previousGeometry ? stableReads + 1 : 0;
+      previousGeometry = geometry;
+      return stableReads >= 1;
+    }, { timeout: 10_000, message: `${description}: Graphpanel und Inspector müssen synchron messbar und stabil sein.` }).toBe(true);
+    assertNoOverlap([
+      { name: 'Graphpanel', ...snapshot.graph },
+      { name: 'Übergangsinspector', ...snapshot.inspector },
+    ], `${description}: Graphpanel und Inspector überdecken sich nicht`);
+  };
+
   await ownerPage.setViewportSize({ width: 1588, height: 850 });
   await ownerPage.goto('/#/workflows');
   await expect(ownerPage.getByRole('heading', { name: 'Workflows', exact: true })).toBeVisible();
@@ -1016,14 +1053,7 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
   await expect(inspector.getByTestId('workflow-inspector-heading')).toBeFocused();
   await expect(inspector.getByTestId('workflow-inspector-heading')).toBeInViewport();
   await assertGraphGridColumns(inspector, 1, 'Mobile Navigationroute zeigt den Inspector unter der Phase-/Routenansicht.');
-  const mobileNavigationBounds = await graph.boundingBox();
-  const mobileInspectorBounds = await inspector.boundingBox();
-  expect(mobileNavigationBounds).not.toBeNull();
-  expect(mobileInspectorBounds).not.toBeNull();
-  assertNoOverlap([
-    { name: 'Phasen- und Routenansicht', ...mobileNavigationBounds },
-    { name: 'Übergangsinspector', ...mobileInspectorBounds },
-  ], 'Mobile Phasen-/Routenansicht und Inspector überdecken sich nicht.');
+  await assertMobileGraphPanelAndInspectorStack('Mobile Phasen-/Routenansicht und Inspector');
   await inspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
   await expect(inspector).toHaveCount(0);
   await expect(navigationTab).toHaveAttribute('aria-pressed', 'true');
