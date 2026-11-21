@@ -73,17 +73,12 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
     rankByStage.set(route.transition.to_stage_id, Math.max(rankByStage.get(route.transition.to_stage_id) ?? 0, sourceRank + 1))
   }
   const rankCount = Math.max(0, ...rankByStage.values()) + 1
-  const maximumNodesPerRank = Math.max(1, ...stageIds.reduce((counts, id) => {
-    const rank = rankByStage.get(id) ?? 0
-    counts.set(rank, (counts.get(rank) ?? 0) + 1)
-    return counts
-  }, new Map<number, number>()).values())
   const horizontalRankGap = Math.max(120, Math.min(144, containerWidth / Math.max(1, rankCount * 1.8)))
   const horizontalWidthBudget = Math.max(1, containerWidth - 64)
   const verticalLaneGap = 12
   const verticalWidthBudget = Math.max(1, containerWidth - 64)
   const horizontalNodeWidth = Math.max(136, Math.min(244, (horizontalWidthBudget - (rankCount - 1) * horizontalRankGap) / rankCount))
-  const verticalNodeWidth = Math.max(120, Math.min(300, (verticalWidthBudget - (maximumNodesPerRank - 1) * verticalLaneGap) / maximumNodesPerRank))
+  const verticalNodeWidth = Math.max(180, Math.min(260, verticalWidthBudget))
   const branchWidth = horizontal ? horizontalNodeWidth : verticalNodeWidth
   const branchLabelMaxWidth = horizontal ? Math.max(112, horizontalRankGap - 8) : Math.max(112, Math.min(220, containerWidth - 48))
 
@@ -93,10 +88,16 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
   const rankSep = horizontal ? horizontalRankGap : 72
   graph.setGraph({ rankdir: horizontal ? 'LR' : 'TB', ranksep: rankSep, nodesep: horizontal ? 56 : verticalLaneGap, edgesep: 32, marginx: 32, marginy: 52 })
   stageIds.forEach(id => graph.setNode(id, { width: branchWidth, height }))
+  if (!horizontal) {
+    // Keep mobile reading order vertical even when several branches share a rank.
+    for (let i = 0; i < stageIds.length - 1; i++) {
+      graph.setEdge(stageIds[i], stageIds[i + 1], { weight: 100 }, `sequence-${i}`)
+    }
+  }
   for (const [i, route] of edges) {
     if (route.kind === 'return') continue
     const transition = transitions[i]
-    graph.setEdge(transition.from_stage_id, transition.to_stage_id, {}, String(i))
+    graph.setEdge(transition.from_stage_id, transition.to_stage_id, { weight: 1 }, String(i))
   }
   layout(graph)
   stageIds.forEach(id => {
@@ -104,6 +105,7 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
     nodes.set(id, { x: box.x! - branchWidth / 2, y: box.y! - height / 2, width: branchWidth, height })
   })
   for (const link of graph.edges()) {
+    if (!link.name || !/^\d+$/.test(link.name)) continue
     const points = graph.edge(link).points
     if (points) edges.get(Number(link.name))!.waypoints = points.slice(1, -1)
   }

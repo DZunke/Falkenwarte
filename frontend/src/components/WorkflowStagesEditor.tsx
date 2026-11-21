@@ -3,6 +3,7 @@ import type { RefObject } from 'react'
 import { ArrowDown, ArrowUp, GitBranch, MoreHorizontal, Plus, Trash2, X } from 'lucide-react'
 import type { components } from '@/generated/api'
 import { WorkflowGraph, type WorkflowGraphSelection } from '@/components/WorkflowGraph'
+import { hasDenseWorkflowRoutes, WorkflowGraphMobileNavigation } from '@/components/WorkflowGraphMobileNavigation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -457,6 +458,7 @@ export function WorkflowStagesEditor({
           <WorkflowGraph
             label="Workflowablauf"
             className="h-[min(80vh,52rem)] min-h-[24rem] w-full sm:h-[min(58vh,38rem)]"
+            mobileNavigation={hasDenseWorkflowRoutes(transitions) ? (context) => <WorkflowGraphMobileNavigation {...context} /> : undefined}
             stages={stages}
             transitions={transitions}
             profiles={profiles}

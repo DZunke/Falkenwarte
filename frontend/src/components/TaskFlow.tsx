@@ -5,6 +5,7 @@ import type { components } from '@/generated/api'
 import { api, request, type Task, type TaskStatus } from '@/lib/api'
 import { fetchAllPages } from '@/lib/queries'
 import { WorkflowGraph, type WorkflowGraphSelection } from '@/components/WorkflowGraph'
+import { hasDenseWorkflowRoutes, WorkflowGraphMobileNavigation } from '@/components/WorkflowGraphMobileNavigation'
 import type { WorkflowBoardColumnOption, WorkflowStageEditorProfile } from '@/components/WorkflowStagesEditor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,7 @@ type TaskFlowGraphFocus =
   | { type: 'phase'; phaseId: string }
   | { type: 'run'; runId: string }
   | { type: 'transition'; index: number; runId: string; reportId: string | null }
+  | { type: 'plannedTransition'; index: number }
   | null
 export type TaskFlowPage = components['schemas']['TaskFlowPage']
 
@@ -282,12 +284,13 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
   const unassignedRuns = item.runs.filter((run) => !knownPhaseIds.has(run.stage))
   const selectedTransitions = item.selected_transitions ?? []
   const selectedRunTransition = focus?.type === 'transition' ? selectedTransitions[focus.index] : undefined
+  const selectedPlannedTransition = focus?.type === 'plannedTransition' ? item.candidate_transitions[focus.index] : undefined
   const selectedRunId = focus?.type === 'run' ? focus.runId : focus?.type === 'transition' ? focus.runId : null
   const selectedRun = selectedRunId ? item.runs.find((run) => run.id === selectedRunId) : undefined
   const selectedRunOrdinal = selectedRun ? (runsByStage.get(selectedRun.stage) ?? []).findIndex((run) => run.id === selectedRun.id) + 1 : 1
   const selectedPhaseId = focus?.type === 'phase'
     ? focus.phaseId
-    : selectedRun?.stage ?? selectedRunTransition?.from_stage_id ?? null
+    : selectedRun?.stage ?? selectedRunTransition?.from_stage_id ?? selectedPlannedTransition?.from_stage_id ?? null
   const selectedPhase = selectedPhaseId ? item.phases.find((phase) => phase.id === selectedPhaseId) : undefined
   const phaseRuns = selectedPhase ? runsByStage.get(selectedPhase.id) ?? [] : []
   const selectedReportId = focus?.type === 'transition' ? focus.reportId : null
@@ -297,6 +300,8 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
       ? { type: 'stage', stageId: selectedRun.stage }
       : focus?.type === 'transition'
         ? { type: 'transition', transitionIndex: focus.index }
+        : focus?.type === 'plannedTransition'
+          ? { type: 'plannedTransition', transitionIndex: focus.index }
         : null
   const graphRouteLabels = new Map<string, string>()
   for (const transition of item.candidate_transitions) {
@@ -343,6 +348,9 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
 
   const selectRun = (run: TaskFlowRun) => focusActivity({ type: 'run', runId: run.id })
   const selectRunTransition = (index: number, transition: TaskFlowSelectedTransition) => focusActivity({ type: 'transition', index, runId: transition.source_run_id, reportId: transition.report_id })
+  const selectPlannedTransition = (index: number) => {
+    if (item.candidate_transitions[index]) focusActivity({ type: 'plannedTransition', index })
+  }
 
   return <Card>
     <CardContent className="space-y-5 p-4 sm:p-5">
@@ -371,6 +379,7 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
               mode="run"
               label={`Ablaufdiagramm · ${item.workflow_name || `Version ${item.definition_version}`}`}
               className="h-[26rem] sm:h-[min(58vh,36rem)]"
+              mobileNavigation={hasDenseWorkflowRoutes([...item.candidate_transitions, ...(item.selected_transitions ?? [])]) ? (context) => <WorkflowGraphMobileNavigation {...context} /> : undefined}
               selectedRunId={selectedRunId}
               routeLabelNames={labelNames}
               stages={item.phases}
@@ -389,13 +398,16 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
               }}
               onSelectRun={selectRun}
               onSelectRunTransition={selectRunTransition}
+              onSelectPlannedTransition={selectPlannedTransition}
             />
           </div>
 
           {focus && <section ref={activityDetailsRef} data-testid="task-flow-activity-details" className="min-w-0 scroll-mt-4 space-y-3 rounded-lg border bg-card p-3 text-card-foreground">
             <header className="flex min-w-0 flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
-                <h6 tabIndex={-1} data-testid="task-flow-activity-details-heading" className="break-words text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">{selectedRunTransition
+                <h6 tabIndex={-1} data-testid="task-flow-activity-details-heading" className="break-words text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">{selectedPlannedTransition
+                  ? `${phaseNames.get(selectedPlannedTransition.from_stage_id) ?? 'Phase'} → ${phaseNames.get(selectedPlannedTransition.to_stage_id) ?? 'Folgephase'}`
+                  : selectedRunTransition
                   ? `${phaseNames.get(selectedRunTransition.from_stage_id) ?? 'Vorherige Phase'} → ${phaseNames.get(selectedRunTransition.to_stage_id) ?? 'Folgephase'}`
                   : selectedRun
                     ? `Lauf ${selectedRunOrdinal} · ${phaseNames.get(selectedRun.stage) ?? 'Phase nicht verfügbar'}`
@@ -412,6 +424,17 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
               {selectedRunTransition.report_id && !selectedRun?.reports.some((report) => report.id === selectedRunTransition.report_id) && <p role="status" className="mt-2 text-xs text-muted-foreground">Die zugeordnete Agentenmeldung ist in diesem Lauf nicht enthalten.</p>}
             </div>}
 
+            {selectedPlannedTransition && <div data-testid={`task-flow-planned-transition-${focus?.type === 'plannedTransition' ? focus.index : -1}`} className="rounded-md bg-muted/40 p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2"><Badge variant={selectedPlannedTransition.selection_status === 'selected' ? 'secondary' : 'outline'}>{transitionSelectionStates[selectedPlannedTransition.selection_status]}</Badge><span className="text-xs text-muted-foreground">Mögliche Route aus Version {item.definition_version}</span></div>
+              <p className="mt-2">Ausgewähltes Ergebnis: {displayName(selectedPlannedTransition.on, outcomes)}</p>
+              {selectedPlannedTransition.route_label_id && <p className="mt-1">Themenlabel: {labelNames.get(selectedPlannedTransition.route_label_id) ?? selectedPlannedTransition.route_label_id}</p>}
+              {selectedPlannedTransition.conditions.length > 0 && <div className="mt-2 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Zusätzliche Bedingungen</p>
+                <ul className="list-disc space-y-1 pl-5 text-sm">{selectedPlannedTransition.conditions.map((condition, index) => <li key={`${index}-${condition.type}`}>{conditionText(condition)}</li>)}</ul>
+              </div>}
+              <p className="mt-2 text-xs text-muted-foreground">Diese Auswahl zeigt nur die gespeicherte Definition. Sie startet keinen Auftrag.</p>
+            </div>}
+
             {selectedPhase && phaseRuns.length > 0 && !selectedRun && <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">Läufe dieser Phase</p>
               <ul className="space-y-1.5">{phaseRuns.map((run, index) => <li key={run.id}><Button type="button" variant="outline" size="sm" className="h-auto w-full justify-between gap-3 py-2 text-left" data-testid={`task-flow-run-select-${run.id}`} onClick={() => selectRun(run)}><span className="min-w-0 truncate">Lauf {index + 1} · {displayName(run.state, runStates)}</span><span className="shrink-0 text-xs text-muted-foreground">{dateTime(run.created_at) ?? 'Zeitpunkt nicht überliefert'}</span></Button></li>)}</ul>
@@ -419,7 +442,7 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
 
             {selectedPhase && phaseRuns.length === 0 && <p className="text-sm text-muted-foreground">Für diese Phase ist noch kein Lauf gespeichert.</p>}
             {selectedRun && <RunDetails run={selectedRun} ordinal={selectedRunOrdinal} profileNames={profileNames} reports={reports} onOpenDetails={onOpenDetails} expanded selectedReportId={selectedReportId} />}
-            {!selectedPhase && !selectedRunTransition && <p className="text-sm text-muted-foreground">Die ausgewählte Phase ist in der gespeicherten Workflowversion nicht enthalten.</p>}
+            {!selectedPhase && !selectedRunTransition && !selectedPlannedTransition && <p className="text-sm text-muted-foreground">Die ausgewählte Phase ist in der gespeicherten Workflowversion nicht enthalten.</p>}
           </section>}
         </div>
       </section>}
