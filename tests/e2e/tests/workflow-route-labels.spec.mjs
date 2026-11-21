@@ -446,6 +446,57 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     await expect(selectedHandoff).toContainText(displayedDateTime(discoveryResult.report.received_at));
     await testInfo.attach('ticket-flow-selected-route-handoff', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
 
+    await activityDetails.getByRole('button', { name: 'Details schließen', exact: true }).click();
+    await expect(activityDetails).toHaveCount(0);
+    await ownerPage.setViewportSize({ width: 390, height: 844 });
+    const mobileNavigationTab = workflowGraph.getByTestId('workflow-graph-mobile-view-navigation');
+    const mobileDiagramTab = workflowGraph.getByTestId('workflow-graph-mobile-view-graph');
+    const mobileNavigation = workflowGraph.getByTestId('workflow-graph-mobile-navigation');
+    await expect(mobileNavigationTab).toBeVisible();
+    await expect(mobileNavigationTab).toHaveText('Phasen & Routen');
+    await expect(mobileNavigationTab).toHaveAttribute('aria-pressed', 'true');
+    await expect(mobileDiagramTab).toHaveAttribute('aria-pressed', 'false');
+    await expect(mobileNavigation).toBeVisible();
+
+    const mobileAlternativeB = mobileNavigation.getByTestId(`workflow-mobile-planned-route-${alternativeIndexes[0]}`);
+    await expect(mobileAlternativeB).toBeVisible();
+    await expect(mobileAlternativeB).toContainText(labelB.name);
+    await expect(mobileAlternativeB).toContainText('Möglich');
+    const runIdsBeforeMobileAlternative = (await ownerApi.get(`/workflow-instances/${instance.id}`)).data.run_ids;
+    expect(runIdsBeforeMobileAlternative).toHaveLength(3);
+    await mobileAlternativeB.click();
+    const mobileActivityDetails = flowPanel.getByTestId('task-flow-activity-details');
+    await expect(mobileActivityDetails).toBeVisible();
+    const mobilePlannedRouteDetails = mobileActivityDetails.getByTestId(`task-flow-planned-transition-${alternativeIndexes[0]}`);
+    await expect(mobilePlannedRouteDetails).toContainText(labelB.name);
+    await expect(mobilePlannedRouteDetails).toContainText('Mögliche Route aus Version');
+    await expect(mobilePlannedRouteDetails).toContainText('Diese Auswahl zeigt nur die gespeicherte Definition. Sie startet keinen Auftrag.');
+    await expect(mobileActivityDetails.getByTestId(`task-flow-report-${reportId}`)).toHaveCount(0);
+    expect((await ownerApi.get(`/workflow-instances/${instance.id}`)).data.run_ids).toEqual(runIdsBeforeMobileAlternative);
+    expect((await taskFlow(ownerApi, task.id, instance.id)).selected_transitions).toEqual(finalFlow.selected_transitions);
+    await mobileActivityDetails.getByRole('button', { name: 'Details schließen', exact: true }).click();
+    await expect(mobileActivityDetails).toHaveCount(0);
+
+    const actualTransitionIndex = finalFlow.selected_transitions.findIndex((transition) => transition.report_id === reportId);
+    expect(actualTransitionIndex).toBeGreaterThanOrEqual(0);
+    const mobileActualRoute = mobileNavigation.getByTestId(`workflow-mobile-transition-visit-${actualTransitionIndex}`);
+    await expect(mobileActualRoute).toBeVisible();
+    await expect(mobileActualRoute).toHaveAccessibleName(/Übergabe ansehen: Reporting nach Discovery, Änderungen nötig/);
+    const mobileActualRouteRow = mobileActualRoute.locator('xpath=../..');
+    await expect(mobileActualRouteRow).toContainText(labelA.name);
+    await mobileActualRoute.click();
+    await expect(mobileActivityDetails).toBeVisible();
+    await expect(mobileActivityDetails).toContainText(`Themenlabel: ${labelA.name}`);
+    const mobileSelectedReport = mobileActivityDetails.getByTestId(`task-flow-report-${reportId}`);
+    await expect(mobileSelectedReport).toContainText(validResult.report.summary);
+    await expect(mobileSelectedReport).toContainText(labelA.name);
+    const mobileSelectedHandoff = mobileActivityDetails.getByTestId(`task-flow-run-details-${reportingRunId}`).locator('details').filter({ hasText: 'Übergabeprotokoll ansehen' });
+    await expect(mobileSelectedHandoff).toHaveCount(1);
+    await expect(mobileSelectedHandoff).toHaveAttribute('open', '');
+    await expect(mobileSelectedHandoff).toContainText(discoveryResult.report.summary);
+    await expect(mobileSelectedHandoff).toContainText(`Herkunft: Versuch ${reportingFlowRun.handoff.source_attempt_no} · Ticketrevision ${reportingFlowRun.handoff.task_revision}`);
+    await testInfo.attach('ticket-flow-mobile-routes', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
+
     const journal = await qaMocks.t3Journal();
     expect(journal.unexpected).toEqual([]);
     expect(journal.accepted_launches).toHaveLength(3);
@@ -455,7 +506,7 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     expect(reportingLaunch?.payload.message).toContain(`${labelC.name} (route_label_id: ${labelC.id})`);
     recordEvidence(
       'Die Reportingrolle wählt eine eingefrorene Themenroute zurück zur vorherigen Discoveryphase.',
-      `Run ${reportingRunId} bot drei benannte Topicrouten und den Standardweg im Dispatch an. Eine fremde Route-ID wurde mit 409 ohne Report, Evidenz, Taskrevision oder Workflowänderung abgewiesen. Die gültige Route ${labelA.name} startete Discovery erneut, setzte das Ticket zurück auf ready und übergab Report, Quellrevision, Nachweis-ID und offene Frage unverändert. Im Ticketablauf blieben die Alternativen ${labelB.name} und ${labelC.name} als bedienbare Bündeloptionen sichtbar; ihre Auswahl änderte weder den Lauf noch die Historie.`,
+      `Run ${reportingRunId} bot drei benannte Topicrouten und den Standardweg im Dispatch an. Eine fremde Route-ID wurde mit 409 ohne Report, Evidenz, Taskrevision oder Workflowänderung abgewiesen. Die gültige Route ${labelA.name} startete Discovery erneut, setzte das Ticket zurück auf ready und übergab Report, Quellrevision, Nachweis-ID und offene Frage unverändert. Im Ticketablauf blieben die Alternativen ${labelB.name} und ${labelC.name} als bedienbare Bündeloptionen sichtbar; ihre Auswahl änderte weder den Lauf noch die Historie. Auf Mobilgeräten zeigte die neue Phasen- und Routenliste die unbesuchte Route ${labelB.name} als reine Versionsinformation und öffnete für die tatsächlich zurückgelegte Route ${labelA.name} den verknüpften Bericht samt Übergabeprotokoll.`,
       { t3: journal },
     );
   } finally {
