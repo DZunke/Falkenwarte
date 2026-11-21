@@ -411,6 +411,7 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     await alternativeItems[1].click();
     await expect(routeBundleDetails).toContainText(labelC.name);
     await expect(selectedPlannedRoute).toContainText(labelC.name);
+    await testInfo.attach('ticket-flow-dense-route-options', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
     expect((await ownerApi.get(`/workflow-instances/${instance.id}`)).data.run_ids).toHaveLength(3);
     expect((await taskFlow(ownerApi, task.id, instance.id)).selected_transitions).toEqual(finalFlow.selected_transitions);
     await routeBundle.click();

@@ -707,25 +707,251 @@ test('workflow graph stays selectable, readable and within bounds across desktop
   const graphCreatedTransitionIndex = savedGraphWorkflow.data.transitions.findIndex((transition) => transition.from_stage_id === 'research'
     && transition.to_stage_id === 'publish'
     && transition.on === 'needs_changes');
-  expect(graphCreatedTransitionIndex).toBe(noLabelWorkflow.transitions.length);
+  const validGraphCreatedTransitionIndex = savedGraphWorkflow.data.transitions.findIndex((transition) => transition.from_stage_id === 'review'
+    && transition.to_stage_id === 'research'
+    && transition.on === 'blocked');
+  expect(graphCreatedTransitionIndex).toBe(-1);
+  expect(validGraphCreatedTransitionIndex).toBe(noLabelWorkflow.transitions.length);
 
   const reopenedGraph = await openWorkflow(ownerPage, noLabelProject, savedGraphWorkflow.data);
-  const reopenedEdge = reopenedGraph.graph.getByTestId(`workflow-graph-transition-${graphCreatedTransitionIndex}`);
-  await expect(reopenedEdge).toHaveAccessibleName(edgeName(stageNames[0], stageNames[2], 'Änderungen nötig', 'Standardroute'));
+  const reopenedEdge = reopenedGraph.graph.getByTestId(`workflow-graph-transition-${validGraphCreatedTransitionIndex}`);
+  await expect(reopenedEdge).toHaveAccessibleName(edgeName(stageNames[1], stageNames[0], 'Blockiert', 'Standardroute'));
   await reopenedEdge.click();
   const reopenedInspector = ownerPage.getByTestId('workflow-transition-inspector');
   await expect(reopenedInspector).toBeVisible();
   await assertGraphContentsFitPane(reopenedGraph.graph, 3, 4, 'Gespeicherte Canvas-Verbindung nach erneutem Öffnen');
-  await expect(reopenedInspector.getByLabel('Von Phase')).toContainText(stageNames[0]);
-  await expect(reopenedInspector.getByLabel('Ergebnis')).toContainText('Änderungen nötig');
-  await expect(reopenedInspector.getByLabel('Zu Phase')).toContainText(stageNames[2]);
+  await expect(reopenedInspector.getByLabel('Von Phase')).toContainText(stageNames[1]);
+  await expect(reopenedInspector.getByLabel('Ergebnis')).toContainText('Blockiert');
+  await expect(reopenedInspector.getByLabel('Zu Phase')).toContainText(stageNames[0]);
   await expect(reopenedInspector.getByLabel('Label für diesen Übergang')).toHaveCount(0);
 
   const t3 = await qaMocks.t3Journal();
   expect(t3.accepted_launches).toHaveLength(0);
   recordEvidence(
     'Der Workflowgraph bleibt mit langen Phasen- und Labelnamen auf Desktop, mittlerer Breite und Mobilgeräten bedienbar.',
-    `Ein versionierter Drei-Phasen-Workflow mit drei verschiedenen Agentrollen und gelabelten Routen wurde aus der öffentlichen API im Graph geöffnet. Knoten und Rückkanten ließen sich mit Maus und Tastatur auswählen; Phasen- und Übergangscontrols hatten messbare, nicht überlappende DOM-Hit-Areas. Die Checks liefen bei 1588×850, 1024×850 und 390×844 im hellen und dunklen Theme. In einem zweiten Projekt ohne aktive Themenlabels wurde eine neue Route per Tastatur zwischen Recherche und Veröffentlichung angelegt, korrekt ausgewählt, gespeichert und nach erneutem Öffnen wiedergefunden; die bisherigen Routen blieben erhalten. Der T3-Mock hat keinen Lauf angenommen.`,
+    `Ein versionierter Drei-Phasen-Workflow mit drei verschiedenen Agentrollen und gelabelten Routen wurde aus der öffentlichen API im Graph geöffnet. Knoten und Rückkanten ließen sich mit Maus und Tastatur auswählen; Phasen- und Übergangscontrols hatten messbare, nicht überlappende DOM-Hit-Areas. Die Checks liefen bei 1588×850, 1024×850 und 390×844 im hellen und dunklen Theme. In einem zweiten Projekt ohne aktive Themenlabels lehnte die API eine unmögliche needs_changes-Route zu einer Phase mit run_succeeded-Startregel mit HTTP 422 ab; die konkrete Bedingung erschien im Formular. Nach Entfernen dieses ungültigen Weges wurde per Tastatur eine gültige Blockiert-Route zurück zur Phase ohne Startregel angelegt, gespeichert und nach erneutem Öffnen wiedergefunden; die bisherigen Routen blieben erhalten. Der T3-Mock hat keinen Lauf angenommen.`,
     { t3 },
+  );
+});
+
+test('workflow graph keeps ten dense routes selectable through pointer and keyboard', async ({ ownerApi, ownerPage }) => {
+  test.setTimeout(180_000);
+  const suffix = randomUUID().slice(0, 8);
+  const project = await ownerApi.createProject({ name: `Dense Graph QA ${suffix}` });
+  await ownerApi.ensureDefaultBoard(project.id);
+  const alternativeLabel = await ownerApi.createLabel(project.id, {
+    name: `Alternative ${suffix}`,
+    key: `dense-alt-${suffix}`,
+    color: '#5277B8',
+    kind: 'topic',
+  });
+  const riskLabel = await ownerApi.createLabel(project.id, {
+    name: `Risiko ${suffix}`,
+    key: `dense-risk-${suffix}`,
+    color: '#B85A52',
+    kind: 'topic',
+  });
+  const stages = [
+    { id: 'phase-1', kind: 'agent_run', name: 'Start', agent_profile_id: null, instructions: 'QA-Startphase.', entry_conditions: [], run_completion_policy: runPolicy },
+    { id: 'phase-2', kind: 'agent_run', name: 'Bearbeitung', agent_profile_id: null, instructions: 'QA-Bearbeitungsphase.', entry_conditions: [], run_completion_policy: runPolicy },
+    { id: 'phase-3', kind: 'agent_run', name: 'Prüfung', agent_profile_id: null, instructions: 'QA-Prüfphase.', entry_conditions: [], run_completion_policy: runPolicy },
+    { id: 'phase-4', kind: 'review', name: 'Abschluss', agent_profile_id: null, instructions: 'QA-Abschlussphase.', entry_conditions: [], run_completion_policy: runPolicy },
+  ];
+  const transitions = [
+    { from_stage_id: 'phase-1', to_stage_id: 'phase-2', on: 'accepted', conditions: [] },
+    { from_stage_id: 'phase-1', to_stage_id: 'phase-3', on: 'accepted', conditions: [], route_label_id: alternativeLabel.id },
+    { from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'accepted', conditions: [] },
+    { from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'accepted', conditions: [], route_label_id: riskLabel.id },
+    { from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'blocked', conditions: [] },
+    { from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'failed', conditions: [] },
+    { from_stage_id: 'phase-2', to_stage_id: 'phase-3', on: 'needs_changes', conditions: [] },
+    { from_stage_id: 'phase-3', to_stage_id: 'phase-4', on: 'accepted', conditions: [] },
+    { from_stage_id: 'phase-3', to_stage_id: 'phase-2', on: 'needs_changes', conditions: [] },
+    { from_stage_id: 'phase-4', to_stage_id: 'phase-2', on: 'needs_changes', conditions: [] },
+  ];
+  const created = await ownerApi.post('/workflows', {
+    project_id: project.id,
+    name: `Dense route graph ${suffix}`,
+    preset_id: 'manual',
+    stages,
+    transitions,
+    limits: { max_repair_rounds: 1, max_depth: 6, max_parallel_runs: 1, max_total_seconds: 3600 },
+    enabled: true,
+  });
+  expect(created.response.status(), JSON.stringify(created.data)).toBe(201);
+  const workflow = created.data.workflow ?? created.data;
+  const storedWorkflow = await ownerApi.get(`/workflows/${workflow.id}`);
+  expect(storedWorkflow.response.status(), JSON.stringify(storedWorkflow.data)).toBe(200);
+  expect(storedWorkflow.data.stages.map((stage) => stage.id)).toEqual(stages.map((stage) => stage.id));
+  expect(storedWorkflow.data.transitions).toHaveLength(10);
+  expect(storedWorkflow.data.transitions.slice(2, 6)).toEqual([
+    expect.objectContaining({ from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'accepted', route_label_id: null }),
+    expect.objectContaining({ from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'accepted', route_label_id: riskLabel.id }),
+    expect.objectContaining({ from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'blocked', route_label_id: null }),
+    expect.objectContaining({ from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'failed', route_label_id: null }),
+  ]);
+
+  const routes = [
+    { index: 0, from: 'Start', to: 'Bearbeitung', outcome: 'Angenommen', label: 'Standardroute' },
+    { index: 1, from: 'Start', to: 'Prüfung', outcome: 'Angenommen', label: alternativeLabel.name },
+    { index: 2, from: 'Bearbeitung', to: 'Abschluss', outcome: 'Angenommen', label: 'Standardroute', bundle: true },
+    { index: 3, from: 'Bearbeitung', to: 'Abschluss', outcome: 'Angenommen', label: riskLabel.name, bundle: true },
+    { index: 4, from: 'Bearbeitung', to: 'Abschluss', outcome: 'Blockiert', label: 'Standardroute', bundle: true },
+    { index: 5, from: 'Bearbeitung', to: 'Abschluss', outcome: 'Fehlgeschlagen', label: 'Standardroute', bundle: true },
+    { index: 6, from: 'Bearbeitung', to: 'Prüfung', outcome: 'Änderungen nötig', label: 'Standardroute' },
+    { index: 7, from: 'Prüfung', to: 'Abschluss', outcome: 'Angenommen', label: 'Standardroute' },
+    { index: 8, from: 'Prüfung', to: 'Bearbeitung', outcome: 'Änderungen nötig', label: 'Standardroute', returnRoute: true },
+    { index: 9, from: 'Abschluss', to: 'Bearbeitung', outcome: 'Änderungen nötig', label: 'Standardroute', returnRoute: true },
+  ];
+  const bundleTestId = 'workflow-graph-route-bundle-1-3';
+  const bundle = ownerPage.getByTestId(bundleTestId);
+  const inspector = ownerPage.getByTestId('workflow-transition-inspector');
+
+  const assertDenseGraphFitsPane = async (graph, description) => {
+    const pane = graph.getByTestId('workflow-editor-graph-pane');
+    let snapshot;
+    let previousGeometry = '';
+    let stableReads = 0;
+    await expect.poll(async () => {
+      snapshot = await pane.evaluate((element) => {
+        const paneBounds = element.getBoundingClientRect();
+        const measure = (child) => {
+          const bounds = child.getBoundingClientRect();
+          const x = bounds.left - paneBounds.left;
+          const y = bounds.top - paneBounds.top;
+          return {
+            name: child.getAttribute('aria-label') ?? child.getAttribute('data-testid') ?? 'Graph control',
+            x,
+            y,
+            width: bounds.width,
+            height: bounds.height,
+            withinPane: x >= -2 && y >= -2 && bounds.right - paneBounds.left <= paneBounds.width + 2 && bounds.bottom - paneBounds.top <= paneBounds.height + 2,
+          };
+        };
+        const visible = (child) => {
+          const style = getComputedStyle(child);
+          const bounds = child.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0;
+        };
+        const nodes = [...element.querySelectorAll('[data-testid^="workflow-graph-stage-"]')].filter(visible).map(measure);
+        const routeSelector = '.workflow-graph__edge-label [data-testid^="workflow-graph-transition-"], .workflow-graph__edge-label [data-testid^="workflow-graph-route-bundle-"]';
+        const routeControls = [...element.querySelectorAll(routeSelector)].filter(visible).map(measure);
+        return { pane: { width: paneBounds.width, height: paneBounds.height }, nodes, routeControls };
+      });
+      const geometry = [...snapshot.nodes, ...snapshot.routeControls]
+        .map((item) => `${item.name}:${item.x.toFixed(1)},${item.y.toFixed(1)},${item.width.toFixed(1)},${item.height.toFixed(1)}`)
+        .join('|');
+      stableReads = snapshot.nodes.length === 4 && snapshot.routeControls.length === 7 && geometry === previousGeometry ? stableReads + 1 : 0;
+      previousGeometry = geometry;
+      return snapshot.pane.width > 0 && snapshot.pane.height > 0
+        && snapshot.nodes.length === 4
+        && snapshot.routeControls.length === 7
+        && [...snapshot.nodes, ...snapshot.routeControls].every((item) => item.withinPane)
+        && stableReads >= 1;
+    }, { timeout: 10_000, message: `${description}: vier Phasen und sieben sichtbare Routecontrols müssen stabil in der Graphpane liegen.` }).toBe(true);
+
+    expect(snapshot.nodes).toHaveLength(4);
+    expect(snapshot.routeControls).toHaveLength(7);
+    expect([...snapshot.nodes, ...snapshot.routeControls].every((item) => item.withinPane), `${description}: alle Controls liegen vollständig in der Graphpane.`).toBe(true);
+    assertNoOverlap([...snapshot.nodes, ...snapshot.routeControls], `${description}: Phasen, direkte Routen und Bündelwahl überdecken sich nicht`);
+  };
+
+  const assertSelectedRoute = async (route, viewport, description) => {
+    await expect(inspector).toBeVisible();
+    await expect(inspector.getByLabel('Von Phase')).toContainText(route.from);
+    await expect(inspector.getByLabel('Ergebnis')).toContainText(route.outcome);
+    await expect(inspector.getByLabel('Zu Phase')).toContainText(route.to);
+    await expect(inspector.getByLabel('Label für diesen Übergang')).toContainText(route.label);
+    if (viewport.width >= 1536) {
+      await assertGraphGridColumns(inspector, 2, `${description}: Desktop-Canvas und Inspector bleiben nebeneinander.`);
+      await assertFieldsFit(inspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, description);
+    } else {
+      const heading = inspector.getByTestId('workflow-inspector-heading');
+      await expect(heading).toBeFocused();
+      await expect(heading).toBeInViewport();
+      await assertGraphGridColumns(inspector, 1, `${description}: Mobil stehen Graph und Inspector untereinander.`);
+    }
+    const paneBounds = await ownerPage.getByTestId('workflow-editor-graph-pane').boundingBox();
+    const inspectorBounds = await inspector.boundingBox();
+    expect(paneBounds).not.toBeNull();
+    expect(inspectorBounds).not.toBeNull();
+    assertNoOverlap([
+      { name: 'Graphpane', ...paneBounds },
+      { name: 'Übergangsinspector', ...inspectorBounds },
+    ], `${description}: Inspector und Graphpane überdecken sich nicht`);
+  };
+
+  await ownerPage.setViewportSize({ width: 1588, height: 850 });
+  await ownerPage.goto('/#/workflows');
+  await expect(ownerPage.getByRole('heading', { name: 'Workflows', exact: true })).toBeVisible();
+  const { editor, graph } = await openWorkflow(ownerPage, project, workflow);
+  await expect(graph.locator('[data-testid^="workflow-graph-stage-"]')).toHaveCount(4);
+  await expect(bundle).toHaveRole('button');
+  await expect(bundle).toBeVisible();
+  await expect(bundle).toHaveAccessibleName('4 Ergebnisrouten zwischen Bearbeitung und Abschluss anzeigen');
+  await expect(bundle).toContainText('4 Routen');
+  await expect(graph.locator('.workflow-graph__edge-label [data-testid^="workflow-graph-transition-"]:visible')).toHaveCount(6);
+  await assertDenseGraphFitsPane(graph, 'Dense Graph Desktop Ausgangsansicht');
+
+  for (const route of routes) {
+    if (route.bundle) {
+      await bundle.click();
+      await expect(ownerPage.locator('[data-testid^="workflow-graph-route-bundle-item-1-3-"]')).toHaveCount(4);
+      const option = ownerPage.getByTestId(`workflow-graph-route-bundle-item-1-3-${route.index}`);
+      await expect(option).toBeVisible();
+      await expect(option).toHaveAccessibleName(new RegExp(`${route.from} → ${route.to}.*${route.outcome}.*${route.label}`));
+      await option.click();
+    } else {
+      const edge = graph.getByTestId(`workflow-graph-transition-${route.index}`);
+      await expect(edge).toHaveRole('button');
+      await expect(edge).toHaveAccessibleName(edgeName(route.from, route.to, route.outcome, route.label, route.returnRoute));
+      const hitArea = await edge.boundingBox();
+      expect(hitArea, `Route ${route.index} muss per Pointer bedienbar sein.`).not.toBeNull();
+      expect(hitArea.width).toBeGreaterThan(0);
+      expect(hitArea.height).toBeGreaterThan(0);
+      await edge.click();
+    }
+    await assertSelectedRoute(route, { width: 1588, height: 850 }, `Pointerroute ${route.index}`);
+    await assertDenseGraphFitsPane(graph, `Dense Graph Desktop nach Route ${route.index}`);
+  }
+
+  await ownerPage.setViewportSize({ width: 390, height: 844 });
+  await expect(editor).toBeVisible();
+  await assertPageFits(ownerPage, { width: 390, height: 844 }, 'Dense Graph Mobile');
+  await assertDenseGraphFitsPane(graph, 'Dense Graph Mobile Ausgangsansicht');
+
+  for (const route of routes) {
+    if (route.bundle) {
+      await bundle.scrollIntoViewIfNeeded();
+      await bundle.focus();
+      await expect(bundle).toBeFocused();
+      await bundle.press('Enter');
+      await expect(ownerPage.locator('[data-testid^="workflow-graph-route-bundle-item-1-3-"]')).toHaveCount(4);
+      const firstOption = ownerPage.getByTestId('workflow-graph-route-bundle-item-1-3-2');
+      const option = ownerPage.getByTestId(`workflow-graph-route-bundle-item-1-3-${route.index}`);
+      await expect(firstOption).toBeVisible();
+      await expect(firstOption).toBeFocused();
+      for (let step = 2; step < route.index; step += 1) await ownerPage.keyboard.press('ArrowDown');
+      await expect(option).toBeFocused();
+      await ownerPage.keyboard.press('Enter');
+    } else {
+      const edge = graph.getByTestId(`workflow-graph-transition-${route.index}`);
+      await edge.scrollIntoViewIfNeeded();
+      await edge.focus();
+      await expect(edge).toBeFocused();
+      await edge.press(route.index === 0 ? 'Space' : 'Enter');
+    }
+    await assertSelectedRoute(route, { width: 390, height: 844 }, `Keyboardroute ${route.index}`);
+    await assertDenseGraphFitsPane(graph, `Dense Graph Mobile nach Route ${route.index}`);
+    await inspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
+    await expect(inspector).toHaveCount(0);
+    await graph.scrollIntoViewIfNeeded();
+  }
+
+  await expect(editor).toBeVisible();
+  recordEvidence(
+    'Der Workfloweditor hält vier Phasen und zehn dichte Routen auf Desktop und Mobil bedienbar.',
+    `Ein isoliertes QA-Projekt enthielt vier Phasen und zehn Übergänge. Vier gebündelte Routen von Bearbeitung nach Abschluss (Angenommen Standardroute, Angenommen Risiko, Blockiert und Fehlgeschlagen) sowie die sechs übrigen Routen wurden am 1588×850-Desktop per Pointer und bei 390×844 per Tastatur ausgewählt. Jeder Inspector zeigte Quelle, Ergebnis, Ziel und Route; alle sichtbaren Phasen-, Routen- und Bündelcontrols blieben innerhalb der Graphpane und überdeckten weder einander noch den Inspector. Es wurde kein Workflowlauf gestartet.`,
+    {},
   );
 });
