@@ -914,6 +914,13 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
       await expect(heading).toBeFocused();
       await expect(heading).toBeInViewport();
       await assertGraphGridColumns(inspector, 1, `${description}: Mobil stehen Graph und Inspector untereinander.`);
+      await assertMobileStackDoesNotOverlap(
+        '[data-testid="workflow-editor-graph-pane"]',
+        false,
+        'Graphpane',
+        `${description}: Inspector und Graphpane überdecken sich nicht`,
+      );
+      return;
     }
     const paneBounds = await ownerPage.getByTestId('workflow-editor-graph-pane').boundingBox();
     const inspectorBounds = await inspector.boundingBox();
@@ -925,14 +932,14 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
     ], `${description}: Inspector und Graphpane überdecken sich nicht`);
   };
 
-  const assertMobileGraphPanelAndInspectorStack = async (description) => {
+  const assertMobileStackDoesNotOverlap = async (panelSelector, measureParent, panelName, description) => {
     let snapshot;
     let previousGeometry = '';
     let stableReads = 0;
     await expect.poll(async () => {
-      snapshot = await ownerPage.evaluate(() => {
-        const graph = document.querySelector('[data-testid="workflow-editor-graph"]');
-        const graphPanel = graph?.parentElement;
+      snapshot = await ownerPage.evaluate(({ selector, parent }) => {
+        const panelElement = document.querySelector(selector);
+        const panel = parent ? panelElement?.parentElement : panelElement;
         const inspector = document.querySelector('[data-testid="workflow-transition-inspector"]');
         const measure = (element) => {
           if (!element) return null;
@@ -946,10 +953,10 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
             visible: style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
           };
         };
-        return { graph: measure(graphPanel), inspector: measure(inspector) };
-      });
-      if (!snapshot.graph || !snapshot.inspector || !snapshot.graph.visible || !snapshot.inspector.visible) return false;
-      const geometry = [snapshot.graph, snapshot.inspector]
+        return { panel: measure(panel), inspector: measure(inspector) };
+      }, { selector: panelSelector, parent: measureParent });
+      if (!snapshot.panel || !snapshot.inspector || !snapshot.panel.visible || !snapshot.inspector.visible) return false;
+      const geometry = [snapshot.panel, snapshot.inspector]
         .map((item) => `${item.x.toFixed(1)},${item.y.toFixed(1)},${item.width.toFixed(1)},${item.height.toFixed(1)}`)
         .join('|');
       stableReads = geometry === previousGeometry ? stableReads + 1 : 0;
@@ -957,9 +964,9 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
       return stableReads >= 1;
     }, { timeout: 10_000, message: `${description}: Graphpanel und Inspector müssen synchron messbar und stabil sein.` }).toBe(true);
     assertNoOverlap([
-      { name: 'Graphpanel', ...snapshot.graph },
+      { name: panelName, ...snapshot.panel },
       { name: 'Übergangsinspector', ...snapshot.inspector },
-    ], `${description}: Graphpanel und Inspector überdecken sich nicht`);
+    ], description);
   };
 
   await ownerPage.setViewportSize({ width: 1588, height: 850 });
@@ -1053,7 +1060,12 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
   await expect(inspector.getByTestId('workflow-inspector-heading')).toBeFocused();
   await expect(inspector.getByTestId('workflow-inspector-heading')).toBeInViewport();
   await assertGraphGridColumns(inspector, 1, 'Mobile Navigationroute zeigt den Inspector unter der Phase-/Routenansicht.');
-  await assertMobileGraphPanelAndInspectorStack('Mobile Phasen-/Routenansicht und Inspector');
+  await assertMobileStackDoesNotOverlap(
+    '[data-testid="workflow-editor-graph"]',
+    true,
+    'Graphpanel',
+    'Mobile Phasen-/Routenansicht und Inspector überdecken sich nicht',
+  );
   await inspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
   await expect(inspector).toHaveCount(0);
   await expect(navigationTab).toHaveAttribute('aria-pressed', 'true');
