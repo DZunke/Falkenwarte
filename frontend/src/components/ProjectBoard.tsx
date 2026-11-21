@@ -28,7 +28,7 @@ const categoryLabels: Record<string, string> = {
 }
 type StatusInput = components['schemas']['TaskStatusInput']
 
-export default function ProjectBoard({ project, initialTaskId, initialCreate, onRefreshProject }: { project: Project; initialTaskId?: string; initialCreate?: boolean; onRefreshProject: () => void }) {
+export default function ProjectBoard({ project, initialTaskId, openTaskFlow, initialCreate, onRefreshProject }: { project: Project; initialTaskId?: string; openTaskFlow?: boolean; initialCreate?: boolean; onRefreshProject: () => void }) {
   const queryClient = useQueryClient()
   const boardsQuery = useBoards(project.id)
   const statusesQuery = useProjectStatuses(project.id)
@@ -54,7 +54,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
 
   useEffect(() => {
     if (initialTaskId) setTaskId(initialTaskId)
-  }, [initialTaskId])
+  }, [initialTaskId, openTaskFlow])
 
   const boards = boardsQuery.data?.items ?? []
   const selectedBoard = boards.find((board) => board.id === boardId) ?? boards[0]
@@ -288,7 +288,7 @@ export default function ProjectBoard({ project, initialTaskId, initialCreate, on
         </Card>
       )}
 
-      <TaskSheet taskId={taskId} project={project} board={boardDefinition} statuses={statuses} onClose={() => setTaskId(undefined)} onChanged={refresh} />
+      <TaskSheet taskId={taskId} openFlow={Boolean(openTaskFlow && taskId && taskId === initialTaskId)} project={project} board={boardDefinition} statuses={statuses} onClose={() => setTaskId(undefined)} onChanged={refresh} />
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-xl">
