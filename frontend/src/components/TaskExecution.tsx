@@ -4,6 +4,7 @@ import { ExternalLink, Play, RefreshCw, Send, ShieldCheck, Square, Workflow as W
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request, type Project, type Task } from '@/lib/api'
 import { fetchAllPages } from '@/lib/queries'
+import { taskAttentionReasonLabel } from '@/lib/task-attention'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -151,7 +152,6 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
   const effectiveTaskRoute = policyCanSelectWorkflow && boardPolicy.workflow_id && boardPolicy.definition_version
     ? { workflow_id: boardPolicy.workflow_id, workflow_definition_version: boardPolicy.definition_version }
     : undefined
-  const preselectionHint = task.workflow_label_id ? 'Die gespeicherte Ticketroute ist vorausgewählt.' : 'Der Standard-Workflow dieses Boards ist vorausgewählt.'
   const route = effectiveTaskRoute ?? projectRoute
   const routedWorkflowRequired = Boolean(task.workflow_label_id)
   const routingUnavailable = !effectiveTaskRoute && routedWorkflowRequired && !routingQuery.isSuccess
@@ -251,14 +251,25 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
   const constraints = [
     ...(project.archived ? ['Das Projekt ist archiviert; neue Aufträge sind gesperrt.'] : []),
     ...(task.blocked ? [`Die Aufgabe ist blockiert${task.blocker_reason ? `: ${task.blocker_reason}` : '.'}`] : []),
-    ...(task.human_attention.required ? [`Eine menschliche Entscheidung ist offen: ${task.human_attention.reasons.join(', ')}.`] : []),
+    ...(task.human_attention.required ? [`Eine menschliche Entscheidung ist offen: ${task.human_attention.reasons.map(taskAttentionReasonLabel).join('; ')}.`] : []),
     ...(task.classification_required && task.intake_outcome !== 'ready' ? ['Die Eingangsklassifikation ist für diese Ticketrevision noch nicht bereit.'] : []),
     ...(!['ready', 'active', 'review'].includes(task.status_category) ? ['Verschiebe das Ticket zuerst in einen bearbeitbaren Status.'] : []),
   ]
   const stageProfileMismatch = Boolean(selectedStage?.agent_profile_id && selectedProfileId !== selectedStage.agent_profile_id)
   const startBlocked = constraints.length > 0
   const canRequestRun = !startBlocked && Boolean(selectedProfile?.enabled && selectedProfile.configuration_valid) && !stageProfileMismatch && Boolean(selectedStageId.trim())
-  const selectedWorkflowUsesRoute = Boolean(route && selectedWorkflow?.id === route.workflow_id)
+  const selectedWorkflowUsesRoute = Boolean(
+    route
+      && selectedWorkflow?.id === route.workflow_id
+      && selectedWorkflow.definition_version === route.workflow_definition_version,
+  )
+  const workflowSelectionHint = selectedWorkflowUsesRoute
+    ? task.workflow_label_id
+      ? `Die gespeicherte Ticketroute mit Version ${route?.workflow_definition_version} ist vorausgewählt.`
+      : 'Der Standard-Workflow dieses Boards ist vorausgewählt.'
+    : selectedWorkflow
+      ? 'Die ausgewählte Vorlage wird nur mit „Workflow starten“ ausgeführt.'
+      : 'Wähle eine Vorlage für einen ausdrücklichen Workflowstart.'
   const workflowCanStart = !startBlocked
     && Boolean(boardPolicy && ['unconfigured', 'available'].includes(boardPolicy.state) && !boardPolicyError)
     && !routingUnavailable
@@ -441,8 +452,10 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
         ? <p role="alert" className="text-sm text-destructive">Die Workflow-Einstellungen des Boards konnten nicht geladen werden. {boardPolicyError} <Button variant="link" size="sm" onClick={retryBoardPolicy}>Erneut laden</Button></p>
         : !boardPolicy
           ? <p role="status" className="text-sm text-muted-foreground">Workflow-Einstellungen des Boards werden geladen…</p>
-          : boardPolicy.state !== 'unconfigured' && <p role="status" className="text-sm text-muted-foreground">{boardPolicy.reason ?? (boardPolicy.state === 'available' ? preselectionHint : 'Für dieses Ticket ist der Workflowstart gesperrt.')}</p>}
-      {task.workflow_label_id && route && <p className="text-xs text-muted-foreground">Die Labelroute ist mit Version {route.workflow_definition_version} vorausgewählt. Wenn du sie wählst, bleibt diese Version gebunden; du kannst stattdessen eine andere aktive Vorlage wählen.</p>}
+          : boardPolicy.state !== 'unconfigured' && <p role="status" className="text-sm text-muted-foreground">{boardPolicy.state === 'available' ? workflowSelectionHint : boardPolicy.reason ?? 'Für dieses Ticket ist der Workflowstart gesperrt.'}</p>}
+      {task.workflow_label_id && route && <p className="text-xs text-muted-foreground">{selectedWorkflowUsesRoute
+        ? `Die gespeicherte Labelroute mit Version ${route.workflow_definition_version} ist vorausgewählt. Du kannst stattdessen eine andere aktive Vorlage wählen.`
+        : `Die gespeicherte Labelroute mit Version ${route.workflow_definition_version} bleibt verfügbar; aktuell ist eine andere Vorlage ausgewählt.`}</p>}
       {workflowsQuery.isPending ? <p className="text-sm text-muted-foreground">Workflows werden geladen…</p> : workflowOptions.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein aktiver Workflow verfügbar.</p> : <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <div className="grid min-w-0 gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={displayedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={!boardPolicy || Boolean(boardPolicyError) || !['available', 'unconfigured'].includes(boardPolicy.state)}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>
           {selectedWorkflow ? <details data-testid="execution-workflow-phase-preview" className="rounded-md border bg-muted/20 px-3 py-2">

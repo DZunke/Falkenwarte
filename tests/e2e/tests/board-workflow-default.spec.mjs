@@ -258,6 +258,7 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   const { sheet, panel } = await openTaskOnBoard(ownerPage, taskTitle);
   const workflowSelect = panel.getByRole('combobox', { name: 'Workflow', exact: true });
   await expect(workflowSelect).toContainText(defaultWorkflow.name);
+  await expect(panel.getByText('Der Standard-Workflow dieses Boards ist vorausgewählt.', { exact: true })).toBeVisible();
   const startButton = panel.getByRole('button', { name: 'Workflow starten', exact: true });
   await expect(startButton).toBeEnabled();
   const launchSectionOrder = await panel.locator('[data-testid="execution-workflow-section"], [data-testid="execution-single-run-section"]')
@@ -268,9 +269,13 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   await expect(phasePreview).toContainText('Bearbeitung');
   await expect(phasePreview).toContainText(profile.name);
   await selectOption(ownerPage, workflowSelect, `${routeWorkflow.name} · Version ${routeWorkflow.definition_version}`);
+  await expect(panel.getByText('Die ausgewählte Vorlage wird nur mit „Workflow starten“ ausgeführt.', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Der Standard-Workflow dieses Boards ist vorausgewählt.', { exact: true })).toHaveCount(0);
   await expect(phasePreview).toContainText('Prüfung');
   await expect(phasePreview).toContainText(alternateProfile.name);
   await selectOption(ownerPage, workflowSelect, `${defaultWorkflow.name} · Version ${defaultWorkflow.definition_version}`);
+  await expect(panel.getByText('Der Standard-Workflow dieses Boards ist vorausgewählt.', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Die ausgewählte Vorlage wird nur mit „Workflow starten“ ausgeführt.', { exact: true })).toHaveCount(0);
   await expect(phasePreview).toContainText('Bearbeitung');
   await expect(phasePreview).toContainText(profile.name);
   const beforePreviewStart = await ownerApi.get(`/workflow-instances?task_id=${task.id}`);
@@ -309,9 +314,17 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   const routedSheet = await openTaskOnBoard(ownerPage, routedTaskTitle);
   const routedWorkflowSelect = routedSheet.panel.getByRole('combobox', { name: 'Workflow', exact: true });
   await expect(routedWorkflowSelect).toContainText(routeWorkflow.name);
+  const routedSelectionHint = `Die gespeicherte Ticketroute mit Version ${routeWorkflow.definition_version} ist vorausgewählt.`;
+  await expect(routedSheet.panel.getByText(routedSelectionHint, { exact: true })).toBeVisible();
+  const routedExplanation = `Die gespeicherte Labelroute mit Version ${routeWorkflow.definition_version} ist vorausgewählt. Du kannst stattdessen eine andere aktive Vorlage wählen.`;
+  await expect(routedSheet.panel.getByText(routedExplanation, { exact: true })).toBeVisible();
   const routedStartButton = routedSheet.panel.getByRole('button', { name: 'Workflow starten', exact: true });
   await expect(routedStartButton).toBeEnabled();
   await selectOption(ownerPage, routedWorkflowSelect, `${defaultWorkflow.name} · Version ${defaultWorkflow.definition_version}`);
+  await expect(routedSheet.panel.getByText('Die ausgewählte Vorlage wird nur mit „Workflow starten“ ausgeführt.', { exact: true })).toBeVisible();
+  await expect(routedSheet.panel.getByText(routedSelectionHint, { exact: true })).toHaveCount(0);
+  await expect(routedSheet.panel.getByText(`Die gespeicherte Labelroute mit Version ${routeWorkflow.definition_version} bleibt verfügbar; aktuell ist eine andere Vorlage ausgewählt.`, { exact: true })).toBeVisible();
+  await expect(routedSheet.panel.getByText(routedExplanation, { exact: true })).toHaveCount(0);
   await expect(routedStartButton).toBeEnabled();
   const routedStartResponsePromise = ownerPage.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname.endsWith(`/tasks/${routedTask.id}/workflow-instances`));

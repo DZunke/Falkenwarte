@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request, type Label, type Project, type Task } from '@/lib/api'
 import { useProjectLabels } from '@/lib/queries'
+import { taskAttentionReasonLabel } from '@/lib/task-attention'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -24,17 +25,6 @@ const outcomeLabels: Record<components['schemas']['IntakeOutcome'], string> = {
   needs_information: 'Rückfrage an Agent',
   needs_human_decision: 'Menschliche Entscheidung nötig',
   classification_unavailable: 'Einordnung nicht verfügbar',
-}
-
-const reasonLabels: Record<string, string> = {
-  routing_ambiguous: 'Mehrere Arbeitsabläufe passen',
-  classification_unavailable: 'Einordnung konnte nicht abgeschlossen werden',
-  decision_refused: 'Die Entscheidung wurde zurückgewiesen',
-  intake_escalated: 'Die Rückfrage braucht eine menschliche Klärung',
-  approval_pending: 'Ergebnismeldung wartet auf Freigabe',
-  run_permission_in_t3: 'T3 wartet auf eine Berechtigungsentscheidung',
-  auth_required: 'T3-Zugang benötigt eine Klärung',
-  reconciliation_required: 'Ein T3-Auftrag muss abgeglichen werden',
 }
 
 export default function TaskDecisions({ task, project, onChanged }: { task: Task; project: Project; onChanged: () => Promise<void> }) {
@@ -178,7 +168,7 @@ export default function TaskDecisions({ task, project, onChanged }: { task: Task
     onError: showWriteError,
   })
 
-  const reasonItems = task.human_attention.reasons.map((reason) => reasonLabels[reason] ?? reason)
+  const reasonItems = task.human_attention.reasons.map(taskAttentionReasonLabel)
   const hasIntake = Boolean(intake || task.origin !== 'manual' || task.classification_required)
   const ownerDecisionRequired = intake?.outcome === 'needs_human_decision' && intake.waiting_for === 'owner'
   const retryRequired = intake?.outcome === 'classification_unavailable'

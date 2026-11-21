@@ -525,6 +525,19 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     expect(task.human_attention.reasons).toContain('approval_pending');
     expect(await dashboardAttentionCount(ownerApi)).toBe(1);
 
+    await ownerPage.goto(`/#/project/${project.id}/board`);
+    await expect(ownerPage.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+    const attentionCard = ownerPage.locator('[aria-roledescription="Ticketkarte"]').filter({ hasText: task.title });
+    await expect(attentionCard).toHaveCount(1);
+    await attentionCard.getByRole('button').first().click();
+    const attentionSheet = ownerPage.getByRole('dialog', { name: task.title, exact: true });
+    await expect(attentionSheet).toBeVisible();
+    await attentionSheet.getByRole('tab', { name: 'Ausführung', exact: true }).click();
+    const executionPanel = attentionSheet.getByRole('tabpanel', { name: 'Ausführung' });
+    const attentionConstraint = executionPanel.getByText(/Eine menschliche Entscheidung ist offen:/);
+    await expect(attentionConstraint).toContainText('Ergebnismeldung wartet auf Freigabe');
+    await expect(attentionConstraint).not.toContainText('approval_pending');
+
     await qaMocks.setDecisionsScenario('decisions_ambiguous');
     const reclassified = await ownerApi.post(`/tasks/${task.id}/intake/reclassify`, {
       reason: 'Prüfen, ob die erneute Mehrdeutigkeit neben der bestehenden Freigabe sichtbar bleibt.',
