@@ -535,7 +535,8 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await testInfo.attach('workflow-graph-desktop-light', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
 
       const darkMode = ownerPage.getByRole('button', { name: 'Dunkelmodus aktivieren', exact: true });
-      if (await darkMode.count()) await darkMode.click();
+      await expect(darkMode).toBeVisible();
+      await darkMode.click();
       await expect(ownerPage.getByRole('button', { name: 'Hellmodus aktivieren', exact: true })).toBeVisible();
       await expect.poll(() => ownerPage.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true);
       await assertPageFits(ownerPage, viewport, 'Dunkles Desktop-Theme');
