@@ -391,8 +391,10 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     await expect(routeBundle).toBeVisible();
     await expect(routeBundle).toContainText(/2 (weitere )?Routen/);
     await routeBundle.click();
-    await expect(routeBundle).not.toContainText(labelA.name);
-    const alternativeItems = alternativeIndexes.map((index) => workflowGraph.getByTestId(`workflow-graph-route-bundle-item-${sourceStageIndex}-${targetStageIndex}-${index}`));
+    const routeBundleDetails = ownerPage.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`);
+    await expect(routeBundleDetails).toBeVisible();
+    await expect(routeBundleDetails).not.toContainText(labelA.name);
+    const alternativeItems = alternativeIndexes.map((index) => ownerPage.getByTestId(`workflow-graph-route-bundle-item-${sourceStageIndex}-${targetStageIndex}-${index}`));
     for (const [position, alternative] of alternativeItems.entries()) {
       const label = position === 0 ? labelB : labelC;
       await expect(alternative).toBeVisible();
@@ -402,9 +404,13 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     const instanceBeforeInspectingAlternative = await ownerApi.get(`/workflow-instances/${instance.id}`);
     expect(instanceBeforeInspectingAlternative.data.run_ids).toHaveLength(3);
     await alternativeItems[0].click();
-    await expect(workflowGraph.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`)).toContainText(labelB.name);
+    await expect(routeBundleDetails).toContainText(labelB.name);
+    const selectedPlannedRoute = ownerPage.getByTestId(`workflow-graph-route-bundle-selection-${sourceStageIndex}-${targetStageIndex}`);
+    await expect(selectedPlannedRoute).toContainText(labelB.name);
+    await expect(selectedPlannedRoute).toContainText('Wird erst nach einer tatsächlichen Auswahl ausgeführt.');
     await alternativeItems[1].click();
-    await expect(workflowGraph.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`)).toContainText(labelC.name);
+    await expect(routeBundleDetails).toContainText(labelC.name);
+    await expect(selectedPlannedRoute).toContainText(labelC.name);
     expect((await ownerApi.get(`/workflow-instances/${instance.id}`)).data.run_ids).toHaveLength(3);
     expect((await taskFlow(ownerApi, task.id, instance.id)).selected_transitions).toEqual(finalFlow.selected_transitions);
     const plannedDefaultAlternative = workflowGraph.getByTestId(`workflow-graph-planned-transition-${defaultAlternativeIndex}`);
