@@ -973,12 +973,6 @@ final class RunHandler implements OperationHandler
             throw new Problem(412, 'version_conflict', 'Die Aufgabe hat sich seit dem gelesenen Stand geändert.');
         }
         $this->assertTaskCanStart($task);
-        $routing = $this->store->find('task_routing_snapshots', $taskId);
-        if (!empty($task['workflow_label_id']) && (null === $routing
-            || $routing['workflow_id'] !== $body['workflow_id']
-            || (int) $routing['workflow_definition_version'] !== (int) $body['definition_version'])) {
-            throw new Problem(409, 'workflow_route_conflict', 'Der ausgewählte Workflow stimmt nicht mit der versionierten Aufgabenroute überein.');
-        }
         $boardId = $body['board_id'] ?? null;
         if (null !== $boardId && !is_string($boardId)) {
             throw new Problem(422, 'validation_failed', 'Die Boardauswahl ist ungültig.');

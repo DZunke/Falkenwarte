@@ -20,7 +20,7 @@ async function readUntil(ownerApi, route, matches, description, timeout = 45_000
   return current;
 }
 
-async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, name) {
+async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, name, maxActiveRuns = 1) {
   const created = await ownerApi.post('/connections', {
     name: `${name} ${randomUUID().slice(0, 6)}`,
     bridge_id: 't3.mcp.v0_1_10',
@@ -42,20 +42,20 @@ async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, name)
   const binding = await ownerApi.put(`/projects/${project.id}/binding`, {
     connection_id: connection.id,
     external_project_id: 'qa-t3-project-1',
-    max_active_runs: 1,
+    max_active_runs: maxActiveRuns,
   }, { version: projectRead.data.version });
   expect(binding.response.status(), JSON.stringify(binding.data)).toBe(200);
   return readyConnection;
 }
 
-async function createProfile(ownerApi, project, connection, name) {
+async function createProfile(ownerApi, project, connection, name, maxParallelRuns = 1) {
   const result = await ownerApi.post('/agent-profiles', {
     name,
     icon_key: 'bot',
     role: 'Bearbeitung',
     connection_id: connection.id,
     allowed_project_ids: [project.id],
-    max_parallel_runs: 1,
+    max_parallel_runs: maxParallelRuns,
     prompt_template: 'Bearbeite ausschließlich die zugewiesene Workflowphase.',
     enabled: true,
     default_run_completion_policy: runPolicy,
@@ -110,11 +110,11 @@ async function createUnassignedWorkflow(ownerApi, projectId, name) {
   return result.data.workflow ?? result.data;
 }
 
-async function setupProject(ownerApi, ownerPage, baseURL, qaMocks, name) {
+async function setupProject(ownerApi, ownerPage, baseURL, qaMocks, name, maxActiveRuns = 1) {
   await qaMocks.setT3Scenario('default');
   const suffix = randomUUID().slice(0, 8);
   const project = await ownerApi.createProject({ name: `${name} ${suffix}` });
-  const connection = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, name);
+  const connection = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, name, maxActiveRuns);
   const board = await ownerApi.ensureDefaultBoard(project.id);
   const statuses = await ownerApi.get(`/projects/${project.id}/statuses`);
   expect(statuses.response.status(), JSON.stringify(statuses.data)).toBe(200);
@@ -172,8 +172,8 @@ async function startWorkflow(ownerApi, task, workflow, boardId) {
 test('board workflow defaults wait for an explicit click and manual labels override pinned routes', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
   test.setTimeout(300_000);
   test.info().annotations.push({ type: 'scenario', description: 'Boardworkflows werden gespeichert, vorausgewählt und nur durch ausdrücklichen Ticketstart ausgeführt; ein manuelles Label sperrt auch eine eingefrorene Workflowroute.' });
-  const setup = await setupProject(ownerApi, ownerPage, baseURL, qaMocks, 'Boardworkflow expliziter Start');
-  const profile = await createProfile(ownerApi, setup.project, setup.connection, `Redaktion ${setup.suffix}`);
+  const setup = await setupProject(ownerApi, ownerPage, baseURL, qaMocks, 'Boardworkflow expliziter Start', 4);
+  const profile = await createProfile(ownerApi, setup.project, setup.connection, `Redaktion ${setup.suffix}`, 4);
   const defaultWorkflow = await createWorkflow(ownerApi, setup.project.id, profile, `Standardworkflow ${setup.suffix}`);
   const routeWorkflow = await createWorkflow(ownerApi, setup.project.id, profile, `Labelroute ${setup.suffix}`);
   const unfinishedWorkflow = await createUnassignedWorkflow(ownerApi, setup.project.id, `Unvollständiger Workflow ${setup.suffix}`);
@@ -281,6 +281,63 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   expect(startedRun.attempts[0].external_thread_id).toBe(acceptedLaunches[0].response.threadId);
   await closeTaskSheet(sheet);
 
+  const routedTaskTitle = `Ticket mit übersteuerbarer Route ${setup.suffix}`;
+  const routedTask = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, {
+    title: routedTaskTitle,
+    status_id: ready.id,
+    label_ids: [workflowLabel.id],
+  }));
+  const routedFlow = await ownerApi.get(`/tasks/${routedTask.id}/flow?board_id=${setup.board.id}`);
+  expect(routedFlow.response.status(), JSON.stringify(routedFlow.data)).toBe(200);
+  expect(routedFlow.data.board_workflow_policy).toMatchObject({
+    state: 'available',
+    workflow_id: routeWorkflow.id,
+    definition_version: routeWorkflow.definition_version,
+  });
+  const staleOverride = await ownerApi.post(`/tasks/${routedTask.id}/workflow-instances`, {
+    workflow_id: defaultWorkflow.id,
+    definition_version: defaultWorkflow.definition_version + 1,
+    task_revision: routedTask.version,
+    board_id: setup.board.id,
+  }, { version: routedTask.version });
+  expect(staleOverride.response.status(), JSON.stringify(staleOverride.data)).toBe(409);
+  expect(staleOverride.data.code).toBe('workflow_version_conflict');
+  const beforeOverride = await ownerApi.get(`/workflow-instances?task_id=${routedTask.id}`);
+  expect(beforeOverride.response.status(), JSON.stringify(beforeOverride.data)).toBe(200);
+  expect(beforeOverride.data.items).toHaveLength(0);
+
+  await ownerPage.goto(`/#/project/${setup.project.id}/board`);
+  const routedSheet = await openTaskOnBoard(ownerPage, routedTaskTitle);
+  const routedWorkflowSelect = routedSheet.panel.getByRole('combobox', { name: 'Workflow', exact: true });
+  await expect(routedWorkflowSelect).toContainText(routeWorkflow.name);
+  const routedStartButton = routedSheet.panel.getByRole('button', { name: 'Workflow starten', exact: true });
+  await expect(routedStartButton).toBeEnabled();
+  await selectOption(ownerPage, routedWorkflowSelect, `${defaultWorkflow.name} · Version ${defaultWorkflow.definition_version}`);
+  await expect(routedStartButton).toBeEnabled();
+  const routedStartResponsePromise = ownerPage.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname.endsWith(`/tasks/${routedTask.id}/workflow-instances`));
+  await routedStartButton.click();
+  const routedStartResponse = await routedStartResponsePromise;
+  expect(routedStartResponse.status()).toBe(202);
+  const routedReceipt = await routedStartResponse.json();
+  const routedInstanceId = routedReceipt.resource?.id ?? routedReceipt.instance_id;
+  expect(routedInstanceId).toBeTruthy();
+  const overriddenInstance = await readUntil(ownerApi, `/workflow-instances/${routedInstanceId}`, (item) => item.id === routedInstanceId && item.run_ids.length === 1, 'Die bewusst ausgewählte Boardvorlage muss trotz Labelroute gestartet werden.');
+  expect(overriddenInstance).toMatchObject({ workflow_id: defaultWorkflow.id, definition_version: defaultWorkflow.definition_version });
+  expect(overriddenInstance.workflow_id).not.toBe(routeWorkflow.id);
+  const routedRunId = overriddenInstance.run_ids[0];
+  await expect.poll(async () => {
+    const journal = await qaMocks.t3Journal();
+    return journal.accepted_launches.filter((launch) => launch.payload.message.includes(`Run-ID: ${routedRunId}\n`)).length;
+  }, { timeout: 45_000, message: 'Der alternative Workflow muss genau einen Lauf an T3 übergeben.' }).toBe(1);
+  const routedTaskAfterStart = await ownerApi.get(`/tasks/${routedTask.id}`);
+  expect(routedTaskAfterStart.response.status(), JSON.stringify(routedTaskAfterStart.data)).toBe(200);
+  expect(routedTaskAfterStart.data.workflow_label_id).toBe(workflowLabel.id);
+  const routedFlowAfterStart = await ownerApi.get(`/tasks/${routedTask.id}/flow?board_id=${setup.board.id}`);
+  expect(routedFlowAfterStart.response.status(), JSON.stringify(routedFlowAfterStart.data)).toBe(200);
+  expect(routedFlowAfterStart.data.board_workflow_policy).toMatchObject({ workflow_id: routeWorkflow.id, definition_version: routeWorkflow.definition_version });
+  await closeTaskSheet(routedSheet.sheet);
+
   const manualTaskTitle = `Manuelles Ticket mit Route ${setup.suffix}`;
   const manualTask = await readTask(ownerApi, await ownerApi.createTask(setup.project.id, {
     title: manualTaskTitle,
@@ -314,12 +371,13 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   const manualMove = await ownerApi.post(`/tasks/${manualTask.id}/move`, { status_id: active.id, board_id: setup.board.id }, { version: latestManualTask.data.version });
   expect(manualMove.response.status(), JSON.stringify(manualMove.data)).toBe(200);
   const finalT3Journal = await qaMocks.t3Journal();
-  expect(finalT3Journal.accepted_launches).toHaveLength(1);
-  expect(finalT3Journal.accepted_launches[0].payload.message).toContain(`Run-ID: ${runId}\n`);
+  expect(finalT3Journal.accepted_launches).toHaveLength(2);
+  expect(finalT3Journal.accepted_launches.some((launch) => launch.payload.message.includes(`Run-ID: ${runId}\n`))).toBe(true);
+  expect(finalT3Journal.accepted_launches.some((launch) => launch.payload.message.includes(`Run-ID: ${routedRunId}\n`))).toBe(true);
 
   recordEvidence(
-    'Boardworkflows sind Voreinstellungen für einen ausdrücklichen Ticketstart.',
-    `Eine Workflowphase ohne Rolle wurde vor Instanzanlage mit workflow_profile_required abgewiesen. Das Speichern des Standards und der Wechsel nach Bereit starteten keinen Lauf. Der Button startete Workflow ${defaultWorkflow.id} in Version ${defaultWorkflow.definition_version}. Ein Ticket mit dem manuellen Label und einer eingefrorenen Labelroute wurde in der UI gesperrt und beim direkten API-Aufruf mit board_workflow_excluded abgewiesen; die manuelle Boardbewegung blieb möglich.`,
+    'Boardworkflows und Labelrouten sind vorausgewählte Optionen für einen ausdrücklichen Ticketstart.',
+    `Eine Workflowphase ohne Rolle wurde vor Instanzanlage mit workflow_profile_required abgewiesen. Das Speichern des Standards und der Wechsel nach Bereit starteten keinen Lauf. Ein Ticket ohne Labelroute startete den Boardstandard ${defaultWorkflow.id} in Version ${defaultWorkflow.definition_version}. Bei einem Ticket mit eingefrorener Labelroute ${routeWorkflow.id} war die Route vorausgewählt; der Besitzer wählte stattdessen den aktiven Boardstandard und startete genau diesen. Eine veraltete Override-Version wurde mit workflow_version_conflict ohne Instanz oder T3-Start abgewiesen. Ein Ticket mit manuellem Ausschlusslabel und eingefrorener Labelroute wurde in der UI gesperrt und beim direkten API-Aufruf mit board_workflow_excluded abgewiesen; die manuelle Boardbewegung blieb möglich.`,
     { t3: finalT3Journal },
   );
 });

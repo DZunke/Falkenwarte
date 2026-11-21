@@ -164,17 +164,21 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
     })),
   })
   const workflowOptions = useMemo(() => {
-    const options = [...workflows]
+    const options = workflows.filter((workflow) => !route || workflow.id !== route.workflow_id)
     const routed = routedWorkflowQuery.data
     if (routed && !options.some((item) => item.id === routed.id && item.definition_version === routed.definition_version)) {
       options.push(routed)
     }
     return options
-  }, [routedWorkflowQuery.data, workflows])
+  }, [route, routedWorkflowQuery.data, workflows])
 
-  const preferredWorkflowKey = route ? `${route.workflow_id}:${route.workflow_definition_version}` : selectedWorkflowKey
-  const selectedWorkflow = workflowOptions.find((workflow) => `${workflow.id}:${workflow.definition_version}` === preferredWorkflowKey)
-    ?? (route ? undefined : workflowOptions[0])
+  useEffect(() => {
+    setSelectedWorkflowKey('')
+  }, [boardId, project.id, task.id])
+
+  const routedWorkflowKey = route ? `${route.workflow_id}:${route.workflow_definition_version}` : ''
+  const selectedWorkflow = workflowOptions.find((workflow) => `${workflow.id}:${workflow.definition_version}` === selectedWorkflowKey)
+    ?? workflowOptions.find((workflow) => `${workflow.id}:${workflow.definition_version}` === routedWorkflowKey)
   const displayedWorkflowKey = selectedWorkflow ? `${selectedWorkflow.id}:${selectedWorkflow.definition_version}` : ''
   const unavailableStageNames = selectedWorkflow?.stages.filter((stage) =>
     !profiles.some((profile) => profile.id === stage.agent_profile_id && profile.enabled && profile.configuration_valid)).map((stage) => stage.name) ?? []
@@ -254,15 +258,14 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
   const stageProfileMismatch = Boolean(selectedStage?.agent_profile_id && selectedProfileId !== selectedStage.agent_profile_id)
   const startBlocked = constraints.length > 0
   const canRequestRun = !startBlocked && Boolean(selectedProfile?.enabled && selectedProfile.configuration_valid) && !stageProfileMismatch && Boolean(selectedStageId.trim())
-  const routedWorkflowMismatch = Boolean(route && selectedWorkflow && (selectedWorkflow.id !== route.workflow_id || selectedWorkflow.definition_version !== route.workflow_definition_version))
+  const selectedWorkflowUsesRoute = Boolean(route && selectedWorkflow?.id === route.workflow_id)
   const workflowCanStart = !startBlocked
     && Boolean(boardPolicy && ['unconfigured', 'available'].includes(boardPolicy.state) && !boardPolicyError)
     && !routingUnavailable
     && !routedWorkflowMissing
     && unavailableStageNames.length === 0
-    && (!route || routedWorkflowQuery.isSuccess)
+    && (!selectedWorkflowUsesRoute || (selectedWorkflow?.definition_version === route?.workflow_definition_version && routedWorkflowQuery.isSuccess))
     && Boolean(selectedWorkflow?.enabled && selectedWorkflow.stages.length > 0)
-    && !routedWorkflowMismatch
 
   const refresh = async () => {
     await Promise.all([
@@ -447,17 +450,17 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
           : !boardPolicy
             ? <p role="status" className="text-sm text-muted-foreground">Workflow-Einstellungen des Boards werden geladen…</p>
             : boardPolicy.state !== 'unconfigured' && <p role="status" className="text-sm text-muted-foreground">{boardPolicy.reason ?? (boardPolicy.state === 'available' ? preselectionHint : 'Für dieses Ticket ist der Workflowstart gesperrt.')}</p>}
-        {task.workflow_label_id && route && <p className="text-xs text-muted-foreground">Das Workflowlabel fixiert Version {route.workflow_definition_version} des zugeordneten Workflows.</p>}
+        {task.workflow_label_id && route && <p className="text-xs text-muted-foreground">Die Labelroute ist mit Version {route.workflow_definition_version} vorausgewählt. Wenn du sie wählst, bleibt diese Version gebunden; du kannst stattdessen eine andere aktive Vorlage wählen.</p>}
         {workflowsQuery.isPending ? <p className="text-sm text-muted-foreground">Workflows werden geladen…</p> : workflowOptions.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein aktiver Workflow verfügbar.</p> : <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-          <div className="grid gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={displayedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={Boolean(route) || routedWorkflowRequired}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>{selectedWorkflow && <p className="text-xs text-muted-foreground">{selectedWorkflow.stages.length} Phasen · Version {selectedWorkflow.definition_version}</p>}</div>
+          <div className="grid gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={displayedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={!boardPolicy || Boolean(boardPolicyError) || !['available', 'unconfigured'].includes(boardPolicy.state)}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>{selectedWorkflow && <p className="text-xs text-muted-foreground">{selectedWorkflow.stages.length} Phasen · Version {selectedWorkflow.definition_version}</p>}</div>
           <Button onClick={() => startWorkflow.mutate()} disabled={!workflowCanStart || startWorkflow.isPending}><WorkflowIcon />{startWorkflow.isPending ? 'Wird gestartet…' : 'Workflow starten'}</Button>
         </div>}
         {unavailableStageNames.length > 0 && profilesQuery.isSuccess && projectBindingQuery.isSuccess && <p role="alert" className="text-sm text-amber-900">Für folgende Phasen fehlt eine startbereite Rolle: {unavailableStageNames.join(', ')}. Öffne die Vorlage unter <a className="underline" href="#/workflows">Workflows</a> und weise jeder Phase eine Rolle für dieses Projekt und seine T3-Verbindung zu.</p>}
-        {!effectiveTaskRoute && routedWorkflowRequired && routingQuery.isPending && <p className="text-xs text-muted-foreground">Die Aufgabenroute wird geladen. Ein anderer Workflow kann bis dahin nicht gestartet werden.</p>}
+        {!effectiveTaskRoute && routedWorkflowRequired && routingQuery.isPending && <p className="text-xs text-muted-foreground">Die gespeicherte Route wird geladen. Du kannst anschließend eine andere aktive Vorlage wählen.</p>}
         {!effectiveTaskRoute && routedWorkflowRequired && routingQuery.isError && <p role="alert" className="text-xs text-destructive">Die versionierte Aufgabenroute konnte nicht geladen werden: {formatError(routingQuery.error)}</p>}
         {routedWorkflowMissing && <p role="alert" className="text-xs text-destructive">Für das Workflowlabel dieser Aufgabe wurde keine versionierte Route gefunden. Der Workflowstart ist gesperrt.</p>}
-        {route && routedWorkflowQuery.isPending && <p className="text-xs text-muted-foreground">Die eingefrorene Workflowversion wird geladen. Der Start bleibt bis dahin gesperrt.</p>}
-        {route && !routedWorkflowQuery.data && routedWorkflowQuery.isError && <p role="alert" className="text-xs text-destructive">Die eingefrorene Workflowversion konnte nicht geladen werden: {formatError(routedWorkflowQuery.error)}</p>}
+        {route && routedWorkflowQuery.isPending && <p className="text-xs text-muted-foreground">Die vorausgewählte Workflowversion wird geladen. Eine andere aktive Vorlage kannst du schon wählen.</p>}
+        {route && !routedWorkflowQuery.data && routedWorkflowQuery.isError && <p role="alert" className="text-xs text-destructive">Die vorausgewählte Workflowversion konnte nicht geladen werden: {formatError(routedWorkflowQuery.error)} Eine andere aktive Vorlage kann trotzdem gewählt werden.</p>}
       </section>
 
       <section className="space-y-3">

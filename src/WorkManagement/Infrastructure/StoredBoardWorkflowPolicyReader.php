@@ -115,19 +115,52 @@ final readonly class StoredBoardWorkflowPolicyReader implements BoardWorkflowPol
             throw new Problem(409, 'board_workflow_unavailable', $policy['reason'] ?? 'Der konfigurierte Board-Workflow ist derzeit nicht verfügbar.');
         }
 
-        if (is_string($task['workflow_label_id'] ?? null) && '' !== $task['workflow_label_id']) {
-            if ($workflowId !== $policy['workflow_id'] || $definitionVersion !== $policy['definition_version']) {
-                throw new Problem(409, 'workflow_route_conflict', 'Der ausgewählte Workflow stimmt nicht mit der eingefrorenen Aufgabenroute überein.');
+        $hasTaskRoute = is_string($task['workflow_label_id'] ?? null) && '' !== $task['workflow_label_id'];
+        $hasPinnedChoice = $hasTaskRoute || 'available' === $policy['state'];
+        if ($hasPinnedChoice && $workflowId === $policy['workflow_id']) {
+            if ($definitionVersion !== $policy['definition_version']) {
+                $code = $hasTaskRoute ? 'workflow_route_conflict' : 'board_workflow_version_conflict';
+                $detail = $hasTaskRoute
+                    ? 'Die gespeicherte Ticketroute bindet diesen Workflow an eine andere Version.'
+                    : 'Die Board-Workflowversion wurde geändert. Lade das Ticket erneut und prüfe die aktuelle Auswahl.';
+                throw new Problem(409, $code, $detail);
             }
 
             return;
         }
-        if ('available' === $policy['state']) {
-            if ($workflowId !== $policy['workflow_id']) {
-                throw new Problem(409, 'board_workflow_conflict', 'Für dieses Board ist ein anderer Workflow als Standard festgelegt.');
+
+        if ($hasPinnedChoice) {
+            $this->assertCurrentWorkflowCanBeSelected($task, $workflowId, $definitionVersion);
+        }
+    }
+
+    /** @param array<string, mixed> $task */
+    private function assertCurrentWorkflowCanBeSelected(array $task, string $workflowId, int $definitionVersion): void
+    {
+        $workflow = $this->store->find('workflows', $workflowId);
+        $currentVersion = null === $workflow ? null : ((int) ($workflow['definition_version'] ?? $workflow['version'] ?? 0) ?: null);
+        if (null === $workflow
+            || empty($workflow['enabled'])
+            || (null !== ($workflow['project_id'] ?? null) && $workflow['project_id'] !== $task['project_id'])) {
+            throw new Problem(409, 'workflow_unavailable', 'Die ausgewählte Vorlage ist nicht mehr aktiv oder gehört zu einem anderen Projekt.');
+        }
+        if ($currentVersion !== $definitionVersion) {
+            throw new Problem(409, 'workflow_version_conflict', 'Die ausgewählte Vorlage wurde geändert. Lade das Ticket erneut und prüfe die aktuelle Version.');
+        }
+        if ([] === ($workflow['stages'] ?? [])) {
+            throw new Problem(409, 'workflow_definition_invalid', 'Der Workflow enthält keine startbare Phase.');
+        }
+
+        $agentStages = array_values(array_filter($workflow['stages'], static fn (array $stage): bool => 'manual' !== ($stage['kind'] ?? null)));
+        foreach ($agentStages as $stage) {
+            if (!is_string($stage['agent_profile_id'] ?? null) || '' === $stage['agent_profile_id']) {
+                return;
             }
-            if ($definitionVersion !== $policy['definition_version']) {
-                throw new Problem(409, 'board_workflow_version_conflict', 'Die Board-Workflowversion wurde geändert. Lade das Ticket erneut und prüfe die aktuelle Auswahl.');
+        }
+        if ([] !== $agentStages) {
+            $workflow['stages'] = $agentStages;
+            if (!$this->isReadyForBoard($workflow, (string) $task['project_id'])) {
+                throw new Problem(409, 'workflow_unavailable', 'Die ausgewählte Vorlage benötigt startbereite Rollen für alle Agentphasen.');
             }
         }
     }
