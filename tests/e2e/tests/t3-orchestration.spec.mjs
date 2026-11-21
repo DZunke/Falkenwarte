@@ -366,8 +366,8 @@ test('A11/A30 early agent report and new OAuth namespace do not create a second 
   }
 });
 
-test('M4 workflow phase waits for an owner decision and does not close the task', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
-  test.setTimeout(150_000);
+test('M4 workflow phase creates one pending owner decision and does not close the task', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+  test.setTimeout(240_000);
   const { project, connection } = await configureT3(ownerApi, ownerPage, baseURL, qaMocks, 'Workflow T3');
   const profile = await createProfile(ownerApi, ownerPage, baseURL, project, connection, 'Workflow');
   const workflowResult = await ownerApi.post('/workflows', {
@@ -405,13 +405,34 @@ test('M4 workflow phase waits for an owner decision and does not close the task'
     const runBeforeReport = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state));
     await reportThroughMcp(reporter.agent, runBeforeReport, task, ownerApi);
     const awaitingApproval = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.status_reason?.includes('Eigentümerentscheidung'));
-    const approvalRequest = await ownerApi.post(`/runs/${runId}/approvals`, {
+    const pendingApprovals = await readUntil(ownerApi, `/approvals?project_id=${project.id}&run_id=${runId}&status=pending`, (page) => page.items?.length === 1, 'Der positive Bericht und der abgeschlossene T3-Lauf müssen automatisch genau eine offene Freigabe erzeugen.');
+    const approval = pendingApprovals.items[0];
+    expect(approval).toMatchObject({
+      project_id: project.id,
+      run_id: runId,
+      attempt_no: awaitingApproval.attempt_no,
+      task_revision: task.version,
+      result_digest: awaitingApproval.result_digest,
+      status: 'pending',
+      kind: 'completion',
+    });
+    const reconciliationRequest = await ownerApi.post(`/runs/${runId}/reconcile`, {
+      reason: 'Den abgeschlossenen T3-Stand nach Anlage der automatischen Freigabe erneut abgleichen.',
+    }, { version: awaitingApproval.version });
+    expect(reconciliationRequest.response.status(), JSON.stringify(reconciliationRequest.data)).toBe(202);
+    const reverifiedRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.version > awaitingApproval.version, 'Der erneute T3-Abgleich muss die bestehende offene Phasenentscheidung erhalten.');
+    const approvalsAfterReconciliation = await ownerApi.get(`/approvals?project_id=${project.id}&run_id=${runId}`);
+    expect(approvalsAfterReconciliation.response.status(), JSON.stringify(approvalsAfterReconciliation.data)).toBe(200);
+    expect(approvalsAfterReconciliation.data.items).toHaveLength(1);
+    expect(approvalsAfterReconciliation.data.items[0].id).toBe(approval.id);
+    const duplicateRequest = await ownerApi.post(`/runs/${runId}/approvals`, {
       kind: 'completion',
       result_digest: awaitingApproval.result_digest,
-      reason: 'Gemeldeten Phasenabschluss prüfen.',
-    }, { version: awaitingApproval.version });
-    expect(approvalRequest.response.status(), JSON.stringify(approvalRequest.data)).toBe(201);
-    const approval = approvalRequest.data;
+      reason: 'Eine zusätzliche Anfrage für denselben Phasenstand darf keine zweite Entscheidung anlegen.',
+    }, { version: reverifiedRun.version });
+    expect(duplicateRequest.response.status(), JSON.stringify(duplicateRequest.data)).toBe(201);
+    expect(duplicateRequest.data.id).toBe(approval.id);
+    expect((await ownerApi.get(`/approvals?project_id=${project.id}&run_id=${runId}`)).data.items).toHaveLength(1);
     const decision = await ownerApi.post(`/approvals/${approval.id}/decision`, {
       decision: 'approved',
       result_digest: awaitingApproval.result_digest,
@@ -425,11 +446,41 @@ test('M4 workflow phase waits for an owner decision and does not close the task'
     expect(succeeded.result_digest).toBe(awaitingApproval.result_digest);
     expect(finishedWorkflow.run_ids).toEqual([runId]);
     expect(unchangedTask.status_category).toBe('ready');
+
+    const rejectedTaskResult = await createReadyTask(ownerApi, project.id, 'Eine automatische Freigabe ausdrücklich zurückweisen');
+    const rejectedTask = (await ownerApi.get(`/tasks/${rejectedTaskResult.id}`)).data;
+    const rejectedStart = await ownerApi.post(`/tasks/${rejectedTask.id}/workflow-instances`, {
+      workflow_id: workflow.id,
+      definition_version: workflow.definition_version,
+      task_revision: rejectedTask.version,
+    }, { version: rejectedTask.version });
+    expect(rejectedStart.response.status(), JSON.stringify(rejectedStart.data)).toBe(202);
+    const rejectedInstanceId = rejectedStart.data.resource?.id ?? rejectedStart.data.instance_id;
+    const rejectedInstance = await readUntil(ownerApi, `/workflow-instances/${rejectedInstanceId}`, (instance) => instance.run_ids.length === 1);
+    const rejectedRunId = rejectedInstance.run_ids[0];
+    const rejectedRunBeforeReport = await readUntil(ownerApi, `/runs/${rejectedRunId}`, (run) => ['running', 'verifying'].includes(run.state));
+    await reportThroughMcp(reporter.agent, rejectedRunBeforeReport, rejectedTask, ownerApi);
+    const rejectedAwaitingDecision = await readUntil(ownerApi, `/runs/${rejectedRunId}`, (run) => run.state === 'verifying' && run.status_reason?.includes('Eigentümerentscheidung'));
+    const rejectedPending = await readUntil(ownerApi, `/approvals?project_id=${project.id}&run_id=${rejectedRunId}&status=pending`, (page) => page.items?.length === 1);
+    const rejection = await ownerApi.post(`/approvals/${rejectedPending.items[0].id}/decision`, {
+      decision: 'rejected',
+      result_digest: rejectedAwaitingDecision.result_digest,
+      reason: 'Der gemeldete Phasenabschluss ist fachlich noch nicht ausreichend belegt.',
+    }, { version: rejectedPending.items[0].version });
+    expect(rejection.response.status(), JSON.stringify(rejection.data)).toBe(200);
+    expect(rejection.data.status).toBe('rejected');
+    const failedRun = await readUntil(ownerApi, `/runs/${rejectedRunId}`, (run) => run.state === 'failed');
+    const pausedWorkflow = await readUntil(ownerApi, `/workflow-instances/${rejectedInstanceId}`, (instance) => instance.state === 'paused');
+    const rejectedTaskAfterDecision = (await ownerApi.get(`/tasks/${rejectedTask.id}`)).data;
+    expect(failedRun.status_reason).toContain('zurückgewiesen');
+    expect(pausedWorkflow.run_ids).toEqual([rejectedRunId]);
+    expect(pausedWorkflow.pause_reason).toContain('keine passende Übergangsregel');
+    expect(rejectedTaskAfterDecision.status_category).toBe('ready');
     const t3 = await qaMocks.t3Journal();
     expect(t3.unexpected).toEqual([]);
     recordEvidence(
-      'M4/A12: Phasenabschluss verlangt die passende Agentmeldung und explizite Ownerentscheidung; der Ticketabschluss bleibt getrennt.',
-      `Workflowversion ${workflow.definition_version} lief über T3-MCP. Run ${runId} wartete mit unverändertem Ergebnisdigest auf die Ownerfreigabe, wurde danach succeeded und schloss Workflow ${instanceId}; Aufgabe ${task.id} blieb im Status ready.`,
+      'M4/A12: Der passende positive Phasenbericht und T3-Abschluss erzeugen genau eine ausstehende Ownerentscheidung; Annahme und Zurückweisung bleiben explizit und schließen kein Ticket.',
+      `Workflowversion ${workflow.definition_version} erzeugte für Run ${runId} genau eine offene Freigabe; ein weiterer Request gab dieselbe Approval-ID zurück. Die Ownerannahme schloss den Run succeeded und Workflow ${instanceId}; Aufgabe ${task.id} blieb ready. Für Run ${rejectedRunId} wurde die zweite automatische Freigabe ausdrücklich zurückgewiesen; der Run wurde failed und der Workflow ohne konfigurierte Fehlerkante mit sichtbarem Klärungsgrund pausiert, Aufgabe ${rejectedTask.id} blieb ready.`,
       { t3 },
     );
   } finally {
@@ -460,6 +511,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     const beforeReport = await readUntil(ownerApi, `/runs/${runId}`, (run) => ['running', 'verifying'].includes(run.state));
     await reportThroughMcp(reporter.agent, beforeReport, task, ownerApi);
     const awaitingApproval = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.status_reason?.includes('Eigentümerentscheidung') && run.result_digest !== null);
+    const existingOldApproval = await readUntil(ownerApi, `/approvals?project_id=${project.id}&run_id=${runId}&status=pending`, (page) => page.items?.length === 1, 'Der alte Ergebnisstand muss bereits eine automatisch angelegte offene Approval besitzen.');
     const oldApprovalResult = await ownerApi.post(`/runs/${runId}/approvals`, {
       kind: 'completion',
       result_digest: awaitingApproval.result_digest,
@@ -467,9 +519,24 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     }, { version: awaitingApproval.version });
     expect(oldApprovalResult.response.status(), JSON.stringify(oldApprovalResult.data)).toBe(201);
     const oldApproval = oldApprovalResult.data;
+    expect(oldApproval.id).toBe(existingOldApproval.items[0].id);
+    expect((await ownerApi.get(`/approvals?project_id=${project.id}&run_id=${runId}`)).data.items).toHaveLength(1);
     task = (await ownerApi.get(`/tasks/${task.id}`)).data;
     expect(task.human_attention.reasons).toContain('approval_pending');
     expect(await dashboardAttentionCount(ownerApi)).toBe(1);
+
+    await ownerPage.goto(`/#/project/${project.id}/board`);
+    await expect(ownerPage.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
+    const attentionCard = ownerPage.locator('[aria-roledescription="Ticketkarte"]').filter({ hasText: task.title });
+    await expect(attentionCard).toHaveCount(1);
+    await attentionCard.getByRole('button').first().click();
+    const attentionSheet = ownerPage.getByRole('dialog', { name: task.title, exact: true });
+    await expect(attentionSheet).toBeVisible();
+    await attentionSheet.getByRole('tab', { name: 'Ausführung', exact: true }).click();
+    const executionPanel = attentionSheet.getByRole('tabpanel', { name: 'Ausführung' });
+    const attentionConstraint = executionPanel.getByText(/Eine menschliche Entscheidung ist offen:/);
+    await expect(attentionConstraint).toContainText('Ergebnismeldung wartet auf Freigabe');
+    await expect(attentionConstraint).not.toContainText('approval_pending');
 
     await qaMocks.setDecisionsScenario('decisions_ambiguous');
     const reclassified = await ownerApi.post(`/tasks/${task.id}/intake/reclassify`, {
@@ -538,6 +605,7 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     const freshRun = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => ['running', 'verifying'].includes(run.state));
     await reportThroughMcp(reporter.agent, freshRun, task, ownerApi);
     const freshResult = await readUntil(ownerApi, `/runs/${freshRunId}`, (run) => run.state === 'verifying' && run.status_reason?.includes('Eigentümerentscheidung') && run.result_digest !== null);
+    const existingFreshApproval = await readUntil(ownerApi, `/approvals?project_id=${project.id}&run_id=${freshRunId}&status=pending`, (page) => page.items?.length === 1, 'Der aktuelle Ergebnisstand muss bereits eine automatisch angelegte offene Approval besitzen.');
     const freshApprovalResult = await ownerApi.post(`/runs/${freshRunId}/approvals`, {
       kind: 'completion',
       result_digest: freshResult.result_digest,
@@ -545,6 +613,8 @@ test('A27 simultaneous routing and approval reasons resolve independently across
     }, { version: freshResult.version });
     expect(freshApprovalResult.response.status(), JSON.stringify(freshApprovalResult.data)).toBe(201);
     const freshApproval = freshApprovalResult.data;
+    expect(freshApproval.id).toBe(existingFreshApproval.items[0].id);
+    expect((await ownerApi.get(`/approvals?project_id=${project.id}&run_id=${freshRunId}`)).data.items).toHaveLength(1);
     expect(await dashboardAttentionCount(ownerApi)).toBe(1);
     const decision = await ownerApi.post(`/approvals/${freshApproval.id}/decision`, {
       decision: 'approved',

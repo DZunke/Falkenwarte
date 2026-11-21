@@ -29,6 +29,7 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         public Store $store,
         private readonly TaskIntake $intake,
         private readonly BoardWipPolicy $wipPolicy,
+        private readonly BoardWorkflowPolicyReader $boardWorkflowPolicy,
         private readonly TaskCompletionPolicy $completionPolicy,
         private readonly TaskLinkPolicy $linkPolicy,
         private readonly PluginAvailability $plugins,
@@ -473,6 +474,73 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
         return $this->presentTask($task);
     }
 
+    /** @return array<string, mixed> */
+    public function moveTaskForWorkflowStage(string $taskId, string $projectId, string $boardId, string $columnId): array
+    {
+        $task = $this->store->find('tasks', $taskId);
+        if (null === $task || $task['project_id'] !== $projectId) {
+            throw new Problem(409, 'workflow_stage_board_target_unavailable', 'Das Ticket oder Projekt für das Workflow-Boardziel ist nicht mehr verfügbar.');
+        }
+
+        $board = $this->store->find('boards', $boardId);
+        if (null === $board || $board['project_id'] !== $projectId || !empty($board['archived'])) {
+            throw new Problem(409, 'workflow_stage_board_target_unavailable', 'Das Zielboard gehört nicht mehr zum Projekt oder ist archiviert.');
+        }
+
+        $column = null;
+        foreach ($board['columns'] as $candidate) {
+            if (($candidate['id'] ?? null) === $columnId) {
+                $column = $candidate;
+                break;
+            }
+        }
+        $statusId = $column['default_drop_status_id'] ?? null;
+        if (null === $column || !is_string($statusId) || '' === $statusId || !in_array($statusId, $column['status_ids'] ?? [], true)) {
+            throw new Problem(409, 'workflow_stage_board_target_unavailable', 'Die Zielspalte wurde entfernt oder hat keinen Standardstatus für Boardbewegungen.');
+        }
+
+        $status = $this->store->find('statuses', $statusId);
+        if (null === $status || $status['project_id'] !== $projectId) {
+            throw new Problem(409, 'workflow_stage_board_target_unavailable', 'Der Standardstatus der Zielspalte wurde entfernt oder gehört nicht mehr zum Projekt.');
+        }
+        if (!in_array($status['category'], ['ready', 'active', 'review'], true)) {
+            throw new Problem(409, 'workflow_stage_board_target_not_startable', 'Der Standardstatus der Workflowspalte muss die Kategorie Bereit, In Arbeit oder Prüfung haben.');
+        }
+
+        $targetTask = $task;
+        $targetTask['status_id'] = $status['id'];
+        $targetTask['status_category'] = $status['category'];
+        if (!$this->matchesBoardFilter($targetTask, $board['config']['filter'] ?? [])) {
+            throw new Problem(409, 'workflow_stage_board_target_filtered', 'Der Ticketstatus oder die Boardfilter würden das Ticket in der Zielspalte ausblenden.');
+        }
+
+        $position = null;
+        foreach ($this->store->all('board_positions', $projectId) as $candidate) {
+            if (($candidate['board_id'] ?? null) === $boardId && ($candidate['task_id'] ?? null) === $taskId) {
+                $position = $candidate;
+                break;
+            }
+        }
+        $alreadyInTargetColumn = null !== $position && ($position['column_id'] ?? null) === $columnId;
+        if ($task['status_id'] === $status['id'] && $alreadyInTargetColumn) {
+            return $task;
+        }
+
+        if ($task['status_id'] !== $status['id']) {
+            $before = $task;
+            $task['status_id'] = $status['id'];
+            $task['status_category'] = $status['category'];
+            $this->assertBoardChangeAllowed($task, $before);
+            $task = $this->store->save('tasks', $task, 'task.moved');
+        }
+
+        if (!$alreadyInTargetColumn) {
+            $this->setBoardPosition($board, $task, $status, null, null);
+        }
+
+        return $this->store->find('tasks', $taskId) ?? $task;
+    }
+
     /** @param array<string, mixed> $body @return array<string, mixed> */
     private function assignTask(string $id, array $body, Actor $actor): array
     {
@@ -728,6 +796,13 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
             foreach ($routing['rules'] ?? [] as $rule) {
                 if ($rule['workflow_label_id'] === $labelId) {
                     throw new Problem(409, 'label_route_in_use', 'Ein Workflowlabel mit aktiver Route kann nicht deaktiviert werden.');
+                }
+            }
+        }
+        if ('topic' === $label['kind'] && isset($body['active']) && false === $body['active']) {
+            foreach ($this->store->all('boards', $projectId) as $board) {
+                if (($board['config']['workflow_policy']['manual_label_id'] ?? null) === $labelId) {
+                    throw new Problem(409, 'label_board_workflow_in_use', 'Das Themenlabel wird als manuelles Ausschlusslabel in einer Board-Workflowrichtlinie verwendet.');
                 }
             }
         }
@@ -1708,6 +1783,33 @@ final class WorkHandler implements AttentionLabelReader, OperationHandler
             $profile = $this->store->find('agent_profiles', (string) $profileId);
             if (null === $profile || !$this->agentCatalog->profileAllowsProject($profile, $projectId)) {
                 throw new Problem(422, 'validation_failed', 'Ein Rollenfilter verweist nicht auf ein für dieses Projekt zugelassenes Profil.');
+            }
+        }
+        $workflowPolicy = $config['workflow_policy'] ?? null;
+        if (null === $workflowPolicy) {
+            return;
+        }
+        if (!is_array($workflowPolicy) || !is_string($workflowPolicy['workflow_id'] ?? null)) {
+            throw new Problem(422, 'validation_failed', 'Die Board-Workflowrichtlinie benötigt einen Workflow.');
+        }
+        $workflow = $this->store->find('workflows', $workflowPolicy['workflow_id']);
+        if (null === $workflow
+            || empty($workflow['enabled'])
+            || [] === ($workflow['stages'] ?? [])
+            || (null !== ($workflow['project_id'] ?? null) && $workflow['project_id'] !== $projectId)) {
+            throw new Problem(422, 'validation_failed', 'Die Board-Workflowrichtlinie muss auf einen aktivierten Workflow dieses Projekts verweisen.');
+        }
+        if (!$this->boardWorkflowPolicy->isReadyForBoard($workflow, $projectId)) {
+            throw new Problem(422, 'board_workflow_roles_unavailable', 'Jede Phase eines Boardworkflows benötigt ein startbereites Rollenprofil derselben aktiven T3-Projektbindung.');
+        }
+        $manualLabelId = $workflowPolicy['manual_label_id'] ?? null;
+        if (null !== $manualLabelId) {
+            if (!is_string($manualLabelId)) {
+                throw new Problem(422, 'validation_failed', 'Das manuelle Ausschlusslabel ist ungültig.');
+            }
+            $manualLabel = $this->label($manualLabelId, $projectId);
+            if ('topic' !== ($manualLabel['kind'] ?? null) || empty($manualLabel['active']) || !empty($manualLabel['system_managed'])) {
+                throw new Problem(422, 'validation_failed', 'Das manuelle Ausschlusslabel muss ein aktives, selbst verwaltetes Themenlabel dieses Projekts sein.');
             }
         }
     }

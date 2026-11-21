@@ -29,6 +29,7 @@
 | Versuch | Eine konkrete T3-Startidentität innerhalb des Runs. Ein technischer Zustellretry erhöht nicht automatisch die fachliche Reparaturrunde. |
 | Beobachtung | Vom T3-Adapter normalisierte Information über den externen Zustand zu einem Zeitpunkt. Sie ist von einer Agentmeldung getrennt. |
 | Abgleich | Prüfung der gespeicherten T3-IDs, Startannahme, Beobachtung und Meldung, um einen unsicheren externen Ausgang zu klären. |
+| Boardstandard | Workflowvorlage, die ein Board beim ausdrücklichen Start im Ticket vorschlägt. Ein konfiguriertes Ausschlusslabel hält passende Tickets in manueller Bearbeitung. |
 | Workflowdefinition | Versionierter Ablauf aus Phasen, Übergängen, Bedingungen und Grenzen. Die Definition wird von Orchestration gespeichert und von Automation geprüft. |
 | Workflowinstanz | Laufender, pausierter oder beendeter Ablauf für eine Aufgabe. Sie verwendet einen Snapshot der gestarteten Definition. |
 | Agentmeldung | Vom technischen Akteur übermittelte Behauptung zu Ergebnis, Frage oder Nachweis. Ihre Herkunft wird gespeichert. Erst der Eigentümer kann einen Nachweis menschlich bestätigen. |

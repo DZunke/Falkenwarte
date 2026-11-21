@@ -266,8 +266,12 @@ test('Agentrollen können zwei Providerinstanzen desselben T3-Treibers samt Mode
     await expect(ownerPage.getByRole('option')).toHaveText(target.reasoningOptions);
     await ownerPage.getByRole('option', { name: target.reasoning, exact: true }).click();
     await expect(createButton).toBeEnabled();
+    const creation = ownerPage.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === apiPrefix + '/agent-profiles');
     await createButton.click();
-    await expect(ownerPage.getByText('Rolle angelegt', { exact: true })).toBeVisible();
+    const created = await creation;
+    expect(created.status()).toBe(201);
+    expect((await created.json()).name).toBe(target.roleName);
     const profile = await roleByName(ownerApi, target.roleName);
     expect(profile).toBeTruthy();
     const expectedTarget = {

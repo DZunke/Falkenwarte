@@ -25,6 +25,8 @@ Mit **Ctrl+K** oder **⌘K** suchst du Projekte, Ticketkennungen und Titel. Die 
 | Projekte, Boards, Tickets und Verlauf pflegen | [Projekte und Tickets](user/PROJECTS_AND_TICKETS.md) |
 | Einen T3-Agenten im eigenen Projekt mit Falkenwarte arbeiten lassen | [Agent-Skill installieren](user/AGENT_SKILL.md) |
 | T3 verbinden, Projektboard und Agentenzugang prüfen, erste Aufgabe starten | [Von der Einrichtung zur ersten Aufgabe](user/AGENTS_AND_WORKFLOWS.md) |
+| Mehrere Workflowphasen mit eigenen Agentrollen, Übergaben und Freigaben verbinden | [Von der Ersteinrichtung zum ersten Workflow mit mehreren Agentrollen](user/FIRST_WORKFLOW.md) |
+| Vierphasige Vorlage für Integrationskandidaten und offene Risiken einrichten | [Integrationsreife prüfen](user/INTEGRATION_READINESS_WORKFLOW.md) |
 | Rückfragen, Einordnungen und Freigaben bearbeiten | [Eingänge und Entscheidungen](user/INTAKE_AND_DECISIONS.md) |
 | Laufzeiten und Metriken verstehen | [Metriken](user/METRICS.md) |
 | Falkenwarte auf Linux starten oder aktualisieren | [Betrieb](OPERATIONS.md) |

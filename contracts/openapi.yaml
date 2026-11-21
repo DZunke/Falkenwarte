@@ -1227,6 +1227,12 @@ paths:
       summary: Ticketablauf lesen
       description: Owner-only Projektion aus gespeicherten Workflowdefinitionen, Runs, Meldungen, Freigaben und eingefrorenen Übergaben. Instanzen und Einzelläufe werden gemeinsam paginiert.
       parameters:
+      - name: board_id
+        in: query
+        required: false
+        description: Boardkontext der geöffneten Aufgabe für Workflow-Standard und manuelles Ausschlusslabel.
+        schema:
+          $ref: '#/components/schemas/Id'
       - $ref: '#/components/parameters/Cursor'
       - $ref: '#/components/parameters/Limit'
       responses:
@@ -6600,12 +6606,23 @@ components:
             - due_at
             - run_state
           maxItems: 12
+        workflow_policy:
+          $ref: '#/components/schemas/BoardWorkflowPolicyConfig'
       required:
       - filter
       - sort
       - group_by
       - swimlane_by
       - visible_fields
+    BoardWorkflowPolicyConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        workflow_id:
+          $ref: '#/components/schemas/Id'
+        manual_label_id:
+          $ref: '#/components/schemas/Id'
+      required: [workflow_id]
     Board:
       type: object
       additionalProperties: false
@@ -7404,6 +7421,10 @@ components:
       type: object
       additionalProperties: false
       properties:
+        owner_guidance:
+          type: string
+          maxLength: 2000
+          description: Begründung des Eigentümers für diese zusätzliche Überarbeitungsrunde.
         source_report_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
@@ -7488,6 +7509,22 @@ components:
           minimum: 1
         run_completion_policy:
           $ref: '#/components/schemas/RunCompletionPolicy'
+        stage_name:
+          type: string
+          maxLength: 120
+        stage_kind:
+          type: string
+          maxLength: 100
+        stage_instructions:
+          type: string
+          maxLength: 12000
+        stage_board_target:
+          $ref: '#/components/schemas/WorkflowStageBoardTarget'
+        workflow_routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowRouteOption'
+          maxItems: 100
         execution_target:
           $ref: '#/components/schemas/T3ExecutionTarget'
         bridge_plugin_id:
@@ -7978,6 +8015,11 @@ components:
           items:
             $ref: '#/components/schemas/RunResultArtifactCandidate'
           maxItems: 100
+        route_label_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+          description: UUID wählt einen eingefrorenen benannten Abzweig. null wählt ausdrücklich den eingefrorenen Standardübergang. Ohne Feld werden Ticket-Themenlabels ausgewertet.
         open_questions:
           type: array
           items:
@@ -8017,6 +8059,15 @@ components:
         summary:
           type: string
           maxLength: 30000
+        route_label_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        route_label_name:
+          type:
+          - string
+          - 'null'
+          maxLength: 100
         evidence_ids:
           type: array
           items:
@@ -9154,6 +9205,12 @@ components:
         name:
           type: string
           maxLength: 120
+        instructions:
+          type: string
+          maxLength: 12000
+          description: Freie phasenspezifische Arbeitsanweisung, die in dieser Workflowversion und im gestarteten Run eingefroren wird.
+        board_target:
+          $ref: '#/components/schemas/WorkflowStageBoardTarget'
         agent_profile_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
@@ -9174,6 +9231,42 @@ components:
       - run_completion_policy
       description: entry_conditions werden vor der Phase aus bereits vorhandenen Tatsachen ausgewertet; run_completion_policy beendet
         nur diese Phase. Graphprüfung verbietet Abhängigkeiten von zukünftigen Phasenergebnissen.
+    WorkflowStageBoardTarget:
+      type: object
+      additionalProperties: false
+      properties:
+        board_id:
+          $ref: '#/components/schemas/Id'
+        column_id:
+          $ref: '#/components/schemas/Id'
+      required: [board_id, column_id]
+      description: Optionales Boardziel beim Eintritt in diese Phase. Ohne board_target bleibt die aktuelle Boardzuordnung bestehen.
+    WorkflowRouteOption:
+      type: object
+      additionalProperties: false
+      properties:
+        on:
+          type: string
+          enum: [accepted, needs_changes, blocked, failed]
+        to_stage_id:
+          type: string
+          maxLength: 80
+        to_stage_name:
+          type: string
+          maxLength: 120
+        is_default:
+          type: boolean
+        route_label_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        route_label_name:
+          type:
+          - string
+          - 'null'
+          maxLength: 100
+      required: [on, to_stage_id, to_stage_name, is_default, route_label_id, route_label_name]
+      description: Im Run eingefrorene ausgehende Workflowoption. route_label_id ist eine damals aktive Themenlabel-ID aus der Workflowversion. null bezeichnet den Standardübergang.
     WorkflowTransition:
       type: object
       additionalProperties: false
@@ -9191,6 +9284,8 @@ components:
           - needs_changes
           - blocked
           - failed
+        route_label_id:
+          $ref: '#/components/schemas/Id'
         conditions:
           type: array
           items:
@@ -9201,6 +9296,7 @@ components:
       - to_stage_id
       - 'on'
       - conditions
+      description: route_label_id verweist auf ein aktives Themenlabel des Workflowprojekts. Je Quellphase und Ergebnis sind Label-IDs eindeutig; höchstens ein Übergang darf route_label_id als Standard auslassen.
     Workflow:
       type: object
       additionalProperties: false
@@ -9309,6 +9405,8 @@ components:
           $ref: '#/components/schemas/Id'
         project_id:
           $ref: '#/components/schemas/Id'
+        board_workflow_policy:
+          $ref: '#/components/schemas/TaskBoardWorkflowPolicy'
         items:
           type: array
           items:
@@ -9323,9 +9421,36 @@ components:
       required:
       - task_id
       - project_id
+      - board_workflow_policy
       - items
       - next_cursor
       - has_more
+    TaskBoardWorkflowPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum: [available, excluded, ambiguous, unconfigured, unavailable]
+        board_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        workflow_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        definition_version:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+        reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 1000
+      required: [state, board_id, workflow_id, definition_version, reason]
     TaskFlowItem:
       oneOf:
       - $ref: '#/components/schemas/TaskFlowWorkflowInstance'
@@ -9449,6 +9574,11 @@ components:
         kind:
           type: string
           maxLength: 100
+        instructions:
+          type: string
+          maxLength: 12000
+        board_target:
+          $ref: '#/components/schemas/WorkflowStageBoardTarget'
         agent_profile_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
@@ -9472,6 +9602,8 @@ components:
       type: object
       additionalProperties: false
       properties:
+        route_label_id:
+          $ref: '#/components/schemas/Id'
         from_stage_id:
           type: string
           maxLength: 80
@@ -9494,6 +9626,15 @@ components:
       type: object
       additionalProperties: false
       properties:
+        route_label_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        route_label_name:
+          type: string
+        owner_guidance:
+          type: string
+          maxLength: 2000
         from_stage_id:
           type: string
           maxLength: 80
@@ -9614,6 +9755,15 @@ components:
         summary:
           type: string
           maxLength: 30000
+        route_label_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        route_label_name:
+          type:
+          - string
+          - 'null'
+          maxLength: 100
         evidence_ids:
           type: array
           items:
@@ -9676,6 +9826,9 @@ components:
       type: object
       additionalProperties: false
       properties:
+        owner_guidance:
+          type: string
+          maxLength: 2000
         source_run_id:
           anyOf:
           - $ref: '#/components/schemas/Id'
@@ -9750,6 +9903,8 @@ components:
         task_revision:
           type: integer
           minimum: 1
+        board_id:
+          $ref: '#/components/schemas/Id'
       required:
       - workflow_id
       - definition_version
@@ -9804,6 +9959,13 @@ components:
         repair_round:
           type: integer
           minimum: 0
+        repair_decision_run_id:
+          $ref: '#/components/schemas/Id'
+          description: Nur während der Entscheidung über eine weitere Überarbeitung vorhanden. Verweist auf den auslösenden Lauf.
+        repair_decision_stage_name:
+          type: string
+          maxLength: 120
+          description: Vorgesehene Zielphase der offenen Überarbeitungsentscheidung.
         pause_reason:
           type:
           - string
@@ -9832,6 +9994,7 @@ components:
           enum:
           - pause
           - resume
+          - authorize_repair
           - cancel
         reason:
           type: string

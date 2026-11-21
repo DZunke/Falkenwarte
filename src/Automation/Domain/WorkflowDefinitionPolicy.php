@@ -35,6 +35,10 @@ final class WorkflowDefinitionPolicy
                 throw new WorkflowDefinitionViolation('workflow_definition_invalid', 'Phasen benötigen eindeutige IDs.');
             }
             $stageIds[$stageId] = true;
+            if (array_key_exists('instructions', $stage)
+                && (!is_string($stage['instructions']) || mb_strlen($stage['instructions']) > 12000)) {
+                throw new WorkflowDefinitionViolation('workflow_definition_invalid', 'Phasenanweisungen müssen Text mit höchstens 12.000 Zeichen enthalten.');
+            }
             foreach (($stage['entry_conditions'] ?? []) as $condition) {
                 $this->validateCondition($condition);
             }
@@ -48,7 +52,7 @@ final class WorkflowDefinitionPolicy
             throw new WorkflowDefinitionViolation('workflow_definition_invalid', 'Ein Workflow benötigt mindestens eine Phase.');
         }
 
-        $transitionKeys = [];
+        $transitionRoutes = [];
         foreach (($definition['transitions'] ?? []) as $transition) {
             $from = (string) ($transition['from_stage_id'] ?? '');
             $to = (string) ($transition['to_stage_id'] ?? '');
@@ -57,10 +61,15 @@ final class WorkflowDefinitionPolicy
                 throw new WorkflowDefinitionViolation('workflow_definition_invalid', 'Jeder Übergang muss auf vorhandene Phasen verweisen.');
             }
             $key = $from.'|'.$outcome;
-            if (isset($transitionKeys[$key])) {
-                throw new WorkflowDefinitionViolation('workflow_definition_ambiguous', 'Für dieselbe Phase und dasselbe Ergebnis gibt es mehrere mögliche Übergänge.');
+            $routeLabelId = $transition['route_label_id'] ?? null;
+            if (null !== $routeLabelId && (!is_string($routeLabelId) || '' === $routeLabelId)) {
+                throw new WorkflowDefinitionViolation('workflow_definition_invalid', 'Ein benannter Workflowübergang benötigt eine gültige Themenlabel-ID.');
             }
-            $transitionKeys[$key] = true;
+            $routeKey = null === $routeLabelId ? 'default' : strtolower($routeLabelId);
+            if (isset($transitionRoutes[$key][$routeKey])) {
+                throw new WorkflowDefinitionViolation('workflow_definition_ambiguous', 'Für dieselbe Phase und dasselbe Ergebnis müssen benannte Übergänge eindeutige Themenlabels verwenden und dürfen höchstens einen Standardübergang haben.');
+            }
+            $transitionRoutes[$key][$routeKey] = true;
             foreach (($transition['conditions'] ?? []) as $condition) {
                 $this->validateCondition($condition);
             }

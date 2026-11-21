@@ -30,13 +30,13 @@ const MetricsView = lazy(() => import('@/features/metrics'))
 const LabelsView = lazy(() => import('@/features/labels'))
 const DocsView = lazy(() => import('@/features/docs'))
 
-type Route = { page: string; projectId?: string; taskId?: string; createTask?: boolean; docPath?: string; roleProjectId?: string; roleConnectionId?: string }
+type Route = { page: string; projectId?: string; taskId?: string; openTaskFlow?: boolean; createTask?: boolean; docPath?: string; roleProjectId?: string; roleConnectionId?: string }
 
 function readRoute(): Route {
   const parts = window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
   if (parts[0] === 'project' && parts[1]) {
     const query = new URLSearchParams(parts[2]?.split('?')[1] ?? '')
-    return { page: 'project', projectId: parts[1], taskId: query.get('task') ?? undefined, createTask: query.get('new') === '1' }
+    return { page: 'project', projectId: parts[1], taskId: query.get('task') ?? undefined, openTaskFlow: query.get('tab') === 'flow', createTask: query.get('new') === '1' }
   }
   if (parts[0] === 'roles') return { page: 'roles', roleProjectId: parts[1], roleConnectionId: parts[2] }
   if (parts[0] === 'docs') return { page: 'docs', docPath: parts.slice(1).join('/') }
@@ -143,7 +143,7 @@ export default function App() {
 
         <main id="main-content" className="mx-auto min-h-[calc(100vh-4rem)] max-w-[1560px] px-4 py-6 md:px-8 md:py-8">
           <AsyncViewBoundary key={route.page}>
-          {route.page === 'project' && activeProject ? <ProjectBoard key={activeProject.id} project={activeProject} initialTaskId={route.taskId} initialCreate={route.createTask} onRefreshProject={() => { void queryClient.invalidateQueries({ queryKey: ['projects'] }) }} /> : null}
+          {route.page === 'project' && activeProject ? <ProjectBoard key={activeProject.id} project={activeProject} initialTaskId={route.taskId} openTaskFlow={route.openTaskFlow} initialCreate={route.createTask} onRefreshProject={() => { void queryClient.invalidateQueries({ queryKey: ['projects'] }) }} /> : null}
           {route.page === 'project' && !activeProject && <ProjectMissing projects={projects} onCreate={() => go('projects')} />}
           {route.page === 'projects' && <ProjectsPage projects={projects} loading={projectsQuery.isPending} error={projectsQuery.error} />}
           {route.page === 'dashboard' && <Suspense fallback={<PageSkeleton />}><DashboardView /></Suspense>}

@@ -46,7 +46,9 @@ Falkenwarte hat jetzt Zugang zu T3. Damit dein Agent in die andere Richtung Tick
 
 Öffne in Falkenwarte **Agents & T3 → Skill herunterladen**. Öffne dann in deinem Editor genau das Projekt, das du in T3 gebunden hast. Läuft dein Provider in WSL, arbeite im Projektordner in WSL. Für Codex legst du darin den Ordner `.agents/skills/falkenwarte` an und kopierst die heruntergeladene `SKILL.md` hinein. So findet der Agent die Anleitung, wie er Aufträge lesen und Ergebnisse melden soll. [Installationspfade nach Provider](AGENT_SKILL.md#im-zielprojekt-installieren)
 
-**Für Codex:** Lege im selben Projekt den Ordner `.codex` und darin die Datei `config.toml` an, falls sie fehlen. Ergänze den folgenden Abschnitt. Falls es bereits einen Abschnitt mit diesem Namen gibt, aktualisiere ihn und behalte die übrigen Einstellungen. Speichere die Datei. Das Beispiel passt, wenn der T3-Provider Falkenwarte in derselben WSL-Umgebung unter Port 8443 erreicht. Bei einer anderen Installation nimm deren erreichbare HTTPS-Adresse und hänge `/mcp` an.
+Jede Providerinstanz, mit der du eine Agentrolle startest, braucht einen eigenen MCP-Zugang zu Falkenwarte. Die Agentkonfiguration nennt den MCP-Server und verwendet einen Umgebungsvariablen-Namen für das Token. In T3 hinterlegst du das Token bei der passenden Providerinstanz und richtest dort auch das Vertrauen in das TLS-Zertifikat ein. Diese Rückverbindung zum Falkenwarte-MCP ist von Falkenwartes Autorisierung bei T3 getrennt. Installiere den Skill außerdem in dem Projekt, das der Agent bearbeitet.
+
+**Codex-Beispiel:** Lege im selben Projekt den Ordner `.codex` und darin die Datei `config.toml` an, falls sie fehlen. Ergänze den folgenden Abschnitt. Falls es bereits einen Abschnitt mit diesem Namen gibt, aktualisiere ihn und behalte die übrigen Einstellungen. Speichere die Datei. Das Beispiel passt, wenn der T3-Provider Falkenwarte in derselben WSL-Umgebung unter Port 8443 erreicht. Bei einer anderen Installation nimm deren erreichbare HTTPS-Adresse und hänge `/mcp` an.
 
 ```toml
 [mcp_servers.falkenwarte]
@@ -58,7 +60,14 @@ bearer_token_env_var = "FALKENWARTE_MCP_TOKEN"
 
 Für die lokale Standardinstallation braucht Codex auch das öffentliche CA-Zertifikat deiner Falkenwarte. Klicke bei derselben Instanz erneut auf **Add variable**. Verwende den Namen `CODEX_CA_CERTIFICATE` und als Wert den vollständigen Pfad zur Zertifikatsdatei in der Providerumgebung. Wenn du die Datei noch nicht hast, zeigt dir das Rezept, wie du sie aus deiner laufenden Falkenwarte kopierst und den Pfad abliest. Bei einem öffentlich vertrauenswürdigen Zertifikat genügt die Tokenvariable. [Zertifikat kopieren und Codex einrichten](AGENT_SKILL.md#codex)
 
-**Für Pi oder Claude Code:** Lege die Serverdatei und den Skill am Pfad für deinen Provider an und setze das Token in dessen Umgebung. Kehre danach für denselben Lesetest zu Schritt 8 zurück. [Pi einrichten](AGENT_SKILL.md#pi) · [Claude Code einrichten](AGENT_SKILL.md#claude-code)
+**Für jede weitere Providerinstanz:** Wiederhole diese Einrichtung in der Projektumgebung, in der T3 den Agenten ausführt. Nutze das eigene MCP-Konfigurationsformat des Providers und registriere darin einen Server mit dem Namen `falkenwarte`, der auf die erreichbare HTTPS-Adresse deiner Falkenwarte mit dem Pfad `/mcp` zeigt.
+
+1. Installiere den heruntergeladenen Falkenwarte-Skill am Installationspfad dieses Providers im gebundenen Projekt. Die Übersicht nennt die Pfade für Pi und Claude Code. [Skillpfade nach Provider](AGENT_SKILL.md#im-zielprojekt-installieren)
+2. Weise der Providerkonfiguration das Falkenwarte-Token aus Schritt 6 als Bearer-Token zu. Verwende dafür den Umgebungsvariablen-Namen `FALKENWARTE_MCP_TOKEN` und hinterlege den geheimen Wert in der Umgebung dieser Providerinstanz bei T3.
+3. Richte für ein lokales oder selbst signiertes Zertifikat das Vertrauen in die öffentliche CA deiner Falkenwarte nach dem Verfahren dieses Providers ein. Deaktiviere dafür nicht die TLS-Prüfung.
+4. Öffne in T3 einen neuen Thread im gebundenen Projekt mit genau dieser Providerinstanz und führe den Lesetest aus Schritt 8 aus. Erst wenn `tasks_list` eine erfolgreiche Antwort liefert, ist dieser zusätzliche MCP-Zugang geprüft.
+
+Die Formate, Einstellungsfelder und Zertifikatspfade unterscheiden sich zwischen Providern. Verwende deren eigene MCP-Anleitung, übertrage aber dieselbe Serveradresse, Tokenumgebung, TLS-Vertrauensstellung und den erfolgreichen Lesetest. [Pi einrichten](AGENT_SKILL.md#pi) · [Claude Code einrichten](AGENT_SKILL.md#claude-code)
 
 ## 8. Den Zugang prüfen, solange das Board noch leer ist
 
@@ -110,7 +119,7 @@ Klicke unter **Details → Erfolgskriterien** beim ersten belegten Kriterium auf
 
 Klicke oben im geöffneten Ticket auf das Statusfeld **Bereit** und wähle **Erledigt**. Schließe die Ticketansicht, sobald der neue Status angezeigt wird. Auf dem Board findest du deine Karte jetzt in der Spalte **Erledigt**.
 
-Verhindert eine Abschlussregel den Wechsel, öffne im Ticket den Reiter **Ablauf** und lies unter **Ticketstand**, was noch aussteht. Eine ausstehende Phasenfreigabe findest du im Reiter **Entscheidungen**.
+Verhindert eine Abschlussregel den Wechsel, öffne im Ticket den Reiter **Ablauf** und lies unter **Ticketstand**, was noch aussteht. Wenn eine Phase **Menschliche Freigabe** verlangt, erstellt Falkenwarte die offene Entscheidung automatisch, sobald der aktuelle Phasenbericht und die übrigen Abschlussprüfungen passen. Öffne **Entscheidungen → Freigabe ausstehend**, begründe deine Entscheidung und wähle **Annehmen** oder **Zurückweisen**. Ein zusätzliches Review kannst du unter **Ausführung** anfordern, solange für denselben Ergebnisstand keine gleichartige Freigabe aussteht.
 
 ### Den Ablauf eines Tickets lesen
 
@@ -128,6 +137,6 @@ Unter **Agentrollen** kannst du eine gespeicherte Rolle **Aktivieren**, ihre **P
 | **T3-Providerinstanz** | Du möchtest einen bestimmten Instanz-Slug und ein Modell auswählen. T3 prüft beim Start, ob die Instanz in dem Projekt aktiviert ist. |
 | **Vorhandener Referenzthread** | Ein Thread im gebundenen Projekt liefert Provider- und Modellreferenz. Wähle ihn unter **Referenzthread aus T3** oder nutze **ID manuell eingeben**. Der neue Auftrag startet in einem eigenen Thread mit eigener Unterhaltung. |
 
-Für regelmäßig wiederkehrende Bearbeitung mit anschließendem Review kannst du unter **Workflows** einen **Zwei-Phasen-Workflow** anlegen. **Agentrolle für beide Phasen** weist Bearbeitung und Review dieselbe Rolle zu. Das Formular bietet aktivierte Rollen mit passender Projektfreigabe und T3-Verbindung an. Pro Rolle kann höchstens ein Auftrag gleichzeitig laufen.
+Wenn du mehrere Phasen mit eigenen Agentrollen verbinden willst, richte einen mehrphasigen Ablauf ein und verfolge seine Übergaben im Ticket. [Von der Ersteinrichtung zum ersten Workflow mit mehreren Agentrollen](FIRST_WORKFLOW.md)
 
-Wähle im Ticket unter **Ausführung** den **Workflow** und klicke auf **Workflow starten**. Nach einer angenommenen Meldung aus der Bearbeitung folgt die Reviewphase. Meldet das Review **Änderungen nötig**, kehrt der Ablauf zur Bearbeitung zurück. Unter **Workflowlabels zuordnen** kannst du eine Workflowversion für passende Tickets festlegen. Der Start wird weiterhin im Ticket angefordert. Ein **Manueller Trigger** wird ebenfalls ausdrücklich ausgelöst.
+Pro Rolle kann höchstens ein Auftrag gleichzeitig laufen. Unter **Workflowlabels zuordnen** kannst du eine Workflowversion für passende Tickets festlegen. Der Start wird weiterhin im Ticket angefordert. Ein **Manueller Trigger** wird ebenfalls ausdrücklich ausgelöst.

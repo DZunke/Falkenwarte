@@ -15,6 +15,7 @@ use App\Shared\Application\OperationHandler;
 use App\Shared\Application\Store;
 use App\Shared\Domain\CanonicalData;
 use App\Shared\Domain\Problem;
+use App\WorkManagement\Application\BoardWorkflowPolicyReader;
 use App\WorkManagement\Application\TaskEvidenceEligibility;
 use App\WorkManagement\Application\TaskEvidenceProjectionReader;
 use Symfony\Component\Uid\Uuid;
@@ -30,6 +31,8 @@ final class RunHandler implements OperationHandler
         AgentExecutionBridge $bridge,
         private readonly AgentCatalogReader $agentCatalog,
         private readonly WorkflowPolicy $workflowPolicy,
+        private readonly WorkflowStageBoardMover $stageBoardMover,
+        private readonly BoardWorkflowPolicyReader $boardWorkflowPolicy,
         private readonly RunCompletionEvaluator $completionEvaluator,
         private readonly RunDelegationPolicy $delegationPolicy,
         private readonly TaskEvidenceProjectionReader $taskEvidenceProjection,
@@ -386,9 +389,13 @@ final class RunHandler implements OperationHandler
             $policy = $this->defaultRunPolicy();
             $workflowVersion = null;
             $routing = null;
+            $stageContext = null;
+            $stageWorkflow = null;
             if (null !== $workflowInstance) {
                 $workflow = $this->workflowDefinition((string) $workflowInstance['workflow_id'], (int) $workflowInstance['definition_version']);
                 $stage = $this->stage($workflow, (string) $workflowInstance['current_stage_id']);
+                $stageContext = $stage;
+                $stageWorkflow = $workflow;
                 if (null !== $stage['agent_profile_id'] && $stage['agent_profile_id'] !== $profile['id']) {
                     throw new Problem(409, 'run_context_mismatch', 'Das Agentprofil stimmt nicht mit der Version der aktiven Workflowphase überein.');
                 }
@@ -403,6 +410,8 @@ final class RunHandler implements OperationHandler
                     }
                     $workflow = $this->workflowDefinition((string) $routing['workflow_id'], (int) $routing['workflow_definition_version']);
                     $stage = $this->stage($workflow, (string) $body['stage']);
+                    $stageContext = $stage;
+                    $stageWorkflow = $workflow;
                     if ($stage['agent_profile_id'] !== $profile['id']) {
                         throw new Problem(409, 'run_context_mismatch', 'Das Agentprofil stimmt nicht mit der versionierten Workflowphase überein.');
                     }
@@ -412,6 +421,15 @@ final class RunHandler implements OperationHandler
                 } else {
                     $policy = $profile['default_run_completion_policy'] ?? $policy;
                 }
+            }
+
+            $source = $parentRun;
+            if (null === $source && null !== $workflowInstance && isset($workflowInstance['_stage_source_run_id'])) {
+                $source = $this->record('runs', $workflowInstance['_stage_source_run_id']);
+            }
+            $handoffSnapshot = null === $source ? [] : $this->freezeHandoff($source, $task, $workflowInstance);
+            if (null !== $stageContext) {
+                $task = $this->applyWorkflowStageBoardTarget($task, $stageContext, $projectId);
             }
 
             $runId = $this->store->id();
@@ -436,13 +454,10 @@ final class RunHandler implements OperationHandler
                 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $routing['routing_rules_version'] ?? $task['routing_rules_version'] ?? null,
             ];
-            $source = $parentRun;
-            if (null === $source && isset($workflowInstance['_stage_source_run_id'])) {
-                $source = $this->record('runs', $workflowInstance['_stage_source_run_id']);
+            if (null !== $stageContext) {
+                $snapshot += $this->stageSnapshot($stageContext, $stageWorkflow, $task);
             }
-            if (null !== $source) {
-                $snapshot += $this->freezeHandoff($source, $task);
-            }
+            $snapshot += $handoffSnapshot;
             $attempt = [
                 'attempt_no' => $attemptNo,
                 'dispatch_id' => $dispatchId,
@@ -581,6 +596,24 @@ final class RunHandler implements OperationHandler
 
             return $this->store->accepted(['resource_type' => 'run', 'id' => $id], $id);
         }
+        $routeSelectionSupplied = array_key_exists('route_label_id', $body);
+        $routeLabelId = $body['route_label_id'] ?? null;
+        $reportOutcome = (string) $body['outcome'];
+        $workflowOutcome = 'reported_success' === $reportOutcome ? 'accepted' : $reportOutcome;
+        $selectedRoute = null;
+        if ($routeSelectionSupplied) {
+            foreach (($run['snapshot']['workflow_routes'] ?? []) as $route) {
+                if (($route['on'] ?? null) === $workflowOutcome
+                    && $this->sameRouteLabelId($route['route_label_id'] ?? null, $routeLabelId)) {
+                    $selectedRoute = $route;
+                    $routeLabelId = $route['route_label_id'] ?? null;
+                    break;
+                }
+            }
+            if (null === $selectedRoute) {
+                throw new Problem(409, 'workflow_route_unavailable', 'Die gewählte Ergebnisroute gehört nicht zu den im Run eingefrorenen Möglichkeiten. Lies den Run erneut und verwende nur eine dort angebotene route_label_id oder den angebotenen Standardweg.');
+            }
+        }
         $snapshotCriteriaIds = [];
         foreach (($run['snapshot']['criteria'] ?? []) as $criterion) {
             if (isset($criterion['id']) && is_string($criterion['id'])) {
@@ -640,7 +673,7 @@ final class RunHandler implements OperationHandler
             ], 'evidence.reported');
             $evidenceIds[] = $evidence['id'];
         }
-        $this->store->save('run_reports', [
+        $reportRecord = [
             'id' => $reportId,
             'run_id' => $id,
             'attempt_no' => (int) $body['attempt_no'],
@@ -654,7 +687,12 @@ final class RunHandler implements OperationHandler
             '_digest' => $digest,
             '_reporter_id' => $actor->id,
             '_open_questions' => array_values($body['open_questions'] ?? []),
-        ], 'run.result_reported');
+        ];
+        if ($routeSelectionSupplied) {
+            $reportRecord['route_label_id'] = $routeLabelId;
+            $reportRecord['route_label_name'] = $selectedRoute['route_label_name'] ?? null;
+        }
+        $this->store->save('run_reports', $reportRecord, 'run.result_reported');
         if ($isCurrent) {
             $run['state'] = 'result_reported';
             $run['result_digest'] = $digest;
@@ -721,15 +759,67 @@ final class RunHandler implements OperationHandler
             throw new Problem(409, 'approval_stale', 'Die Entscheidung muss sich auf den aktuellen Ergebnisstand beziehen.');
         }
         $report = $this->currentReport($run);
+
+        $approval = $this->approvalForResult($run, $report, (string) $body['kind'], 'pending');
+        if (null !== $approval) {
+            $this->openAttention($run['task_id'], $run['project_id'], 'approval_pending', 'owner');
+
+            return $approval;
+        }
+
+        return $this->createApproval($run, $report, (string) $body['kind'], $body['reason'] ?? null);
+    }
+
+    /** @param array<string, mixed> $run @param array<string, mixed> $report @return array<string, mixed> */
+    private function createApproval(array $run, array $report, string $kind, ?string $reason): array
+    {
         $approval = $this->store->save('approvals', [
-            'project_id' => $run['project_id'], 'run_id' => $runId, 'attempt_no' => $run['attempt_no'],
+            'project_id' => $run['project_id'], 'run_id' => $run['id'], 'attempt_no' => $run['attempt_no'],
             'task_revision' => $report['task_revision'], 'result_digest' => $run['result_digest'],
             'status' => 'pending', 'requested_at' => $this->store->now(), 'decided_at' => null,
-            'decided_by' => null, 'reason' => $body['reason'] ?? null, 'kind' => (string) $body['kind'],
+            'decided_by' => null, 'reason' => $reason, 'kind' => $kind,
         ], 'approval.requested');
         $this->openAttention($run['task_id'], $run['project_id'], 'approval_pending', 'owner');
 
         return $approval;
+    }
+
+    /** @param array<string, mixed> $run @param array<string, mixed> $report @return array<string, mixed>|null */
+    private function approvalForResult(array $run, array $report, ?string $kind = null, ?string $status = null): ?array
+    {
+        foreach ($this->store->all('approvals', (string) $run['project_id']) as $approval) {
+            if (($approval['run_id'] ?? null) === $run['id']
+                && (int) ($approval['attempt_no'] ?? 0) === (int) $run['attempt_no']
+                && (int) ($approval['task_revision'] ?? 0) === (int) $report['task_revision']
+                && (null === $kind || ($approval['kind'] ?? null) === $kind)
+                && (null === $status || ($approval['status'] ?? null) === $status)
+                && is_string($approval['result_digest'] ?? null)
+                && hash_equals((string) $run['result_digest'], $approval['result_digest'])) {
+                return $approval;
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $run @param array<string, mixed> $report @param array<string, mixed> $task */
+    private function ensureAutomaticPhaseApproval(array $run, array $report, array $task): void
+    {
+        if (empty($report['accepted_for_reconciliation'])
+            || 'reported_success' !== ($report['outcome'] ?? null)
+            || (int) $report['attempt_no'] !== (int) $run['attempt_no']
+            || (int) $report['task_revision'] !== (int) $run['snapshot']['task_revision']
+            || (int) $task['version'] !== (int) $run['snapshot']['task_revision']
+            || !is_string($run['result_digest'] ?? null)) {
+            return;
+        }
+
+        if (null !== $this->approvalForResult($run, $report)) {
+            return;
+        }
+
+        $kind = 'review' === ($run['snapshot']['stage_kind'] ?? null) ? 'review' : 'completion';
+        $this->createApproval($run, $report, $kind, null);
     }
 
     /** @return array<string, mixed> */
@@ -782,6 +872,9 @@ final class RunHandler implements OperationHandler
             $run['state'] = 'failed';
             $run['status_reason'] = 'Die Eigentümerentscheidung hat den gemeldeten Phasenabschluss zurückgewiesen.';
             $this->store->save('runs', $run, 'run.phase_rejected');
+            if (null !== $run['workflow_instance_id']) {
+                $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
+            }
         }
 
         return $approval;
@@ -886,7 +979,7 @@ final class RunHandler implements OperationHandler
             throw new Problem(404, 'resource_not_found', 'Diese Workflowversion ist nicht vorhanden.');
         }
 
-        return $record;
+        return array_replace($record, ['id' => $id, 'version' => $version]);
     }
 
     /** @param array<string, mixed> $body */
@@ -898,6 +991,28 @@ final class RunHandler implements OperationHandler
             if (($stage['agent_profile_id'] ?? null) !== null) {
                 $this->agentCatalog->profile((string) $stage['agent_profile_id']);
             }
+        }
+        $routeLabelIds = [];
+        foreach (($body['transitions'] ?? []) as $transition) {
+            if (is_string($transition['route_label_id'] ?? null)) {
+                $routeLabelIds[strtolower($transition['route_label_id'])] = true;
+            }
+        }
+        if ([] === $routeLabelIds) {
+            return;
+        }
+        $projectId = $body['project_id'] ?? null;
+        if (!is_string($projectId)) {
+            throw new Problem(422, 'workflow_route_label_invalid', 'Benannte Abzweige benötigen einen projektgebundenen Workflow, da Themenlabels zu genau einem Projekt gehören.');
+        }
+        $topicLabels = [];
+        foreach ($this->store->all('labels', $projectId) as $label) {
+            if ('topic' === ($label['kind'] ?? null) && !empty($label['active'])) {
+                $topicLabels[strtolower((string) $label['id'])] = true;
+            }
+        }
+        if ([] !== array_diff_key($routeLabelIds, $topicLabels)) {
+            throw new Problem(422, 'workflow_route_label_invalid', 'Jeder benannte Abzweig muss ein aktives Themenlabel dieses Projekts verwenden.');
         }
     }
 
@@ -913,18 +1028,22 @@ final class RunHandler implements OperationHandler
             throw new Problem(412, 'version_conflict', 'Die Aufgabe hat sich seit dem gelesenen Stand geändert.');
         }
         $this->assertTaskCanStart($task);
-        $routing = $this->store->find('task_routing_snapshots', $taskId);
-        if (!empty($task['workflow_label_id']) && (null === $routing
-            || $routing['workflow_id'] !== $body['workflow_id']
-            || (int) $routing['workflow_definition_version'] !== (int) $body['definition_version'])) {
-            throw new Problem(409, 'workflow_route_conflict', 'Der ausgewählte Workflow stimmt nicht mit der versionierten Aufgabenroute überein.');
+        $boardId = $body['board_id'] ?? null;
+        if (null !== $boardId && !is_string($boardId)) {
+            throw new Problem(422, 'validation_failed', 'Die Boardauswahl ist ungültig.');
         }
+        $this->boardWorkflowPolicy->assertStartAllowed($task, $boardId, (string) $body['workflow_id'], (int) $body['definition_version'], $actor->owner);
         $workflow = $this->workflowDefinition((string) $body['workflow_id'], (int) $body['definition_version']);
         if (!$workflow['enabled'] || (null !== $workflow['project_id'] && $workflow['project_id'] !== $task['project_id'])) {
             throw new Problem(409, 'workflow_unavailable', 'Der Workflow ist deaktiviert oder gehört zu einem anderen Projekt.');
         }
         if ([] === $workflow['stages']) {
             throw new Problem(409, 'workflow_definition_invalid', 'Der Workflow enthält keine startbare Phase.');
+        }
+        foreach ($workflow['stages'] as $stage) {
+            if ('manual' !== $stage['kind'] && null === $stage['agent_profile_id']) {
+                throw new Problem(409, 'workflow_profile_required', sprintf('Weise der Phase „%s“ eine Agentrolle zu und starte die neue Workflowversion.', $stage['name']));
+            }
         }
         foreach ($this->store->all('workflow_instances', (string) $task['project_id']) as $instance) {
             if ($instance['task_id'] === $taskId && in_array($instance['state'], ['queued', 'running', 'paused'], true)) {
@@ -969,21 +1088,35 @@ final class RunHandler implements OperationHandler
             $instance['pause_reason'] = trim((string) $body['reason']);
             unset($instance['_paused_for_maintenance']);
             $instance = $this->store->save('workflow_instances', $instance, 'workflow.paused');
-        } elseif ('resume' === $body['action']) {
+        } elseif (in_array($body['action'], ['resume', 'authorize_repair'], true)) {
             if ('paused' !== $instance['state']) {
                 throw new Problem(409, 'workflow_transition_invalid', 'Nur ein pausierter Workflow kann fortgesetzt werden.');
+            }
+            $decisionRunId = $instance['repair_decision_run_id'] ?? null;
+            if ('authorize_repair' === $body['action']) {
+                $actor->requireOwner();
+                $guidance = trim((string) $body['reason']);
+                if (null === $decisionRunId || $decisionRunId !== end($instance['run_ids']) || '' === $guidance) {
+                    throw new Problem(409, 'workflow_repair_decision_invalid', 'Eine zusätzliche Runde benötigt eine offene Überarbeitungsentscheidung und deine Begründung.');
+                }
+                $instance['_authorized_repair'] = ['run_id' => $decisionRunId, 'route' => $instance['_pending_repair_route'], 'reason' => $guidance];
+                unset($instance['repair_decision_run_id'], $instance['repair_decision_stage_name'], $instance['_pending_repair_route']);
+                $this->resolveAttention($instance['task_id'], 'workflow_repair_limit');
+            } elseif (null !== $decisionRunId) {
+                throw new Problem(409, 'workflow_repair_decision_required', 'Prüfe die Übergabe und entscheide über eine weitere Überarbeitungsrunde.');
             }
             $instance['state'] = 'running';
             $instance['pause_reason'] = null;
             unset($instance['_paused_for_maintenance']);
             $this->resolveAttention($instance['task_id'], 'workflow_transition_required');
             $this->resolveAttention($instance['task_id'], 'workflow_entry_condition_unmet');
-            $instance = $this->store->save('workflow_instances', $instance, 'workflow.resumed');
+            $instance = $this->store->save('workflow_instances', $instance, 'authorize_repair' === $body['action'] ? 'workflow.repair_authorized' : 'workflow.resumed');
             $this->store->enqueue('workflow.advance', ['instance_id' => $id]);
         } else {
             if (in_array($instance['state'], ['succeeded', 'failed', 'cancelled'], true)) {
                 throw new Problem(409, 'workflow_transition_invalid', 'Dieser Workflow ist bereits beendet.');
             }
+            unset($instance['repair_decision_run_id'], $instance['repair_decision_stage_name'], $instance['_pending_repair_route'], $instance['_authorized_repair']);
             $instance['state'] = 'cancelled';
             $instance['pause_reason'] = trim((string) $body['reason']);
             $instance = $this->store->save('workflow_instances', $instance, 'workflow.cancelled');
@@ -1902,6 +2035,12 @@ final class RunHandler implements OperationHandler
             is_string($run['result_digest'] ?? null) ? $run['result_digest'] : null,
         );
 
+        if ('approval_pending' === $decision->outcome && !empty($policy['require_human_phase_decision'])) {
+            if (null !== $report) {
+                $this->ensureAutomaticPhaseApproval($run, $report, $task);
+            }
+        }
+
         if ('failed' === $decision->outcome) {
             $run['state'] = 'failed';
             $run['status_reason'] = $decision->reason;
@@ -2245,8 +2384,12 @@ final class RunHandler implements OperationHandler
             return;
         }
         $report = $this->currentReport($latest, false);
+        $rejectedSuccessfulReport = 'failed' === $latest['state']
+            && null !== $report
+            && 'reported_success' === ($report['outcome'] ?? null);
         $outcome = match (true) {
             'succeeded' === $latest['state'] => 'accepted',
+            $rejectedSuccessfulReport => 'failed',
             null !== $report => (string) $report['outcome'],
             'failed' === $latest['state'] => 'failed',
             'cancelled' === $latest['state'] => 'blocked',
@@ -2257,21 +2400,39 @@ final class RunHandler implements OperationHandler
 
             return;
         }
-        if ('needs_changes' === $outcome) {
-            if ($instance['repair_round'] >= (int) $workflow['limits']['max_repair_rounds']) {
-                $this->pauseWorkflow($instance, 'Die konfigurierte Zahl der Reparaturrunden ist erreicht.');
-                $this->openAttention($task['id'], $task['project_id'], 'workflow_repair_limit', 'owner');
+        $stageId = (string) $instance['current_stage_id'];
+        $outcomeTransitions = array_values(array_filter(
+            $workflow['transitions'],
+            static fn (array $candidate): bool => ($candidate['from_stage_id'] ?? null) === $stageId
+                && ($candidate['on'] ?? null) === $outcome,
+        ));
+        $runReportSelectedRoute = !$rejectedSuccessfulReport && null !== $report && array_key_exists('route_label_id', $report);
+        $routeLabelId = $runReportSelectedRoute ? $report['route_label_id'] : null;
+        $matchingTaskRoutes = [];
+        if (!$runReportSelectedRoute) {
+            $matchingTaskRoutes = $this->matchingTaskWorkflowRoutes($latest, $task, $outcome);
+            if (count($matchingTaskRoutes) > 1) {
+                $labelNames = array_map(static fn (array $route): string => (string) $route['route_label_name'], $matchingTaskRoutes);
+                $this->pauseWorkflow(
+                    $instance,
+                    'Mehrere Ticket-Themenlabels wählen unterschiedliche Workflowphasen: '.implode(', ', array_map(static fn (string $name): string => '„'.$name.'“', $labelNames)).'. Entferne oder ändere die konkurrierenden Themenlabels, sodass genau ein benannter Abzweig passt, und setze den Workflow anschließend fort.',
+                );
+                $this->openAttention($task['id'], $task['project_id'], 'workflow_transition_required', 'owner');
 
                 return;
+            }
+            if (1 === count($matchingTaskRoutes)) {
+                $routeLabelId = $matchingTaskRoutes[0]['route_label_id'];
             }
         }
         $transition = $this->workflowPolicy->selectTransition(
             $workflow['transitions'],
-            (string) $instance['current_stage_id'],
+            $stageId,
             $outcome,
+            is_string($routeLabelId) ? $routeLabelId : null,
         );
         if (null === $transition) {
-            if ('succeeded' === $latest['state']) {
+            if ('succeeded' === $latest['state'] && [] === $outcomeTransitions) {
                 $instance['state'] = 'succeeded';
                 $instance['current_stage_id'] = null;
                 $instance['pause_reason'] = null;
@@ -2280,8 +2441,30 @@ final class RunHandler implements OperationHandler
 
                 return;
             }
-            $this->pauseWorkflow($instance, 'Für das gemeldete Phasenergebnis ist keine passende Übergangsregel konfiguriert.');
+            $this->pauseWorkflow($instance, $this->workflowRoutePauseReason($latest, $outcome, $outcomeTransitions, $runReportSelectedRoute));
             $this->openAttention($task['id'], $task['project_id'], 'workflow_transition_required', 'owner');
+
+            return;
+        }
+        $stageOrder = array_flip(array_column($workflow['stages'], 'id'));
+        $targetStagePosition = $stageOrder[$transition['to_stage_id']] ?? null;
+        $sourceStagePosition = $stageOrder[$transition['from_stage_id']] ?? null;
+        $returnsToVisitedEarlierPhase = null !== $targetStagePosition
+            && null !== $sourceStagePosition
+            && $targetStagePosition < $sourceStagePosition
+            && in_array($transition['to_stage_id'], array_column($runs, 'stage'), true);
+        $isRepair = 'needs_changes' === $outcome || $returnsToVisitedEarlierPhase;
+        $authorizedRepair = $instance['_authorized_repair'] ?? null;
+        $repairRoute = array_intersect_key($transition, array_flip(['to_stage_id', 'on', 'route_label_id']));
+        $hasOwnerAuthorization = ($authorizedRepair['run_id'] ?? null) === $latest['id'] && $authorizedRepair['route'] === $repairRoute;
+        if ($isRepair && $instance['repair_round'] >= (int) $workflow['limits']['max_repair_rounds']
+            && !$hasOwnerAuthorization) {
+            $instance['repair_decision_run_id'] = $latest['id'];
+            $instance['repair_decision_stage_name'] = $this->stage($workflow, $transition['to_stage_id'])['name'];
+            $instance['_pending_repair_route'] = $repairRoute;
+            unset($instance['_authorized_repair']);
+            $this->pauseWorkflow($instance, 'Die konfigurierte Zahl der Reparaturrunden ist erreicht. Prüfe den letzten Bericht. Du kannst eine weitere Überarbeitung mit einem Hinweis freigeben oder den Workflow abbrechen.');
+            $this->openAttention($task['id'], $task['project_id'], 'workflow_repair_limit', 'owner');
 
             return;
         }
@@ -2305,7 +2488,7 @@ final class RunHandler implements OperationHandler
 
             return;
         }
-        if ('needs_changes' === $outcome) {
+        if ($isRepair) {
             ++$instance['repair_round'];
         }
         $historyStatus = $instance['transition_history_status'] ?? null;
@@ -2320,10 +2503,18 @@ final class RunHandler implements OperationHandler
             'from_stage_id' => (string) $instance['current_stage_id'],
             'to_stage_id' => (string) $transition['to_stage_id'],
             'outcome' => $outcome,
+            'route_label_id' => $transition['route_label_id'] ?? null,
             'source_run_id' => (string) $latest['id'],
             'report_id' => is_string($report['id'] ?? null) ? $report['id'] : null,
             'selected_at' => $this->store->now(),
-        ];
+        ] + ($hasOwnerAuthorization ? ['owner_guidance' => $authorizedRepair['reason']] : []);
+        if (is_string($transition['route_label_id'] ?? null)) {
+            $routeLabelName = $this->workflowRouteLabelName($latest, $outcome, $transition['route_label_id']);
+            if (null !== $routeLabelName) {
+                $selectedTransitions[array_key_last($selectedTransitions)]['route_label_name'] = $routeLabelName;
+            }
+        }
+        unset($instance['_authorized_repair']);
         $instance['selected_transitions'] = $selectedTransitions;
         $instance['transition_history_status'] = $historyStatus;
         $instance['_stage_source_run_id'] = $latest['id'];
@@ -2364,6 +2555,12 @@ final class RunHandler implements OperationHandler
 
             return;
         }
+        if (!$this->agentCatalog->profileAllowsProject($profile, (string) $task['project_id'])) {
+            $this->pauseWorkflow($instance, 'Das Rollenprofil dieser Phase ist für dieses Projekt nicht mehr freigegeben. Prüfe seine Projektfreigabe oder starte nach dem Rollenwechsel eine neue Workflowversion.');
+            $this->openAttention($task['id'], $task['project_id'], 'workflow_profile_unavailable', 'owner');
+
+            return;
+        }
         $binding = $this->agentCatalog->bindingForProject((string) $task['project_id']);
         if (null === $binding || $binding['connection_id'] !== $profile['connection_id']) {
             $this->pauseWorkflow($instance, 'T3-Projektbindung und Agentprofil sind nicht passend konfiguriert.');
@@ -2385,6 +2582,16 @@ final class RunHandler implements OperationHandler
                 return;
             }
         }
+        $handoffSnapshot = null === $source ? [] : $this->freezeHandoff($source, $task, $instance);
+        try {
+            $this->assertTaskCanStart($task);
+            $task = $this->applyWorkflowStageBoardTarget($task, $stage, (string) $instance['project_id']);
+        } catch (Problem $problem) {
+            $this->pauseWorkflow($instance, $problem->getMessage());
+            $this->openAttention($task['id'], $task['project_id'], 'workflow_entry_condition_unmet', 'owner');
+
+            return;
+        }
         $runId = $this->store->id();
         $dispatchId = $this->store->id();
         $run = $this->store->save('runs', [
@@ -2400,7 +2607,7 @@ final class RunHandler implements OperationHandler
                 'delegation_depth' => 0,
                 'classification_id' => $task['classification_id'] ?? null, 'workflow_label_id' => $task['workflow_label_id'] ?? null,
                 'routing_rules_version' => $task['routing_rules_version'] ?? null,
-            ] + (null === $source ? [] : $this->freezeHandoff($source, $task)),
+            ] + $this->stageSnapshot($stage, $workflow, $task) + $handoffSnapshot,
             'attempt_no' => 1, 'attempts' => [[
                 'attempt_no' => 1, 'dispatch_id' => $dispatchId, 'connection_id' => $connection['id'],
                 'auth_epoch' => max(1, (int) $connection['auth_epoch']), 'external_thread_id' => null,
@@ -2418,8 +2625,170 @@ final class RunHandler implements OperationHandler
         $this->store->enqueue('run.dispatch', ['run_id' => $run['id']]);
     }
 
+    /** @param array<string, mixed> $task @param array<string, mixed> $stage @return array<string, mixed> */
+    private function applyWorkflowStageBoardTarget(array $task, array $stage, string $projectId): array
+    {
+        if (!array_key_exists('board_target', $stage)) {
+            return $task;
+        }
+
+        $target = $stage['board_target'];
+        if (!is_array($target) || !is_string($target['board_id'] ?? null) || !is_string($target['column_id'] ?? null)) {
+            throw new Problem(409, 'workflow_stage_board_target_unavailable', 'Das Boardziel dieser Workflowphase ist unvollständig.');
+        }
+
+        return $this->stageBoardMover->move(
+            (string) $task['id'],
+            $projectId,
+            $target['board_id'],
+            $target['column_id'],
+        );
+    }
+
+    /** @param array<string, mixed> $stage @return array<string, mixed> */
+    private function stageSnapshot(array $stage, ?array $workflow = null, ?array $task = null): array
+    {
+        $snapshot = [
+            'stage_name' => (string) $stage['name'],
+            'stage_kind' => (string) $stage['kind'],
+        ];
+        if (is_string($stage['instructions'] ?? null)) {
+            $snapshot['stage_instructions'] = $stage['instructions'];
+        }
+        if (is_array($stage['board_target'] ?? null)) {
+            $snapshot['stage_board_target'] = $stage['board_target'];
+        }
+        if (null !== $workflow && null !== $task) {
+            $snapshot['workflow_routes'] = $this->workflowRouteOptions($workflow, (string) $stage['id'], (string) $task['project_id']);
+        }
+
+        return $snapshot;
+    }
+
+    /** @return list<array{on: string, to_stage_id: string, to_stage_name: string, is_default: bool, route_label_id: string|null, route_label_name: string|null}> */
+    private function workflowRouteOptions(array $workflow, string $stageId, string $projectId): array
+    {
+        $stagesById = array_column($workflow['stages'] ?? [], null, 'id');
+        $labelsById = [];
+        foreach ($this->store->all('labels', $projectId) as $label) {
+            if ('topic' === ($label['kind'] ?? null) && !empty($label['active'])) {
+                $labelsById[strtolower((string) $label['id'])] = $label;
+            }
+        }
+        $options = [];
+        foreach ($workflow['transitions'] ?? [] as $transition) {
+            if (($transition['from_stage_id'] ?? null) !== $stageId) {
+                continue;
+            }
+            $target = $stagesById[$transition['to_stage_id'] ?? ''] ?? null;
+            if (!is_array($target)) {
+                continue;
+            }
+            $routeLabelId = $transition['route_label_id'] ?? null;
+            $routeLabelName = null;
+            if (is_string($routeLabelId)) {
+                $routeLabel = $labelsById[strtolower($routeLabelId)] ?? null;
+                if (!is_array($routeLabel)) {
+                    continue;
+                }
+                $routeLabelName = (string) $routeLabel['name'];
+            } else {
+                $routeLabelId = null;
+            }
+            $options[] = [
+                'on' => (string) $transition['on'],
+                'to_stage_id' => (string) $target['id'],
+                'to_stage_name' => (string) $target['name'],
+                'is_default' => null === $routeLabelId,
+                'route_label_id' => $routeLabelId,
+                'route_label_name' => $routeLabelName,
+            ];
+        }
+
+        return $options;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function matchingTaskWorkflowRoutes(array $run, array $task, string $outcome): array
+    {
+        $taskLabelIds = [];
+        foreach ($task['label_ids'] ?? [] as $labelId) {
+            if (is_string($labelId)) {
+                $taskLabelIds[strtolower($labelId)] = true;
+            }
+        }
+        if (is_string($task['primary_topic_label_id'] ?? null)) {
+            $taskLabelIds[strtolower($task['primary_topic_label_id'])] = true;
+        }
+        if ([] === $taskLabelIds) {
+            return [];
+        }
+        $activeTopicIds = [];
+        foreach ($this->store->all('labels', (string) $task['project_id']) as $label) {
+            if ('topic' === ($label['kind'] ?? null) && !empty($label['active'])) {
+                $activeTopicIds[strtolower((string) $label['id'])] = true;
+            }
+        }
+        $matches = [];
+        foreach ($run['snapshot']['workflow_routes'] ?? [] as $route) {
+            $routeLabelId = $route['route_label_id'] ?? null;
+            if (($route['on'] ?? null) !== $outcome
+                || !is_string($routeLabelId)
+                || !isset($taskLabelIds[strtolower($routeLabelId)], $activeTopicIds[strtolower($routeLabelId)])) {
+                continue;
+            }
+            $matches[strtolower($routeLabelId)] = $route;
+        }
+
+        return array_values($matches);
+    }
+
+    /** @param list<array<string, mixed>> $outcomeTransitions */
+    private function workflowRoutePauseReason(array $run, string $outcome, array $outcomeTransitions, bool $reportSelectedRoute): string
+    {
+        if ([] === $outcomeTransitions) {
+            return 'Für dieses Phasenergebnis ist keine passende Übergangsregel konfiguriert.';
+        }
+        if ($reportSelectedRoute) {
+            return 'Die gewählte Ergebnisroute kann in der eingefrorenen Workflowversion nicht angewendet werden. Prüfe den Runbericht und die angebotenen Routen.';
+        }
+        $availableRoutes = array_values(array_filter(
+            $run['snapshot']['workflow_routes'] ?? [],
+            static fn (array $route): bool => ($route['on'] ?? null) === $outcome,
+        ));
+        if ([] === $availableRoutes) {
+            return 'Die konfigurierten Abzweige sind im Projekt nicht mehr aktiv verfügbar. Aktiviere ein passendes Themenlabel oder aktualisiere die Workflowversion.';
+        }
+        $hasDefault = [] !== array_filter($availableRoutes, static fn (array $route): bool => !empty($route['is_default']));
+        if ($hasDefault) {
+            return 'Für dieses Ergebnis wurde kein eindeutiger Themenabzweig gewählt. Prüfe die Ticket-Themenlabels und setze den Workflow anschließend fort.';
+        }
+
+        return 'Für dieses Ergebnis ist kein Standardübergang konfiguriert und die Ticket-Themenlabels wählen keinen eindeutigen benannten Abzweig. Wähle im Runbericht eine angebotene route_label_id oder passe die Ticket-Themenlabels an und setze den Workflow anschließend fort.';
+    }
+
+    private function workflowRouteLabelName(array $run, string $outcome, string $routeLabelId): ?string
+    {
+        foreach ($run['snapshot']['workflow_routes'] ?? [] as $route) {
+            if (($route['on'] ?? null) === $outcome && $this->sameRouteLabelId($route['route_label_id'] ?? null, $routeLabelId)) {
+                return is_string($route['route_label_name'] ?? null) ? $route['route_label_name'] : null;
+            }
+        }
+
+        return null;
+    }
+
+    private function sameRouteLabelId(mixed $left, mixed $right): bool
+    {
+        if (null === $left || null === $right) {
+            return null === $left && null === $right;
+        }
+
+        return is_string($left) && is_string($right) && strtolower($left) === strtolower($right);
+    }
+
     /** Freeze the preceding attempt before the new role can begin or the owner can edit its references. */
-    private function freezeHandoff(array $source, array $task): array
+    private function freezeHandoff(array $source, array $task, ?array $instance = null): array
     {
         if ($source['task_id'] !== $task['id'] || $source['project_id'] !== $task['project_id']) {
             throw new Problem(409, 'run_context_mismatch', 'Die Phasenübergabe gehört nicht zu dieser Aufgabe.');
@@ -2442,6 +2811,10 @@ final class RunHandler implements OperationHandler
             }
         }
 
+        $transitions = $instance['selected_transitions'] ?? [];
+        $transition = [] === $transitions ? [] : $transitions[array_key_last($transitions)];
+        $ownerGuidance = ($transition['source_run_id'] ?? null) === $source['id'] ? ($transition['owner_guidance'] ?? null) : null;
+
         return [
             'handoff_source_run_id' => $source['id'],
             'handoff_snapshot' => [
@@ -2457,7 +2830,7 @@ final class RunHandler implements OperationHandler
                 'open_questions' => $report['_open_questions'] ?? [],
                 'reported_evidence_ids' => array_values(array_unique($currentEvidenceIds)),
                 'link_collections' => $references,
-            ],
+            ] + (null === $ownerGuidance ? [] : ['owner_guidance' => $ownerGuidance]),
         ];
     }
 
@@ -2697,7 +3070,7 @@ final class RunHandler implements OperationHandler
         }
         foreach ($this->store->all('workflow_versions') as $candidate) {
             if ($candidate['workflow_id'] === $workflowId && (int) $candidate['definition_version'] === $version) {
-                return $candidate;
+                return array_replace($candidate, ['id' => $workflowId, 'version' => $version]);
             }
         }
 
@@ -2954,6 +3327,37 @@ final class RunHandler implements OperationHandler
         if ([] !== $criteria) {
             $body .= "\n\nAkzeptanzkriterien:\n".implode("\n", $criteria);
             $body .= "\nGib im Ergebnisbericht für jeden Nachweis unter artifacts[].criterion_ids die IDs genau der Kriterien an, die er belegt. Nenne die durchgeführten Prüfungen mit ihren tatsächlichen Ergebnissen.";
+        }
+        if (is_string($snapshot['stage_name'] ?? null) || is_string($snapshot['stage_kind'] ?? null)) {
+            $body .= "\n\nWorkflowphase:\n";
+            if (is_string($snapshot['stage_name'] ?? null)) {
+                $body .= 'Name: '.$snapshot['stage_name']."\n";
+            }
+            if (is_string($snapshot['stage_kind'] ?? null)) {
+                $body .= 'Art: '.$snapshot['stage_kind']."\n";
+            }
+            $instructions = trim((string) ($snapshot['stage_instructions'] ?? ''));
+            if ('' !== $instructions) {
+                $body .= "Phasenauftrag:\n".$instructions;
+            }
+        }
+        $workflowRoutes = $snapshot['workflow_routes'] ?? [];
+        if ([] !== $workflowRoutes) {
+            $body .= "\n\nEingefrorene Workflowrouten:\n";
+            foreach ($workflowRoutes as $route) {
+                $reportOutcome = 'accepted' === $route['on'] ? 'reported_success' : $route['on'];
+                $selection = !empty($route['is_default'])
+                    ? 'Standardroute (route_label_id: null)'
+                    : sprintf('%s (route_label_id: %s)', $route['route_label_name'], $route['route_label_id']);
+                $body .= sprintf(
+                    '- Bei Ergebnis %s: Zielphase „%s“ (Phase-ID: %s), Auswahl %s.\n',
+                    $reportOutcome,
+                    $route['to_stage_name'],
+                    $route['to_stage_id'],
+                    $selection,
+                );
+            }
+            $body .= 'Sende in runs_report_result nur eine hier aufgeführte route_label_id, null für die ausdrücklich gewählte Standardroute oder lasse das Feld weg, damit Falkenwarte die Ticket-Themenlabels auswertet.';
         }
         if ('' !== trim($template)) {
             $body .= "\n\nRollenhinweise:\n".$template;

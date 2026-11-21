@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ExternalLink, GitBranch, History, Link2, Pencil, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -7,7 +7,6 @@ import { api, formatError, mutationParams, request, type Project, type Task, typ
 import { useProjectCustomFields, useProjectLabels, useTask, useTaskLinks } from '@/lib/queries'
 import TaskExecution from '@/components/TaskExecution'
 import TaskDecisions from '@/components/TaskDecisions'
-import TaskFlow from '@/components/TaskFlow'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -20,6 +19,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import LinkNotesPanel from '@/features/plugins/LinkNotesPanel'
 import { CustomFieldInputs, CustomFieldValues, customFieldDraft, customFieldsPayload, missingRequiredCustomFields, type CustomFieldDraft } from './custom-fields'
+
+const TaskFlow = lazy(() => import('@/components/TaskFlow'))
 
 const linkKinds = [
   ['source_issue', 'Issue'], ['pull_request', 'Pull request'], ['merge_request', 'Merge request'], ['documentation', 'Dokumentation'], ['other', 'Referenz'],
@@ -52,17 +53,17 @@ function evidenceIsCurrentForTask(evidence: components['schemas']['Evidence'], t
     : evidence.task_revision === task.version
 }
 
-export default function TaskSheet({ taskId, project, statuses, onClose, onChanged }: { taskId?: string; project: Project; statuses: TaskStatus[]; onClose: () => void; onChanged: () => Promise<void> }) {
+export default function TaskSheet({ taskId, openFlow = false, project, board, statuses, onClose, onChanged }: { taskId?: string; openFlow?: boolean; project: Project; board?: components['schemas']['Board']; statuses: TaskStatus[]; onClose: () => void; onChanged: () => Promise<void> }) {
   const queryClient = useQueryClient()
-  const [activeTab, setActiveTab] = useState('details')
+  const [activeTab, setActiveTab] = useState(openFlow ? 'flow' : 'details')
   const [restoreActionId, setRestoreActionId] = useState<string>()
   const taskQuery = useTask(taskId)
   const taskFlowQuery = useInfiniteQuery({
-    queryKey: ['task-flow', taskId],
-    enabled: Boolean(taskId && activeTab === 'flow'),
+    queryKey: ['task-flow', taskId, board?.id],
+    enabled: Boolean(taskId && (activeTab === 'flow' || activeTab === 'execution')),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => request(api.GET('/tasks/{task_id}/flow', {
-      params: { path: { task_id: taskId! }, query: { limit: 10, ...(pageParam ? { cursor: pageParam } : {}) } },
+      params: { path: { task_id: taskId! }, query: { board_id: board?.id, limit: 10, ...(pageParam ? { cursor: pageParam } : {}) } },
     })),
     getNextPageParam: (page) => page.has_more ? page.next_cursor ?? undefined : undefined,
   })
@@ -145,12 +146,12 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   } : undefined
 
   useEffect(() => {
-    setActiveTab('details')
+    setActiveTab(openFlow ? 'flow' : 'details')
     setEvidenceAssignmentTarget(undefined)
     setEvidenceAssignmentCriteria([])
     setEvidenceAssignmentError('')
     setEvidenceAssignmentProgress('')
-  }, [taskId])
+  }, [taskId, openFlow])
 
   useEffect(() => {
     if (!task || editing) return
@@ -385,7 +386,7 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
   return (
     <>
       <Sheet open={Boolean(taskId)} onOpenChange={(open) => { if (!open) { setEditing(false); onClose() } }}>
-        <SheetContent side="right" className="flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
+        <SheetContent side="right" className={`flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full ${activeTab === 'flow' ? 'data-[side=right]:sm:max-w-[min(94vw,84rem)]' : 'data-[side=right]:sm:max-w-2xl'}`}>
           {taskQuery.isPending ? <div className="space-y-4 p-6"><div className="h-6 w-3/4 animate-pulse rounded bg-muted" /><div className="h-24 animate-pulse rounded bg-muted" /></div> : taskQuery.isError || !task ? (
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 p-8 text-center"><h2 className="font-semibold">Ticket konnte nicht geladen werden</h2><p className="text-sm text-muted-foreground">{formatError(taskQuery.error)}</p><Button variant="outline" onClick={() => void taskQuery.refetch()}><RefreshCw />Erneut laden</Button></div>
           ) : (
@@ -455,26 +456,29 @@ export default function TaskSheet({ taskId, project, statuses, onClose, onChange
                   </section>
                 </TabsContent>
                 <TabsContent value="flow" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
-                  <TaskFlow
-                    task={task}
-                    projectId={project.id}
-                    statuses={statuses}
-                    flow={taskFlow}
-                    loading={taskFlowQuery.isPending}
-                    error={taskFlowQuery.isError && !taskFlow ? formatError(taskFlowQuery.error) : undefined}
-                    loadingMore={taskFlowQuery.isFetchingNextPage}
-                    hasMore={taskFlow?.has_more ?? false}
-                    onOpenDetails={() => setActiveTab('details')}
-                    onOpenExecution={() => setActiveTab('execution')}
-                    onRetry={() => { void taskFlowQuery.refetch() }}
-                    onLoadMore={() => { void taskFlowQuery.fetchNextPage() }}
-                  />
+                  <Suspense fallback={<p role="status" className="text-sm text-muted-foreground">Ablauf wird geladen…</p>}>
+                    <TaskFlow
+                      task={task}
+                      projectId={project.id}
+                      statuses={statuses}
+                      labelNames={new Map(labelsQuery.data?.items.map((label) => [label.id, label.name]))}
+                      flow={taskFlow}
+                      loading={taskFlowQuery.isPending}
+                      error={taskFlowQuery.isError && !taskFlow ? formatError(taskFlowQuery.error) : undefined}
+                      loadingMore={taskFlowQuery.isFetchingNextPage}
+                      hasMore={taskFlow?.has_more ?? false}
+                      onOpenDetails={() => setActiveTab('details')}
+                      onOpenExecution={() => setActiveTab('execution')}
+                      onRetry={() => { void taskFlowQuery.refetch() }}
+                      onLoadMore={() => { void taskFlowQuery.fetchNextPage() }}
+                    />
+                  </Suspense>
                 </TabsContent>
                 <TabsContent value="decisions" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   <TaskDecisions task={task} project={project} onChanged={invalidate} />
                 </TabsContent>
                 <TabsContent value="execution" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
-                  <TaskExecution task={task} project={project} onChanged={invalidate} onOpenDecisions={() => setActiveTab('decisions')} />
+                  <TaskExecution task={task} project={project} boardId={board?.id} boardPolicy={taskFlow?.board_workflow_policy} boardPolicyError={taskFlowQuery.isError ? formatError(taskFlowQuery.error) : undefined} retryBoardPolicy={() => void taskFlowQuery.refetch()} onChanged={invalidate} onOpenDecisions={() => setActiveTab('decisions')} />
                 </TabsContent>
                 <TabsContent value="history" className="falkenwarte-scrollbar mt-0 min-w-0 flex-1 overflow-y-auto px-6 pb-8 pt-5">
                   {restoreActionQuery.data && <div className={`mb-5 rounded-lg border p-3 text-sm ${restoreActionQuery.data.status === 'failed' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-primary/20 bg-accent text-accent-foreground'}`} role="status"><p className="font-medium">{restoreActionQuery.data.status === 'succeeded' ? 'Wiederherstellung abgeschlossen' : restoreActionQuery.data.status === 'failed' ? 'Wiederherstellung fehlgeschlagen' : 'Wiederherstellung läuft'}</p><p className="mt-1 text-xs">Action {restoreActionQuery.data.id}</p></div>}
