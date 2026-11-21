@@ -86,7 +86,11 @@ Ein Themenabzweig wählt das nächste Ziel und fordert für sich allein keine me
 
 Hat ein Ticket mehrere passende Themenlabels mit verschiedenen Zielen, pausiert der Ablauf zur Klärung. Das gilt auch, wenn es für ein Ergebnis nur gelabelte Alternativen gibt und weder Bericht noch Ticketlabel eine davon bestimmen. Öffne dann **Ablauf**, lies den Pausegrund und prüfe die angebotenen Routen im letzten Phasenbericht.
 
-Im Workfloweditor fasst **N Routen** mindestens drei Übergänge zwischen demselben Phasenpaar zusammen. Im Ticketablauf öffnet **N mögliche Routen** die ungeprüften Kandidaten eines solchen Paars; wenn bereits eine Route besucht wurde, heißen die übrigen Kandidaten **N weitere Routen**. Die Liste benennt das Phasenpaar und zeigt je Eintrag Ergebnis, Standardroute oder Themenlabel sowie zusätzliche Bedingungen und im Ticket den Auswahlstatus. Du kannst die Einträge mit Maus oder Tastatur auswählen. Bereits durchgeführte Routen bleiben einzeln auswählbar und öffnen den jeweiligen Besuch.
+Im Workfloweditor fasst **N Routen** mindestens drei Übergänge zwischen demselben Phasenpaar zusammen. Klicke auf **N Routen**, um die Ergebnisrouten zu sehen, und wähle einen Übergang, um seine **Übergangsdetails · N** im Editor zu öffnen.
+
+Im Ticketablauf öffnet **N mögliche Routen** beziehungsweise **N weitere Routen** die unbesuchten Kandidaten zwischen einem Phasenpaar. Unter dem Diagramm erscheint **Bisher unbesuchte Routen** mit dem Phasenpaar, Ergebnis, Standardroute oder Themenlabel, Status und möglichen Bedingungen. Wähle einen Eintrag, um im Detailbereich **Mögliche Route aus Version N** die gespeicherte Definition zu lesen. Diese Auswahl startet keinen Auftrag und verändert den Ablauf nicht. Mit **Auswahl schließen** klappst du die Liste wieder zu.
+
+Tatsächlich durchlaufene Routen bleiben im Diagramm einzeln anklickbar. Bei wiederholten Besuchen zeigt die Kante **×N**. Klicke sie an und wähle im Dialog **Besuch auswählen · N tatsächliche Übergänge** einen Besuch, um genau dessen Lauf, Agentenmeldung und Übergabeprotokoll zu öffnen. In der schmalen Ansicht stehen tatsächliche Besuche getrennt unter **N tatsächliche Besuche** und heißen **Versuch N · Zeitpunkt**. Diese Besuchsauswahl ist unabhängig von den unbesuchten Kandidaten.
 
 ### Redaktionsrückrunde in einer Zeitungsdemo
 
@@ -145,7 +149,7 @@ Unter **Ausführungen** siehst du den neuen Ablauf. **Start wird übertragen** z
 
 ## 9. Fortschritt und Übergaben lesen
 
-Öffne im Ticket **Ablauf**. Unter **Workflows und Agentenläufe** siehst du die gespeicherten Phasen, ihre Rollen und Zustände. Bei dichten Abläufen zeigt eine schmale Ansicht zuerst **Phasen & Routen** mit auswählbaren Phasen und ihren Routen; **Diagramm** wechselt zur Grafik und zurück, ohne die Auswahl zu verlieren. Im **Workflowablauf** zeigt das Diagramm außerdem die möglichen Routen dieser Version. Klicke auf eine tatsächliche Route, um das gewählte Ergebnis, den zugehörigen Lauf und die verknüpfte Agentenmeldung zu lesen; das **Übergabeprotokoll ansehen** ist dabei geöffnet. Mit **Details schließen** kehrst du zum Diagramm zurück. Du erreichst dieselbe Ansicht über **Workflows → Läufe → Ticketablauf ansehen**.
+Öffne im Ticket **Ablauf**. Unter **Workflows und Agentenläufe** siehst du die gespeicherten Phasen, ihre Rollen und Zustände. Bei dichten Abläufen zeigt eine schmale Ansicht zuerst **Phasen & Routen** mit auswählbaren Phasen und Routen; **Diagramm** wechselt zur Grafik und zurück, ohne die Auswahl zu verlieren. Unbesuchte Kandidaten kannst du dort wie im Diagramm nur zur Ansicht ihrer gespeicherten Definition öffnen. Tatsächliche Besuche sind eigene Einträge und öffnen den jeweiligen Lauf. Im **Workflowablauf** zeigt das Diagramm außerdem die möglichen Routen dieser Version. Klicke auf eine tatsächliche Route, um das gewählte Ergebnis, den zugehörigen Lauf und die verknüpfte Agentenmeldung zu lesen; das **Übergabeprotokoll ansehen** ist dabei geöffnet. Mit **Details schließen** kehrst du zum Diagramm zurück. Du erreichst dieselbe Ansicht über **Workflows → Läufe → Ticketablauf ansehen**.
 
 Öffne den Lauf der empfangenden Phase und klicke auf **Übergabeprotokoll ansehen**. Dort liest du den Bericht, offene Fragen und Links, die diese Rolle zu Beginn erhalten hat. Falkenwarte speichert die Übergabe mit dem Quellbericht und dem beim Übergang gültigen Stand.
 
