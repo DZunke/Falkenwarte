@@ -1078,6 +1078,15 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
   for (const route of routes) {
     if (route.bundle) {
       await bundle.scrollIntoViewIfNeeded();
+      if (route.index === 2) {
+        await bundle.focus();
+        await bundle.press('Enter');
+        const bundleDetails = ownerPage.getByTestId('workflow-graph-route-bundle-detail-1-3');
+        await expect(bundleDetails).toBeVisible();
+        await ownerPage.keyboard.press('Escape');
+        await expect(bundleDetails).toBeHidden();
+        await expect(bundle).toBeFocused();
+      }
       await bundle.focus();
       await expect(bundle).toBeFocused();
       await bundle.press('Enter');
