@@ -395,7 +395,8 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     await expect(actualTransitions.getByText('Umsetzung → Review', { exact: true })).toBeVisible();
     const ticketStatus = flow.getByRole('region', { name: 'Ticketstand' });
     await expect(ticketStatus.getByText('Bereit', { exact: true })).toBeVisible();
-    await expect(flow.getByRole('region', { name: 'Workflowphasen' }).getByText('Erledigt', { exact: true })).toHaveCount(2);
+    const workflowPhases = flow.getByRole('region', { name: 'Workflowphasen' });
+    await expect(workflowPhases.getByText('Erledigt', { exact: true })).toHaveCount(2);
     const workflowGraph = flow.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
     const implementationNode = workflowGraph.getByTestId('workflow-graph-stage-implementation');
     const reviewNode = workflowGraph.getByTestId('workflow-graph-stage-review');
@@ -428,9 +429,9 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     await expect(selectedReviewHandoff).toContainText(`Herkunft: Versuch ${implementationRun.attempt_no} · Ticketrevision ${task.version}`);
     await expect(selectedReviewHandoff).toContainText(displayedDateTime(implementationResult.report.received_at));
     await testInfo.attach('ticket-flow-frozen-handoff', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
-    const flowRunDetails = flow.locator('summary').filter({ hasText: /^Laufdetails ansehen · Lauf \d+ ·/ });
+    const flowRunDetails = workflowPhases.locator('summary').filter({ hasText: /^Laufdetails ansehen · Lauf \d+ ·/ });
     await expect(flowRunDetails).toHaveCount(2);
-    const reviewRunList = flow.getByRole('list', { name: 'Läufe der Phase Review' });
+    const reviewRunList = workflowPhases.getByRole('list', { name: 'Läufe der Phase Review' });
     const reviewRunDetails = reviewRunList.locator(':scope > li > details');
     await expect(reviewRunDetails).toHaveCount(1);
     await reviewRunDetails.locator(':scope > summary').click();
@@ -668,7 +669,11 @@ test('M4 requires an owner-guided decision before one extra repair round beyond 
     await expect(flow.getByRole('heading', { name: 'Bearbeitung', exact: true })).toBeVisible();
     const actualTransitions = flow.getByRole('heading', { name: 'Tatsächliche Übergänge' }).locator('..');
     await expect(actualTransitions.getByText('Bearbeitung → Bearbeitung', { exact: true })).toHaveCount(2);
-    await expect(flow.getByText('Blockiert', { exact: true })).toBeVisible();
+    const workflowGraph = flow.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
+    const repairNode = workflowGraph.getByTestId('workflow-graph-stage-implementation');
+    await expect(repairNode.getByText('Blockiert', { exact: true })).toBeVisible();
+    const workflowPhases = flow.getByRole('region', { name: 'Workflowphasen' });
+    await expect(workflowPhases.getByText('Blockiert', { exact: true })).toBeVisible();
     const pausedStatus = flow.getByRole('status').filter({ hasText: 'Warum pausiert' });
     await expect(pausedStatus.getByText('Warum pausiert', { exact: true })).toBeVisible();
     await expect(pausedStatus).toContainText(pausedAgain.pause_reason);
@@ -684,9 +689,6 @@ test('M4 requires an owner-guided decision before one extra repair round beyond 
     await runDetails.nth(2).click();
     const extraRepairDetails = runList.locator(':scope > li > details').nth(2);
     await expect(extraRepairDetails.getByText('Auch nach dem zusätzlichen Versuch bleibt Änderungsbedarf.', { exact: true })).toBeVisible();
-    const workflowGraph = flow.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
-    const repairNode = workflowGraph.getByTestId('workflow-graph-stage-implementation');
-    await expect(repairNode).toContainText('Blockiert');
     const plannedEdges = workflowGraph.locator('[data-testid^="workflow-graph-planned-transition-"]');
     await expect(plannedEdges).toHaveCount(finalFlowInstance.candidate_transitions.length);
     await expect(plannedEdges.nth(0)).toHaveAccessibleName(/Eingefrorene Route/);
