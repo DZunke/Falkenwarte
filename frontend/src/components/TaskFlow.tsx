@@ -300,10 +300,12 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
         : null
   const graphRouteLabels = new Map<string, string>()
   for (const transition of item.candidate_transitions) {
-    if (transition.route_label_id) graphRouteLabels.set(transition.route_label_id, labelNames.get(transition.route_label_id) ?? 'Themenlabel')
+    const name = transition.route_label_id ? labelNames.get(transition.route_label_id) : undefined
+    if (transition.route_label_id && name) graphRouteLabels.set(transition.route_label_id, name)
   }
   for (const transition of selectedTransitions) {
-    if (transition.route_label_id) graphRouteLabels.set(transition.route_label_id, transition.route_label_name ?? labelNames.get(transition.route_label_id) ?? 'Themenlabel')
+    const name = transition.route_label_name ?? (transition.route_label_id ? labelNames.get(transition.route_label_id) : undefined)
+    if (transition.route_label_id && name) graphRouteLabels.set(transition.route_label_id, name)
   }
 
   useEffect(() => {
@@ -391,33 +393,33 @@ function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, b
           </div>
 
           {focus && <section ref={activityDetailsRef} data-testid="task-flow-activity-details" className="min-w-0 scroll-mt-4 space-y-3 rounded-lg border bg-card p-3 text-card-foreground">
-          <header className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h6 tabIndex={-1} data-testid="task-flow-activity-details-heading" className="break-words text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">{selectedRunTransition
-                ? `${phaseNames.get(selectedRunTransition.from_stage_id) ?? 'Vorherige Phase'} → ${phaseNames.get(selectedRunTransition.to_stage_id) ?? 'Folgephase'}`
-                : selectedRun
-                  ? `Lauf ${selectedRunOrdinal} · ${phaseNames.get(selectedRun.stage) ?? 'Phase nicht verfügbar'}`
-                  : selectedPhase?.name ?? 'Phase nicht verfügbar'}</h6>
-              {selectedPhase && <p className="mt-1 text-xs text-muted-foreground">{selectedPhase.agent_profile_id ? `Rolle: ${profileName(selectedPhase.agent_profile_id, profileNames)}` : 'Keine feste Agentrolle'}</p>}
-            </div>
-            <Button type="button" size="sm" variant="ghost" onClick={returnToGraph}>Details schließen</Button>
-          </header>
+            <header className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h6 tabIndex={-1} data-testid="task-flow-activity-details-heading" className="break-words text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">{selectedRunTransition
+                  ? `${phaseNames.get(selectedRunTransition.from_stage_id) ?? 'Vorherige Phase'} → ${phaseNames.get(selectedRunTransition.to_stage_id) ?? 'Folgephase'}`
+                  : selectedRun
+                    ? `Lauf ${selectedRunOrdinal} · ${phaseNames.get(selectedRun.stage) ?? 'Phase nicht verfügbar'}`
+                    : selectedPhase?.name ?? 'Phase nicht verfügbar'}</h6>
+                {selectedPhase && <p className="mt-1 text-xs text-muted-foreground">{selectedPhase.agent_profile_id ? `Rolle: ${profileName(selectedPhase.agent_profile_id, profileNames)}` : 'Keine feste Agentrolle'}</p>}
+              </div>
+              <Button type="button" size="sm" variant="ghost" onClick={returnToGraph}>Details schließen</Button>
+            </header>
 
-          {selectedRunTransition && <div className="rounded-md bg-muted/40 p-3 text-sm">
-            <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{displayName(selectedRunTransition.outcome, outcomes)}</Badge><span className="text-xs text-muted-foreground">Tatsächlicher Übergang · {dateTime(selectedRunTransition.selected_at) ?? 'Zeitpunkt nicht überliefert'}</span></div>
-            {selectedRunTransition.route_label_id !== undefined && <p className="mt-1 text-xs">{selectedRunTransition.route_label_id ? `Themenlabel: ${selectedRunTransition.route_label_name ?? labelNames.get(selectedRunTransition.route_label_id) ?? 'nicht mehr verfügbar'}` : 'Standardroute'}</p>}
-            {selectedRunTransition.owner_guidance && <p className="mt-2 whitespace-pre-wrap break-words">Freigabe für eine weitere Überarbeitung: {selectedRunTransition.owner_guidance}</p>}
-            {selectedRunTransition.report_id && !selectedRun?.reports.some((report) => report.id === selectedRunTransition.report_id) && <p role="status" className="mt-2 text-xs text-muted-foreground">Die zugeordnete Agentenmeldung ist in diesem Lauf nicht enthalten.</p>}
-          </div>}
+            {selectedRunTransition && <div className="rounded-md bg-muted/40 p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{displayName(selectedRunTransition.outcome, outcomes)}</Badge><span className="text-xs text-muted-foreground">Tatsächlicher Übergang · {dateTime(selectedRunTransition.selected_at) ?? 'Zeitpunkt nicht überliefert'}</span></div>
+              {selectedRunTransition.route_label_id !== undefined && <p className="mt-1 text-xs">{selectedRunTransition.route_label_id ? `Themenlabel: ${selectedRunTransition.route_label_name ?? labelNames.get(selectedRunTransition.route_label_id) ?? 'nicht mehr verfügbar'}` : 'Standardroute'}</p>}
+              {selectedRunTransition.owner_guidance && <p className="mt-2 whitespace-pre-wrap break-words">Freigabe für eine weitere Überarbeitung: {selectedRunTransition.owner_guidance}</p>}
+              {selectedRunTransition.report_id && !selectedRun?.reports.some((report) => report.id === selectedRunTransition.report_id) && <p role="status" className="mt-2 text-xs text-muted-foreground">Die zugeordnete Agentenmeldung ist in diesem Lauf nicht enthalten.</p>}
+            </div>}
 
-          {selectedPhase && phaseRuns.length > 0 && !selectedRun && <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">Läufe dieser Phase</p>
-            <ul className="space-y-1.5">{phaseRuns.map((run, index) => <li key={run.id}><Button type="button" variant="outline" size="sm" className="h-auto w-full justify-between gap-3 py-2 text-left" data-testid={`task-flow-run-select-${run.id}`} onClick={() => selectRun(run)}><span className="min-w-0 truncate">Lauf {index + 1} · {displayName(run.state, runStates)}</span><span className="shrink-0 text-xs text-muted-foreground">{dateTime(run.created_at) ?? 'Zeitpunkt nicht überliefert'}</span></Button></li>)}</ul>
-          </div>}
+            {selectedPhase && phaseRuns.length > 0 && !selectedRun && <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Läufe dieser Phase</p>
+              <ul className="space-y-1.5">{phaseRuns.map((run, index) => <li key={run.id}><Button type="button" variant="outline" size="sm" className="h-auto w-full justify-between gap-3 py-2 text-left" data-testid={`task-flow-run-select-${run.id}`} onClick={() => selectRun(run)}><span className="min-w-0 truncate">Lauf {index + 1} · {displayName(run.state, runStates)}</span><span className="shrink-0 text-xs text-muted-foreground">{dateTime(run.created_at) ?? 'Zeitpunkt nicht überliefert'}</span></Button></li>)}</ul>
+            </div>}
 
-          {selectedPhase && phaseRuns.length === 0 && <p className="text-sm text-muted-foreground">Für diese Phase ist noch kein Lauf gespeichert.</p>}
-          {selectedRun && <RunDetails run={selectedRun} ordinal={selectedRunOrdinal} profileNames={profileNames} reports={reports} onOpenDetails={onOpenDetails} expanded selectedReportId={selectedReportId} />}
-          {!selectedPhase && !selectedRunTransition && <p className="text-sm text-muted-foreground">Die ausgewählte Phase ist in der gespeicherten Workflowversion nicht enthalten.</p>}
+            {selectedPhase && phaseRuns.length === 0 && <p className="text-sm text-muted-foreground">Für diese Phase ist noch kein Lauf gespeichert.</p>}
+            {selectedRun && <RunDetails run={selectedRun} ordinal={selectedRunOrdinal} profileNames={profileNames} reports={reports} onOpenDetails={onOpenDetails} expanded selectedReportId={selectedReportId} />}
+            {!selectedPhase && !selectedRunTransition && <p className="text-sm text-muted-foreground">Die ausgewählte Phase ist in der gespeicherten Workflowversion nicht enthalten.</p>}
           </section>}
         </div>
       </section>}
