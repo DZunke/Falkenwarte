@@ -237,6 +237,7 @@ test('reporting role selects a frozen route back to Discovery with its report ha
   const reporting = await createProfile(ownerApi, project, connection, `Reporting ${suffix}`, 'Reporting', 'Prüfe die Recherche und wähle die fachlich passende Rückroute.');
   const labelA = await ownerApi.createLabel(project.id, { name: `Discovery ${suffix}`, key: `discovery-${suffix}`, color: '#315B77' });
   const labelB = await ownerApi.createLabel(project.id, { name: `Recherche erweitern ${suffix}`, key: `research-${suffix}`, color: '#7765A3' });
+  const labelC = await ownerApi.createLabel(project.id, { name: `Quelle gegenprüfen ${suffix}`, key: `source-check-${suffix}`, color: '#39785B' });
   const workflow = await createWorkflow(ownerApi, project.id, `Redaktionelle Route ${suffix}`, [
     stage('discovery', 'Discovery', discovery, targets.ready),
     stage('reporting', 'Reporting', reporting, targets.review),
@@ -245,7 +246,8 @@ test('reporting role selects a frozen route back to Discovery with its report ha
   ], [
     { from_stage_id: 'discovery', to_stage_id: 'reporting', on: 'accepted', conditions: [] },
     { from_stage_id: 'reporting', to_stage_id: 'discovery', on: 'needs_changes', route_label_id: labelA.id, conditions: [] },
-    { from_stage_id: 'reporting', to_stage_id: 'research', on: 'needs_changes', route_label_id: labelB.id, conditions: [] },
+    { from_stage_id: 'reporting', to_stage_id: 'discovery', on: 'needs_changes', route_label_id: labelB.id, conditions: [] },
+    { from_stage_id: 'reporting', to_stage_id: 'discovery', on: 'needs_changes', route_label_id: labelC.id, conditions: [] },
     { from_stage_id: 'reporting', to_stage_id: 'fallback', on: 'needs_changes', conditions: [] },
   ]);
   const createdTask = await createReadyTask(ownerApi, project.id, { statuses });
@@ -272,7 +274,8 @@ test('reporting role selects a frozen route back to Discovery with its report ha
   expect(reportingRun.snapshot).toMatchObject({ agent_profile_id: reporting.id, stage_name: 'Reporting', stage_board_target: targets.review });
   expect(reportingRun.snapshot.workflow_routes).toEqual(expect.arrayContaining([
     expect.objectContaining({ on: 'needs_changes', to_stage_id: 'discovery', route_label_id: labelA.id, route_label_name: labelA.name }),
-    expect.objectContaining({ on: 'needs_changes', to_stage_id: 'research', route_label_id: labelB.id, route_label_name: labelB.name }),
+    expect.objectContaining({ on: 'needs_changes', to_stage_id: 'discovery', route_label_id: labelB.id, route_label_name: labelB.name }),
+    expect.objectContaining({ on: 'needs_changes', to_stage_id: 'discovery', route_label_id: labelC.id, route_label_name: labelC.name }),
     expect.objectContaining({ on: 'needs_changes', to_stage_id: 'fallback', is_default: true, route_label_id: null }),
   ]));
   expect((await ownerApi.get(`/tasks/${task.id}`)).data.status_category).toBe('review');
@@ -372,13 +375,42 @@ test('reporting role selects a frozen route back to Discovery with its report ha
       await expect(workflowGraph.getByTestId(`workflow-graph-planned-transition-${index}`)).toHaveCount(0);
     }
     await expect(plannedEdges).toHaveCount(finalFlow.candidate_transitions.length - new Set(selectedCandidateIndexes).size);
-    const alternativeIndex = finalFlow.candidate_transitions.findIndex((transition) => transition.route_label_id === labelB.id);
-    expect(alternativeIndex).toBeGreaterThanOrEqual(0);
-    expect(finalFlow.selected_transitions.some((event) => candidateMatchesEvent(finalFlow.candidate_transitions[alternativeIndex], event))).toBe(false);
-    const plannedAlternative = workflowGraph.getByTestId(`workflow-graph-planned-transition-${alternativeIndex}`);
-    await expect(plannedAlternative).toHaveAccessibleName(/Eingefrorene Route/);
-    await expect(plannedAlternative).toHaveAccessibleName(/Möglich/);
-    await expect(plannedAlternative).toHaveAccessibleName(new RegExp(labelB.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    const alternativeIndexes = [labelB.id, labelC.id].map((routeLabelId) => finalFlow.candidate_transitions.findIndex((transition) => transition.route_label_id === routeLabelId));
+    expect(alternativeIndexes.every((index) => index >= 0)).toBe(true);
+    for (const index of alternativeIndexes) {
+      expect(finalFlow.selected_transitions.some((event) => candidateMatchesEvent(finalFlow.candidate_transitions[index], event))).toBe(false);
+    }
+    const defaultAlternativeIndex = finalFlow.candidate_transitions.findIndex((transition) => transition.from_stage_id === 'reporting' && transition.to_stage_id === 'fallback' && !transition.route_label_id);
+    expect(defaultAlternativeIndex).toBeGreaterThanOrEqual(0);
+    expect(finalFlow.selected_transitions.some((event) => candidateMatchesEvent(finalFlow.candidate_transitions[defaultAlternativeIndex], event))).toBe(false);
+    const sourceStageIndex = finalFlow.phases.findIndex((phase) => phase.id === 'reporting');
+    const targetStageIndex = finalFlow.phases.findIndex((phase) => phase.id === 'discovery');
+    expect(sourceStageIndex).toBeGreaterThanOrEqual(0);
+    expect(targetStageIndex).toBeGreaterThanOrEqual(0);
+    const routeBundle = workflowGraph.getByTestId(`workflow-graph-route-bundle-${sourceStageIndex}-${targetStageIndex}`);
+    await expect(routeBundle).toBeVisible();
+    await expect(routeBundle).toContainText(/2 (weitere )?Routen/);
+    await routeBundle.click();
+    await expect(routeBundle).not.toContainText(labelA.name);
+    const alternativeItems = alternativeIndexes.map((index) => workflowGraph.getByTestId(`workflow-graph-route-bundle-item-${sourceStageIndex}-${targetStageIndex}-${index}`));
+    for (const [position, alternative] of alternativeItems.entries()) {
+      const label = position === 0 ? labelB : labelC;
+      await expect(alternative).toBeVisible();
+      await expect(alternative).toContainText(label.name);
+      await expect(alternative).toContainText('Möglich');
+    }
+    const instanceBeforeInspectingAlternative = await ownerApi.get(`/workflow-instances/${instance.id}`);
+    expect(instanceBeforeInspectingAlternative.data.run_ids).toHaveLength(3);
+    await alternativeItems[0].click();
+    await expect(workflowGraph.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`)).toContainText(labelB.name);
+    await alternativeItems[1].click();
+    await expect(workflowGraph.getByTestId(`workflow-graph-route-bundle-detail-${sourceStageIndex}-${targetStageIndex}`)).toContainText(labelC.name);
+    expect((await ownerApi.get(`/workflow-instances/${instance.id}`)).data.run_ids).toHaveLength(3);
+    expect((await taskFlow(ownerApi, task.id, instance.id)).selected_transitions).toEqual(finalFlow.selected_transitions);
+    const plannedDefaultAlternative = workflowGraph.getByTestId(`workflow-graph-planned-transition-${defaultAlternativeIndex}`);
+    await expect(plannedDefaultAlternative).toBeVisible();
+    await expect(plannedDefaultAlternative).toHaveAccessibleName(/Möglich/);
+    await expect(plannedDefaultAlternative).toHaveAccessibleName(/Standardroute/);
     const actualRoute = workflowGraph.locator('[data-testid^="workflow-graph-run-route-"]').filter({ hasText: labelA.name });
     await expect(actualRoute).toHaveCount(1);
     await expect(actualRoute).toHaveAccessibleName(/1 tatsächliche Besuche/);
@@ -409,9 +441,10 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     const reportingLaunch = journal.accepted_launches.find((launch) => launch.payload.message.includes(`Run-ID: ${reportingRunId}\n`));
     expect(reportingLaunch?.payload.message).toContain(`${labelA.name} (route_label_id: ${labelA.id})`);
     expect(reportingLaunch?.payload.message).toContain(`${labelB.name} (route_label_id: ${labelB.id})`);
+    expect(reportingLaunch?.payload.message).toContain(`${labelC.name} (route_label_id: ${labelC.id})`);
     recordEvidence(
       'Die Reportingrolle wählt eine eingefrorene Themenroute zurück zur vorherigen Discoveryphase.',
-      `Run ${reportingRunId} bot beide benannten Topicrouten und den Standardweg im Dispatch an. Eine fremde Route-ID wurde mit 409 ohne Report, Evidenz, Taskrevision oder Workflowänderung abgewiesen. Die gültige Route ${labelA.name} startete Discovery erneut, setzte das Ticket zurück auf ready und übergab Report, Quellrevision, Nachweis-ID und offene Frage unverändert.`,
+      `Run ${reportingRunId} bot drei benannte Topicrouten und den Standardweg im Dispatch an. Eine fremde Route-ID wurde mit 409 ohne Report, Evidenz, Taskrevision oder Workflowänderung abgewiesen. Die gültige Route ${labelA.name} startete Discovery erneut, setzte das Ticket zurück auf ready und übergab Report, Quellrevision, Nachweis-ID und offene Frage unverändert. Im Ticketablauf blieben die Alternativen ${labelB.name} und ${labelC.name} als bedienbare Bündeloptionen sichtbar; ihre Auswahl änderte weder den Lauf noch die Historie.`,
       { t3: journal },
     );
   } finally {
