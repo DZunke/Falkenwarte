@@ -235,6 +235,76 @@ async function assertNodes(graph, viewport, description) {
   }
 }
 
+async function assertGraphContentsFitPane(graph, expectedStageCount, expectedRouteCount, description) {
+  const pane = graph.getByTestId('workflow-editor-graph-pane');
+  let lastSnapshot;
+  let previousGeometry = '';
+  let stableReads = 0;
+
+  await expect.poll(async () => {
+    lastSnapshot = await pane.evaluate((element) => {
+      const paneBounds = element.getBoundingClientRect();
+      const rectOf = (child) => {
+        const bounds = child.getBoundingClientRect();
+        const left = bounds.left - paneBounds.left;
+        const top = bounds.top - paneBounds.top;
+        const right = bounds.right - paneBounds.left;
+        const bottom = bounds.bottom - paneBounds.top;
+
+        return {
+          id: child.getAttribute('data-testid') ?? child.getAttribute('aria-label') ?? child.className,
+          x: left,
+          y: top,
+          width: bounds.width,
+          height: bounds.height,
+          withinPane: left >= -2 && top >= -2 && right <= paneBounds.width + 2 && bottom <= paneBounds.height + 2,
+        };
+      };
+      const isRendered = (child) => {
+        const style = getComputedStyle(child);
+        const bounds = child.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0;
+      };
+      const nodes = [...element.querySelectorAll('[data-testid^="workflow-graph-stage-"]')].filter(isRendered).map(rectOf);
+      const routes = [...element.querySelectorAll('.workflow-graph__edge-label [data-testid^="workflow-graph-transition-"]')].filter(isRendered).map(rectOf);
+
+      return {
+        paneWidth: paneBounds.width,
+        paneHeight: paneBounds.height,
+        nodes,
+        routes,
+        allWithin: [...nodes, ...routes].every((item) => item.withinPane),
+      };
+    });
+
+    const geometry = [...lastSnapshot.nodes, ...lastSnapshot.routes]
+      .map((item) => `${item.id}:${item.x.toFixed(1)},${item.y.toFixed(1)},${item.width.toFixed(1)},${item.height.toFixed(1)}`)
+      .join('|');
+    if (lastSnapshot.nodes.length === expectedStageCount
+      && lastSnapshot.routes.length === expectedRouteCount
+      && lastSnapshot.allWithin
+      && geometry === previousGeometry) {
+      stableReads += 1;
+    } else {
+      stableReads = 0;
+    }
+    previousGeometry = geometry;
+
+    return lastSnapshot.nodes.length === expectedStageCount
+      && lastSnapshot.routes.length === expectedRouteCount
+      && lastSnapshot.allWithin
+      && stableReads >= 1;
+  }, { timeout: 10_000, message: `${description}: Graph-Fit muss stabil sein und alle Knoten/Routenlabels in der sichtbaren Pane halten.` }).toBe(true);
+
+  expect(lastSnapshot.paneWidth, `${description}: Pane hat eine messbare Breite.`).toBeGreaterThan(0);
+  expect(lastSnapshot.paneHeight, `${description}: Pane hat eine messbare Höhe.`).toBeGreaterThan(0);
+  expect(lastSnapshot.nodes, `${description}: alle Phasen bleiben innerhalb der Pane.`).toHaveLength(expectedStageCount);
+  expect(lastSnapshot.routes, `${description}: alle gerenderten Routenlabels bleiben innerhalb der Pane.`).toHaveLength(expectedRouteCount);
+  for (const item of [...lastSnapshot.nodes, ...lastSnapshot.routes]) {
+    expect(item.withinPane, `${description}: ${item.id} liegt vollständig in der Pane (mit 2px Rundungstoleranz).`).toBe(true);
+  }
+}
+
 async function assertFieldsFit(ownerPage, inspector, fieldNames, viewport, description) {
   const fields = [];
   for (const name of fieldNames) {
@@ -424,6 +494,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
     expect(graphBox.width, `${viewport.name}: der Graph bleibt sichtbar`).toBeGreaterThan(180);
     expect(graphBox.x).toBeGreaterThanOrEqual(-1);
     expect(graphBox.x + graphBox.width).toBeLessThanOrEqual(viewport.width + 1);
+    await assertGraphContentsFitPane(graph, 3, 4, `${viewport.name} Ausgangsansicht`);
     await assertNodes(graph, viewport, viewport.name);
     const stageInspector = await selectStage(ownerPage, graph, 'research', stageNames[0], profiles[0].name, viewport.width < 1280);
     if (viewport.width < 1280) {
@@ -431,6 +502,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await expect(stageHeading).toBeFocused();
       await expect(stageHeading).toBeInViewport();
     }
+    await assertGraphContentsFitPane(graph, 3, 4, `${viewport.name} Phaseninspector`);
     await assertGraphGridColumns(stageInspector, viewport.width >= 1280 ? 2 : 1, `${viewport.name}: Canvas und Phaseninspector verwenden nur verfügbare Spalten.`);
     await assertFieldsFit(ownerPage, stageInspector, [
       'Name der Phase 1',
@@ -450,8 +522,10 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await expect(standardInspector.getByLabel('Ergebnis')).toContainText('Angenommen');
       await expect(standardInspector.getByLabel('Zu Phase')).toContainText(stageNames[0]);
       await expect(standardInspector.getByLabel('Label für diesen Übergang')).toContainText('Standardroute');
+      await assertGraphContentsFitPane(graph, 3, 4, 'Desktop Standardrouteninspector');
       await assertFieldsFit(ownerPage, standardInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Standardrückroute');
       const transitionInspector = await selectReturnTransition(ownerPage, graph, 3, false);
+      await assertGraphContentsFitPane(graph, 3, 4, 'Desktop gelabelter Übergangsinspector');
       await assertGraphGridColumns(transitionInspector, 2, 'Der Rückweg öffnet dieselbe Canvas-/Inspector-Aufteilung.');
       await assertFieldsFit(ownerPage, transitionInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Rückroute');
       const routeLabelControl = transitionInspector.getByLabel('Label für diesen Übergang', { exact: true });
@@ -466,19 +540,23 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await expect.poll(() => ownerPage.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true);
       await assertPageFits(ownerPage, viewport, 'Dunkles Desktop-Theme');
       const darkInspector = await selectReturnTransition(ownerPage, graph, 3, true);
+      await assertGraphContentsFitPane(graph, 3, 4, 'Dunkler Desktop Übergangsinspector');
       await assertFieldsFit(ownerPage, darkInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Dunkle Desktop-Rückroute');
       await testInfo.attach('workflow-graph-desktop-dark', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
+      await darkInspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
+      await expect(darkInspector).toHaveCount(0);
     } else {
       const transitionInspector = await selectReturnTransition(ownerPage, graph, 3, true);
       const inspectorHeading = transitionInspector.getByTestId('workflow-inspector-heading');
       await expect(inspectorHeading).toBeFocused();
       await expect(inspectorHeading).toBeInViewport();
+      await assertGraphContentsFitPane(graph, 3, 4, `${viewport.name} Übergangsinspector`);
       await assertGraphGridColumns(transitionInspector, 1, `${viewport.name}: Canvas und Inspector stehen in einer Spalte.`);
       await assertFieldsFit(ownerPage, transitionInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, `${viewport.name}-Rückroute`);
       await testInfo.attach(`workflow-graph-${viewport.width}`, { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
+      await transitionInspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
+      await expect(transitionInspector).toHaveCount(0);
       if (viewport.width === 390) {
-        await transitionInspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
-        await expect(transitionInspector).toHaveCount(0);
         const returnedFocus = graph.getByTestId('workflow-graph-stage-research');
         await expect(returnedFocus).toBeFocused();
         await expect(returnedFocus).toBeInViewport();
@@ -494,6 +572,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
   const diamondView = await openWorkflow(ownerPage, project, savedDiamond.data);
   const diamondGraph = diamondView.graph;
   await assertPageFits(ownerPage, { width: 1588, height: 850 }, 'Vier-Phasen-Diamant');
+  await assertGraphContentsFitPane(diamondGraph, 4, 4, 'Vier-Phasen-Diamant Ausgangsansicht');
   await expect(diamondGraph.locator('[data-testid^="workflow-graph-stage-"]')).toHaveCount(4);
   const diamondGraphBox = await diamondGraph.boundingBox();
   expect(diamondGraphBox).not.toBeNull();
@@ -534,6 +613,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
     await edge.click();
     const inspector = ownerPage.getByTestId('workflow-transition-inspector');
     await expect(inspector).toBeVisible();
+    await assertGraphContentsFitPane(diamondGraph, 4, 4, `Diamantinspector ${route.from} nach ${route.to}`);
     await expect(inspector.getByLabel('Von Phase')).toContainText(route.from);
     await expect(inspector.getByLabel('Ergebnis')).toContainText('Angenommen');
     await expect(inspector.getByLabel('Zu Phase')).toContainText(route.to);
@@ -572,6 +652,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
 
   const connectedInspector = ownerPage.getByTestId('workflow-transition-inspector');
   await expect(connectedInspector).toBeVisible();
+  await assertGraphContentsFitPane(noLabelGraph.graph, 3, 4, 'Per Canvas verbundener Workflow mit geöffnetem Inspector');
   await expect(connectedInspector.getByLabel('Von Phase')).toContainText(stageNames[0]);
   await expect(connectedInspector.getByLabel('Ergebnis')).toContainText('Änderungen nötig');
   await expect(connectedInspector.getByLabel('Zu Phase')).toContainText(stageNames[2]);
@@ -605,6 +686,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
   await reopenedEdge.click();
   const reopenedInspector = ownerPage.getByTestId('workflow-transition-inspector');
   await expect(reopenedInspector).toBeVisible();
+  await assertGraphContentsFitPane(reopenedGraph.graph, 3, 4, 'Gespeicherte Canvas-Verbindung nach erneutem Öffnen');
   await expect(reopenedInspector.getByLabel('Von Phase')).toContainText(stageNames[0]);
   await expect(reopenedInspector.getByLabel('Ergebnis')).toContainText('Änderungen nötig');
   await expect(reopenedInspector.getByLabel('Zu Phase')).toContainText(stageNames[2]);
