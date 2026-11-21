@@ -531,7 +531,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await expect(stageHeading).toBeInViewport();
     }
     await assertGraphContentsFitPane(graph, 3, 4, `${viewport.name} Phaseninspector`);
-    await assertGraphGridColumns(stageInspector, viewport.width >= 1280 ? 2 : 1, `${viewport.name}: Canvas und Phaseninspector verwenden nur verfügbare Spalten.`);
+    await assertGraphGridColumns(stageInspector, viewport.width >= 1536 ? 2 : 1, `${viewport.name}: Canvas und Phaseninspector verwenden nur verfügbare Spalten.`);
     await assertFieldsFit(stageInspector, [
       'Name der Phase 1',
       'Art der Phase',

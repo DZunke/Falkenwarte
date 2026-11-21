@@ -7,13 +7,14 @@ type StageBox = { x: number; y: number; width: number; height: number }
 type Route = {
   kind: 'forward' | 'return' | 'skip'
   lane: number
+  labelMaxWidth: number
   waypoints?: Point[]
 }
 
 export function workflowLayout(stageIds: readonly string[], transitions: readonly Connection[], direction: Direction, containerWidth: number) {
   const horizontal = direction === 'horizontal'
   const count = Math.max(1, stageIds.length)
-  const gap = Math.max(76, Math.min(230, (containerWidth - 40 - count * 205) / Math.max(1, count - 1)))
+  const gap = Math.max(120, Math.min(230, (containerWidth - 40 - count * 205) / Math.max(1, count - 1)))
   const index = new Map(stageIds.map((id, i) => [id, i]))
   const edges = new Map<number, Route>()
   const groups = new Map<string, number[]>()
@@ -29,7 +30,7 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
     const group = groups.get(pair) ?? []
     group.push(i)
     groups.set(pair, group)
-    edges.set(i, { kind, lane: 0 })
+    edges.set(i, { kind, lane: 0, labelMaxWidth: Math.max(112, gap - 8) })
   })
 
   for (const indices of groups.values()) {
@@ -40,7 +41,7 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
   }
 
   const linearWidth = Math.max(160, Math.min(260, (containerWidth - 40 - (count - 1) * gap) / count))
-  const desktopWidth = branched ? 244 : linearWidth
+  const desktopWidth = linearWidth
   const width = horizontal ? desktopWidth : Math.max(220, Math.min(300, containerWidth - 96))
   const height = 164
   const nodes = new Map<string, StageBox>()
@@ -55,9 +56,43 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
   }
 
   // Only forward routes determine the reading order. Rework must not move an earlier phase behind its reviewer.
+  const rankByStage = new Map(stageIds.map((id) => [id, 0]))
+  const orderedForwardRoutes = transitions
+    .map((transition, edgeIndex) => ({
+      transition,
+      edgeIndex,
+      from: index.get(transition.from_stage_id),
+      to: index.get(transition.to_stage_id),
+    }))
+    .filter((route): route is { transition: Connection; edgeIndex: number; from: number; to: number } =>
+      route.from !== undefined && route.to !== undefined && route.to > route.from)
+    .sort((left, right) => left.from - right.from || left.to - right.to)
+
+  for (const route of orderedForwardRoutes) {
+    const sourceRank = rankByStage.get(route.transition.from_stage_id) ?? 0
+    rankByStage.set(route.transition.to_stage_id, Math.max(rankByStage.get(route.transition.to_stage_id) ?? 0, sourceRank + 1))
+  }
+  const rankCount = Math.max(0, ...rankByStage.values()) + 1
+  const maximumNodesPerRank = Math.max(1, ...stageIds.reduce((counts, id) => {
+    const rank = rankByStage.get(id) ?? 0
+    counts.set(rank, (counts.get(rank) ?? 0) + 1)
+    return counts
+  }, new Map<number, number>()).values())
+  const horizontalRankGap = Math.max(120, Math.min(144, containerWidth / Math.max(1, rankCount * 1.8)))
+  const horizontalWidthBudget = Math.max(1, containerWidth - 64)
+  const verticalLaneGap = 12
+  const verticalWidthBudget = Math.max(1, containerWidth - 64)
+  const horizontalNodeWidth = Math.max(136, Math.min(244, (horizontalWidthBudget - (rankCount - 1) * horizontalRankGap) / rankCount))
+  const verticalNodeWidth = Math.max(120, Math.min(300, (verticalWidthBudget - (maximumNodesPerRank - 1) * verticalLaneGap) / maximumNodesPerRank))
+  const branchWidth = horizontal ? horizontalNodeWidth : verticalNodeWidth
+  const branchLabelMaxWidth = horizontal ? Math.max(112, horizontalRankGap - 8) : Math.max(112, Math.min(220, containerWidth - 48))
+
+  for (const route of edges.values()) route.labelMaxWidth = branchLabelMaxWidth
+
   const graph = new Graph<GraphLabel, NodeLabel, EdgeLabel>({ multigraph: true })
-  graph.setGraph({ rankdir: horizontal ? 'LR' : 'TB', ranksep: horizontal ? 180 : 112, nodesep: 85, edgesep: 44, marginx: 32, marginy: 52 })
-  stageIds.forEach(id => graph.setNode(id, { width, height }))
+  const rankSep = horizontal ? horizontalRankGap : 72
+  graph.setGraph({ rankdir: horizontal ? 'LR' : 'TB', ranksep: rankSep, nodesep: horizontal ? 56 : verticalLaneGap, edgesep: 32, marginx: 32, marginy: 52 })
+  stageIds.forEach(id => graph.setNode(id, { width: branchWidth, height }))
   for (const [i, route] of edges) {
     if (route.kind === 'return') continue
     const transition = transitions[i]
@@ -66,7 +101,7 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
   layout(graph)
   stageIds.forEach(id => {
     const box = graph.node(id)
-    nodes.set(id, { x: box.x! - width / 2, y: box.y! - height / 2, width, height })
+    nodes.set(id, { x: box.x! - branchWidth / 2, y: box.y! - height / 2, width: branchWidth, height })
   })
   for (const link of graph.edges()) {
     const points = graph.edge(link).points

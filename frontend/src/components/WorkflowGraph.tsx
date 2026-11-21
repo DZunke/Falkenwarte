@@ -129,6 +129,7 @@ type WorkflowTransitionEdgeData = {
   isReturn: boolean
   layout: GraphLayout
   lane: number
+  labelMaxWidth: number
   waypoints?: { x: number; y: number }[]
   selectionStatus?: components['schemas']['TaskFlowCandidateTransition']['selection_status']
   selectedVisits?: components['schemas']['TaskFlowSelectedTransition'][]
@@ -303,6 +304,10 @@ function graphTransitionsFromDefinition(transitions: readonly WorkflowStageEdito
 
 function graphTransitionsFromRun(activity: WorkflowGraphRunActivity | undefined): GraphTransition[] {
   if (!activity) return []
+  const pathKey = (fromStageId: string, toStageId: string, outcome: PhaseOutcome, routeLabelId?: string | null, routeLabelName?: string | null) => {
+    const labelKey = routeLabelId ? ['id', routeLabelId] : routeLabelName ? ['name', routeLabelName] : null
+    return JSON.stringify([fromStageId, toStageId, outcome, labelKey])
+  }
   const planned = activity.plannedTransitions.map((transition, transitionIndex): GraphTransition => ({
     from_stage_id: transition.from_stage_id,
     to_stage_id: transition.to_stage_id,
@@ -315,11 +320,16 @@ function graphTransitionsFromRun(activity: WorkflowGraphRunActivity | undefined)
   }))
   const actualGroups = new Map<string, { transition: components['schemas']['TaskFlowSelectedTransition']; indexes: number[] }>()
   for (const [index, event] of (activity.selectedTransitions ?? []).entries()) {
-    const key = JSON.stringify([event.from_stage_id, event.to_stage_id, event.outcome, event.route_label_id ?? null, event.route_label_name ?? null])
+    const key = pathKey(event.from_stage_id, event.to_stage_id, event.outcome, event.route_label_id, event.route_label_name)
     const group = actualGroups.get(key) ?? { transition: event, indexes: [] }
     group.indexes.push(index)
     actualGroups.set(key, group)
   }
+  // Candidate status alone does not prove a visit; only a recorded event replaces an exact planned path.
+  const actualPathKeys = new Set(actualGroups.keys())
+  const unvisitedPlanned = planned.filter((transition) => !actualPathKeys.has(
+    pathKey(transition.from_stage_id, transition.to_stage_id, transition.on, transition.route_label_id),
+  ))
   const actual = [...actualGroups.values()].map(({ transition, indexes }): GraphTransition => ({
     from_stage_id: transition.from_stage_id,
     to_stage_id: transition.to_stage_id,
@@ -331,7 +341,7 @@ function graphTransitionsFromRun(activity: WorkflowGraphRunActivity | undefined)
     eventIndexes: indexes,
   }))
 
-  return [...planned, ...actual]
+  return [...unvisitedPlanned, ...actual]
 }
 
 function isReturnTransition(sourceIndex: number, targetIndex: number): boolean {
@@ -607,12 +617,13 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
             aria-pressed={props.selected}
             title={data.accessibleLabel}
             disabled={data.disabled}
+            style={{ maxWidth: data.labelMaxWidth }}
             onClick={(event) => {
               event.stopPropagation()
               routeAction()
             }}
             className={cn(
-              'flex max-w-[280px] items-center gap-1.5 rounded-full border bg-card px-2 py-1 text-left text-[10px] font-medium leading-4 text-card-foreground shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'flex min-h-8 min-w-24 max-w-[280px] items-center gap-1.5 overflow-hidden rounded-full border bg-card px-2 py-1 text-left text-[10px] font-medium leading-4 text-card-foreground shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               props.selected || data.graphKind === 'actual' ? 'border-primary ring-2 ring-primary/35' : 'border-border hover:border-primary/60',
               data.graphKind === 'planned' && 'border-dashed',
               data.isReturn && 'border-dashed',
@@ -798,6 +809,7 @@ function WorkflowGraphCanvas({
         isReturn,
         layout,
         lane: layoutEdge?.lane ?? 0,
+        labelMaxWidth: layoutEdge?.labelMaxWidth ?? 112,
         waypoints: layoutEdge?.waypoints,
         selectionStatus: transition.selectionStatus,
         selectedVisits: transition.eventIndexes?.flatMap((eventIndex) => runActivity?.selectedTransitions?.[eventIndex] ?? []) ?? [],

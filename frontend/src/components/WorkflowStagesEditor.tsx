@@ -452,11 +452,11 @@ export function WorkflowStagesEditor({
       {graphNotice && <p role="status" aria-live="polite" className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">{graphNotice}</p>}
       {transitions.length >= 100 && <p role="status" className="text-xs text-muted-foreground">Ein Workflow kann höchstens 100 Übergänge enthalten.</p>}
 
-      <div className={`grid min-w-0 gap-4 ${visibleSelection ? 'xl:grid-cols-[minmax(0,1.25fr)_minmax(20rem,0.85fr)]' : 'grid-cols-1'}`}>
+      <div className={`grid min-w-0 gap-4 ${visibleSelection ? '2xl:grid-cols-[minmax(0,1fr)_minmax(20rem,23rem)]' : 'grid-cols-1'}`}>
         <div ref={graphRef} className="min-w-0 overflow-hidden rounded-xl border bg-card shadow-sm">
           <WorkflowGraph
             label="Workflowablauf"
-            className="h-[28rem] min-h-[24rem] w-full sm:h-[min(58vh,38rem)]"
+            className="h-[min(80vh,52rem)] min-h-[24rem] w-full sm:h-[min(58vh,38rem)]"
             stages={stages}
             transitions={transitions}
             profiles={profiles}

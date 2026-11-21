@@ -24,6 +24,13 @@ function displayedDateTime(value) {
   return new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
+function candidateMatchesEvent(candidate, event) {
+  return candidate.from_stage_id === event.from_stage_id
+    && candidate.to_stage_id === event.to_stage_id
+    && candidate.on === event.outcome
+    && (candidate.route_label_id ?? null) === (event.route_label_id ?? null);
+}
+
 async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, name) {
   const connectionResult = await ownerApi.post('/connections', {
     name: `${name} ${randomUUID().slice(0, 6)}`,
@@ -409,8 +416,11 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     await expect(implementationNode).not.toContainText('aktuelle Vorlage');
     await expect(reviewNode).not.toContainText('aktuelle Vorlage');
     const plannedEdges = workflowGraph.locator('[data-testid^="workflow-graph-planned-transition-"]');
-    await expect(plannedEdges).toHaveCount(workflowFlow.candidate_transitions.length);
-    await expect(plannedEdges.nth(0)).toHaveAccessibleName(/Eingefrorene Route/);
+    const selectedEvent = workflowFlow.selected_transitions[0];
+    const selectedCandidateIndex = workflowFlow.candidate_transitions.findIndex((candidate) => candidateMatchesEvent(candidate, selectedEvent));
+    expect(selectedCandidateIndex).toBeGreaterThanOrEqual(0);
+    await expect(workflowGraph.getByTestId(`workflow-graph-planned-transition-${selectedCandidateIndex}`)).toHaveCount(0);
+    await expect(plannedEdges).toHaveCount(workflowFlow.candidate_transitions.length - 1);
     const actualEdges = workflowGraph.locator('[data-testid^="workflow-graph-run-route-"]');
     await expect(actualEdges).toHaveCount(1);
     await expect(actualEdges.nth(0)).toHaveAccessibleName(/1 tatsächliche Besuche/);
@@ -692,8 +702,11 @@ test('M4 requires an owner-guided decision before one extra repair round beyond 
     const extraRepairDetails = runList.locator(':scope > li > details').nth(2);
     await expect(extraRepairDetails.getByText('Auch nach dem zusätzlichen Versuch bleibt Änderungsbedarf.', { exact: true })).toBeVisible();
     const plannedEdges = workflowGraph.locator('[data-testid^="workflow-graph-planned-transition-"]');
-    await expect(plannedEdges).toHaveCount(finalFlowInstance.candidate_transitions.length);
-    await expect(plannedEdges.nth(0)).toHaveAccessibleName(/Eingefrorene Route/);
+    const recordedCandidateIndexes = finalFlowInstance.candidate_transitions.flatMap((candidate, index) =>
+      finalFlowInstance.selected_transitions.some((event) => candidateMatchesEvent(candidate, event)) ? [index] : []);
+    expect(recordedCandidateIndexes).toHaveLength(1);
+    await expect(workflowGraph.getByTestId(`workflow-graph-planned-transition-${recordedCandidateIndexes[0]}`)).toHaveCount(0);
+    await expect(plannedEdges).toHaveCount(finalFlowInstance.candidate_transitions.length - recordedCandidateIndexes.length);
     const runPicker = workflowGraph.getByRole('combobox', { name: 'Lauf für Bearbeitung wählen', exact: true });
     await expect(runPicker).toBeVisible();
     await expect(runPicker.locator('option')).toHaveCount(4);

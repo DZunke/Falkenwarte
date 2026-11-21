@@ -24,6 +24,13 @@ function displayedDateTime(value) {
   return new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
+function candidateMatchesEvent(candidate, event) {
+  return candidate.from_stage_id === event.from_stage_id
+    && candidate.to_stage_id === event.to_stage_id
+    && candidate.on === event.outcome
+    && (candidate.route_label_id ?? null) === (event.route_label_id ?? null);
+}
+
 async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, project) {
   const created = await ownerApi.post('/connections', {
     name: `Route labels ${randomUUID().slice(0, 8)}`,
@@ -357,10 +364,20 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     await expect(workflowGraph.getByTestId('workflow-graph-stage-discovery')).toContainText('Aktuell');
     await expect(workflowGraph.getByTestId('workflow-graph-stage-reporting')).toContainText('Erledigt');
     await expect(workflowGraph.getByTestId('workflow-graph-stage-research')).toContainText('Offen');
+    const plannedEdges = workflowGraph.locator('[data-testid^="workflow-graph-planned-transition-"]');
+    const selectedCandidateIndexes = finalFlow.candidate_transitions.flatMap((candidate, index) =>
+      finalFlow.selected_transitions.some((event) => candidateMatchesEvent(candidate, event)) ? [index] : []);
+    expect(selectedCandidateIndexes).toHaveLength(finalFlow.selected_transitions.length);
+    for (const index of selectedCandidateIndexes) {
+      await expect(workflowGraph.getByTestId(`workflow-graph-planned-transition-${index}`)).toHaveCount(0);
+    }
+    await expect(plannedEdges).toHaveCount(finalFlow.candidate_transitions.length - new Set(selectedCandidateIndexes).size);
     const alternativeIndex = finalFlow.candidate_transitions.findIndex((transition) => transition.route_label_id === labelB.id);
     expect(alternativeIndex).toBeGreaterThanOrEqual(0);
+    expect(finalFlow.selected_transitions.some((event) => candidateMatchesEvent(finalFlow.candidate_transitions[alternativeIndex], event))).toBe(false);
     const plannedAlternative = workflowGraph.getByTestId(`workflow-graph-planned-transition-${alternativeIndex}`);
     await expect(plannedAlternative).toHaveAccessibleName(/Eingefrorene Route/);
+    await expect(plannedAlternative).toHaveAccessibleName(/Möglich/);
     await expect(plannedAlternative).toHaveAccessibleName(new RegExp(labelB.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     const actualRoute = workflowGraph.locator('[data-testid^="workflow-graph-run-route-"]').filter({ hasText: labelA.name });
     await expect(actualRoute).toHaveCount(1);
