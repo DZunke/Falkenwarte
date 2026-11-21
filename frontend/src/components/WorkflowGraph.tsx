@@ -166,7 +166,7 @@ type WorkflowStageNode = Node<WorkflowStageNodeData, 'workflowStage'>
 
 type WorkflowTransitionEdgeData = {
   edgeIndex: number
-  nodeBounds: { x: number; y: number; width: number; height: number }[]
+  labelPosition?: { x: number; y: number }
   graphKind: GraphTransition['graphKind']
   transitionIndex?: number
   eventIndexes?: number[]
@@ -823,32 +823,36 @@ function transitionPath(props: EdgeProps<WorkflowTransitionEdge>): TransitionPat
   }
 }
 
+type RouteLabelObstacle = { x: number; y: number; width: number; height: number; clearance: number }
+
 function routeLabelPosition(
-  path: TransitionPathGeometry,
+  path: SVGPathElement,
   width: number,
   height: number,
-  nodeBounds: readonly { x: number; y: number; width: number; height: number }[],
+  obstacles: readonly RouteLabelObstacle[],
 ): { x: number; y: number } {
-  const nodeClearance = 8
+  const length = path.getTotalLength()
+  if (length <= 0) return { x: 0, y: 0 }
+
   const candidates = [0.5]
   for (let step = 1; step <= 20; step++) {
     const offset = step * 0.02
     candidates.push(0.5 + offset, 0.5 - offset)
   }
 
-  let best = path.pointAt(0.5)
+  let best = path.getPointAtLength(length / 2)
   let bestOverlap = Number.POSITIVE_INFINITY
   for (const progress of candidates) {
-    const point = path.pointAt(progress)
+    const point = path.getPointAtLength(length * progress)
     const left = point.x - width / 2
     const right = point.x + width / 2
     const top = point.y - height / 2
     const bottom = point.y + height / 2
     let overlapArea = 0
 
-    for (const node of nodeBounds) {
-      const overlapWidth = Math.min(right, node.x + node.width + nodeClearance) - Math.max(left, node.x - nodeClearance)
-      const overlapHeight = Math.min(bottom, node.y + node.height + nodeClearance) - Math.max(top, node.y - nodeClearance)
+    for (const obstacle of obstacles) {
+      const overlapWidth = Math.min(right, obstacle.x + obstacle.width + obstacle.clearance) - Math.max(left, obstacle.x - obstacle.clearance)
+      const overlapHeight = Math.min(bottom, obstacle.y + obstacle.height + obstacle.clearance) - Math.max(top, obstacle.y - obstacle.clearance)
       if (overlapWidth > 0 && overlapHeight > 0) overlapArea += overlapWidth * overlapHeight
     }
 
@@ -865,8 +869,6 @@ function routeLabelPosition(
 function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
   const [selectedBundleItem, setSelectedBundleItem] = useState<GraphRouteBundleItem | null>(null)
   const focusInspectorAfterBundleSelection = useRef(false)
-  const [safeLabelPosition, setSafeLabelPosition] = useState<{ key: string; x: number; y: number } | null>(null)
-  const labelButtonRef = useRef<HTMLButtonElement>(null)
   const data = props.data
   const path = useMemo(() => transitionPath(props), [
     props.sourceX,
@@ -878,19 +880,7 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
     data?.isReturn,
     data?.waypoints,
   ])
-  const nodeBounds = data?.nodeBounds ?? []
-  const labelPositionKey = `${path.labelX}:${path.labelY}:${nodeBounds.map((node) => `${node.x},${node.y},${node.width},${node.height}`).join('|')}`
-  useLayoutEffect(() => {
-    const button = labelButtonRef.current
-    if (!button) return
-    const point = routeLabelPosition(path, button.offsetWidth, button.offsetHeight, nodeBounds)
-    setSafeLabelPosition((current) => current?.key === labelPositionKey && Math.abs(current.x - point.x) < 0.1 && Math.abs(current.y - point.y) < 0.1
-      ? current
-      : { key: labelPositionKey, ...point })
-  }, [path, labelPositionKey, nodeBounds, data?.labelMaxWidth, data?.accessibleLabel])
-  const labelPosition = safeLabelPosition?.key === labelPositionKey
-    ? safeLabelPosition
-    : { x: path.labelX, y: path.labelY }
+  const labelPosition = data?.labelPosition ?? { x: path.labelX, y: path.labelY }
   if (!data) return null
   const color = data.graphKind === 'planned'
     ? data.selectionStatus === 'selected' ? 'var(--primary)' : 'var(--muted-foreground)'
@@ -919,8 +909,11 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
 
   const chooseBundleItem = (item: GraphRouteBundleItem, event: { preventDefault: () => void }) => {
     if (data.graphKind === 'planned') {
+      if (data.onSelectPlannedTransition) {
+        data.onSelectPlannedTransition(item.transitionIndex)
+        return
+      }
       setSelectedBundleItem(item)
-      data.onSelectPlannedTransition?.(item.transitionIndex)
       event.preventDefault()
     } else {
       focusInspectorAfterBundleSelection.current = data.graphKind === 'definition' && Boolean(data.onSelectBundleTransition)
@@ -929,7 +922,9 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
   }
 
   if (data.bundleLeader && data.bundleId && data.bundleItems?.length) {
-    return <DropdownMenu>
+    return <>
+      <BaseEdge id={props.id} path={path.path} interactionWidth={0} style={{ opacity: 0, pointerEvents: 'none' }} />
+      <DropdownMenu>
       <EdgeLabelRenderer>
         <div
           className="workflow-graph__edge-label nodrag nopan absolute z-10 pointer-events-auto"
@@ -938,7 +933,7 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              ref={labelButtonRef}
+              data-workflow-edge-index={data.edgeIndex}
               data-testid={`workflow-graph-route-bundle-${data.bundleSourceIndex}-${data.bundleTargetIndex}`}
               aria-label={data.bundleAccessibleLabel}
               title={data.bundleAccessibleLabel}
@@ -1000,7 +995,8 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
           </DropdownMenuContent>
         </div>
       </EdgeLabelRenderer>
-    </DropdownMenu>
+      </DropdownMenu>
+    </>
   }
 
   if (data.bundleId) return <BaseEdge
@@ -1037,7 +1033,7 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
         >
           <button
             type="button"
-            ref={labelButtonRef}
+            data-workflow-edge-index={data.edgeIndex}
             data-testid={testId}
             aria-label={data.accessibleLabel}
             aria-pressed={props.selected}
@@ -1115,6 +1111,7 @@ function WorkflowGraphCanvas({
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [connectionStatus, setConnectionStatus] = useState('')
   const [openVisitsEdgeIndex, setOpenVisitsEdgeIndex] = useState<number | null>(null)
+  const [routeLabelPositions, setRouteLabelPositions] = useState<{ key: string; positions: ReadonlyMap<number, { x: number; y: number }> }>({ key: '', positions: new Map() })
   const reconnectingTransitionIndex = useRef<number | null>(null)
   const layout: GraphLayout = containerWidth > 0 && containerWidth < 600 ? 'vertical' : 'horizontal'
   const stageIndexById = useMemo(() => new Map(stageNodes.map((stage, index) => [stage.id, index])), [stageNodes])
@@ -1125,6 +1122,25 @@ function WorkflowGraphCanvas({
     containerWidth || 1100,
   ), [stageNodes, transitions, layout, containerWidth])
   const nodeBounds = useMemo(() => [...graphLayout.nodes.values()].map(({ x, y, width, height }) => ({ x, y, width, height })), [graphLayout])
+  const routeLabelLayoutKey = JSON.stringify([
+    mode,
+    layout,
+    stageNodes.map(({ id, name }) => [id, name]),
+    nodeBounds,
+    transitions.map((transition) => [
+      transition.from_stage_id,
+      transition.to_stage_id,
+      transition.on,
+      transition.route_label_id,
+      transition.routeLabel,
+      transition.outcomeLabel,
+      transition.conditionsCount,
+      transition.graphKind,
+      transition.selectionStatus,
+      transition.eventIndexes?.length,
+    ]),
+    [...graphLayout.edges].map(([index, edge]) => [index, edge.labelMaxWidth, edge.waypoints]),
+  ])
   const onConnectStagesRef = useRef(onConnectStages)
   const onReconnectTransitionRef = useRef(onReconnectTransition)
   onConnectStagesRef.current = onConnectStages
@@ -1262,7 +1278,7 @@ function WorkflowGraphCanvas({
         reconnectable: mode === 'definition' && !disabled && Boolean(onReconnectTransition),
         data: {
           edgeIndex: index,
-          nodeBounds,
+          labelPosition: routeLabelPositions.key === routeLabelLayoutKey ? routeLabelPositions.positions.get(index) : undefined,
           graphKind: transition.graphKind,
           transitionIndex: transition.transitionIndex,
           eventIndexes: transition.eventIndexes,
@@ -1301,7 +1317,56 @@ function WorkflowGraphCanvas({
         selected,
       } satisfies WorkflowTransitionEdge
     })
-  }, [transitions, mode, stageIndexById, stageNodes, routeLabels, routeLabelNames, graphLayout, nodeBounds, controlledSelection, onReconnectTransition, onSelectRunTransition, onSelectPlannedTransition, runActivity, layout, setSelection, disabled])
+  }, [transitions, mode, stageIndexById, stageNodes, routeLabels, routeLabelNames, graphLayout, routeLabelLayoutKey, routeLabelPositions, controlledSelection, onReconnectTransition, onSelectRunTransition, onSelectPlannedTransition, runActivity, layout, setSelection, disabled])
+
+  useLayoutEffect(() => {
+    if (routeLabelPositions.key === routeLabelLayoutKey || !canvasRef.current || !viewportInitialized) return
+
+    let pendingFrame = 0
+    const measureAndPlaceLabels = (attempt: number) => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const labelEdges = graphEdges.filter((edge) => !edge.data.bundleId || edge.data.bundleLeader)
+      const buttons = [...canvas.querySelectorAll<HTMLButtonElement>('[data-workflow-edge-index]')]
+      const edgeGroups = [...canvas.querySelectorAll<SVGGElement>('.react-flow__edge')]
+      const measurements = labelEdges.map((edge) => {
+        const button = buttons.find((candidate) => candidate.dataset.workflowEdgeIndex === String(edge.data.edgeIndex))
+        const group = edgeGroups.find((candidate) => candidate.getAttribute('data-id') === edge.id)
+        const path = group?.querySelector<SVGPathElement>('.react-flow__edge-path')
+
+        return button && button.offsetWidth > 0 && button.offsetHeight > 0 && path
+          ? { edge, button, path }
+          : null
+      })
+      if (measurements.some((measurement) => measurement === null)) {
+        if (attempt < 2) pendingFrame = window.requestAnimationFrame(() => measureAndPlaceLabels(attempt + 1))
+        return
+      }
+
+      const obstacles: RouteLabelObstacle[] = nodeBounds.map((node) => ({ ...node, clearance: 8 }))
+      const positions = new Map<number, { x: number; y: number }>()
+      for (const measurement of measurements) {
+        if (!measurement) continue
+        const { edge, button, path } = measurement
+        const position = routeLabelPosition(path, button.offsetWidth, button.offsetHeight, obstacles)
+        positions.set(edge.data.edgeIndex, position)
+        obstacles.push({
+          x: position.x - button.offsetWidth / 2,
+          y: position.y - button.offsetHeight / 2,
+          width: button.offsetWidth,
+          height: button.offsetHeight,
+          clearance: 4,
+        })
+      }
+
+      setRouteLabelPositions({ key: routeLabelLayoutKey, positions })
+    }
+
+    measureAndPlaceLabels(0)
+
+    return () => window.cancelAnimationFrame(pendingFrame)
+  }, [graphEdges, nodeBounds, routeLabelLayoutKey, routeLabelPositions.key, viewportInitialized])
 
   const isValidConnection = useCallback((connection: Connection | WorkflowTransitionEdge) => {
     const source = connection.source
@@ -1334,6 +1399,7 @@ function WorkflowGraphCanvas({
   }, [disabled, onReconnectTransition, isValidConnection, setSelection])
 
   const geometryKey = JSON.stringify([
+    routeLabelLayoutKey,
     mode,
     layout,
     stageNodes.map((stage) => stage.id),
