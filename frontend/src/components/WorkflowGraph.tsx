@@ -680,10 +680,22 @@ function transitionPath(props: EdgeProps<WorkflowTransitionEdge>): { path: strin
 
     const laneY = (sourceY + targetY) / 2 + lane * 54
     const reach = Math.max(28, Math.min(130, Math.abs(targetX - sourceX) * 0.35))
+    const control1 = { x: sourceX + reach, y: laneY }
+    const control2 = { x: targetX - reach, y: laneY }
+    const labelProgress = Math.abs(targetY - sourceY) > 24 ? (targetX >= sourceX ? 0.58 : 0.42) : 0.5
+    const inverseProgress = 1 - labelProgress
+    const labelX = inverseProgress ** 3 * sourceX
+      + 3 * inverseProgress ** 2 * labelProgress * control1.x
+      + 3 * inverseProgress * labelProgress ** 2 * control2.x
+      + labelProgress ** 3 * targetX
+    const labelY = inverseProgress ** 3 * sourceY
+      + 3 * inverseProgress ** 2 * labelProgress * control1.y
+      + 3 * inverseProgress * labelProgress ** 2 * control2.y
+      + labelProgress ** 3 * targetY
     return {
-      path: `M ${sourceX} ${sourceY} C ${sourceX + reach} ${laneY}, ${targetX - reach} ${laneY}, ${targetX} ${targetY}`,
-      labelX: (sourceX + targetX) / 2,
-      labelY: (sourceY + targetY + 6 * laneY) / 8,
+      path: `M ${sourceX} ${sourceY} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${targetX} ${targetY}`,
+      labelX,
+      labelY,
     }
   }
 
