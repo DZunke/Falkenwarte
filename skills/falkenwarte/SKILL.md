@@ -31,6 +31,8 @@ Lege ein Falkenwarte-Ticket nur auf ausdrücklichen Auftrag an. `tasks_create` b
 
 Verlangt der Phasenauftrag eine Merge-Einschätzung, vergleiche die Änderung mit dem angegebenen Zielstand. Nenne im Nachweis vom Typ `review` die geprüfte Revision oder den Arbeitsbaum, die betroffenen Dateien, ausgeführte Prüfungen und das begründete Urteil. Fehlt für eine automatische Zusammenführung eine Voraussetzung, nenne sie konkret. Wähle die angebotene Route für diesen Befund und übergib offene Entscheidungen in `open_questions`. Ein tatsächlicher Git-Merge benötigt einen eigenen Auftrag.
 
+Ist die **Risikoanalyse** selbst der Phasenauftrag, bewerte ihren Abschluss getrennt vom technischen Urteil. Hast du das Risiko belegt und die Eigentümerfrage formuliert, melde `reported_success` und nenne die offene Frage in `open_questions`. Bei konfigurierter menschlicher Freigabe kann der Eigentümer so den Bericht prüfen. Wenn dir Angaben fehlen, ohne die du die Analyse selbst nicht abschließen kannst, melde `blocked`. Halte die Empfehlung zur Integration im Bericht fest.
+
 ## Ergebnisbericht
 
 Rufe unmittelbar vor dem Bericht `runs_get({"run_id":"<Run-ID>"})` auf. Die Antwortfelder `id`, `attempt_no`, `snapshot.task_revision` müssen zu deinem Startauftrag passen; verwende `version` als `expected_version`. Wenn Lesen oder aktuelle Version fehlen, rate nicht, sondern bitte um `runs.read`.
