@@ -250,17 +250,20 @@ async function approvePhaseIfRequired(ownerApi, runId) {
   if (!String(run.status_reason ?? '').includes('Eigentümerentscheidung')) {
     return readUntil(ownerApi, '/runs/' + runId, (item) => item.state === 'succeeded', 'Die Reviewphase muss nach dem externen Abschluss automatisch enden.');
   }
-  const request = await ownerApi.post('/runs/' + runId + '/approvals', {
-    kind: 'completion',
+  const pendingApprovals = await readUntil(ownerApi, '/approvals?run_id=' + runId + '&status=pending', (page) => page.items?.length === 1, 'Die verpflichtende Phasenentscheidung muss automatisch angelegt werden.');
+  const approval = pendingApprovals.items[0];
+  const expectedKind = run.snapshot.stage_kind === 'review' ? 'review' : 'completion';
+  expect(approval).toMatchObject({
+    run_id: runId,
     result_digest: run.result_digest,
-    reason: 'Die gemeldete Reviewphase wurde für den nächsten Workflowabschnitt geprüft.',
-  }, { version: run.version });
-  expect(request.response.status(), JSON.stringify(request.data)).toBe(201);
-  const decision = await ownerApi.post('/approvals/' + request.data.id + '/decision', {
+    status: 'pending',
+    kind: expectedKind,
+  });
+  const decision = await ownerApi.post('/approvals/' + approval.id + '/decision', {
     decision: 'approved',
-    result_digest: run.result_digest,
+    result_digest: approval.result_digest,
     reason: 'Die nächste Phase darf mit dem eingefrorenen Reviewbericht starten.',
-  }, { version: request.data.version });
+  }, { version: approval.version });
   expect(decision.response.status(), JSON.stringify(decision.data)).toBe(200);
   return readUntil(ownerApi, '/runs/' + runId, (item) => item.state === 'succeeded', 'Die freigegebene Reviewphase muss enden.');
 }

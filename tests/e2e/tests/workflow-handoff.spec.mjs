@@ -293,17 +293,19 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     expect(reviewResult.report.evidence_ids).toHaveLength(1);
     const reviewEvidenceId = reviewResult.report.evidence_ids[0];
     const awaitingPhaseDecision = await readUntil(ownerApi, `/runs/${reviewRunId}`, (run) => run.state === 'verifying' && run.status_reason?.includes('Eigentümerentscheidung'), 'Die Reviewphase muss ihre eigene Ownerentscheidung abwarten.');
-    const approvalRequest = await ownerApi.post(`/runs/${reviewRunId}/approvals`, {
-      kind: 'completion',
+    const pendingApprovals = await readUntil(ownerApi, `/approvals?run_id=${reviewRunId}&status=pending`, (page) => page.items?.length === 1, 'Die Reviewphase muss genau eine automatische Reviewentscheidung für den gemeldeten Ergebnisstand anlegen.');
+    const reviewApproval = pendingApprovals.items[0];
+    expect(reviewApproval).toMatchObject({
+      run_id: reviewRunId,
       result_digest: awaitingPhaseDecision.result_digest,
-      reason: 'Gemeldeten Abschluss der Reviewphase prüfen.',
-    }, { version: awaitingPhaseDecision.version });
-    expect(approvalRequest.response.status(), JSON.stringify(approvalRequest.data)).toBe(201);
-    const approvalDecision = await ownerApi.post(`/approvals/${approvalRequest.data.id}/decision`, {
+      status: 'pending',
+      kind: 'review',
+    });
+    const approvalDecision = await ownerApi.post(`/approvals/${reviewApproval.id}/decision`, {
       decision: 'approved',
-      result_digest: awaitingPhaseDecision.result_digest,
+      result_digest: reviewApproval.result_digest,
       reason: 'Die Reviewphase ist als Agentenmeldung angenommen.',
-    }, { version: approvalRequest.data.version });
+    }, { version: reviewApproval.version });
     expect(approvalDecision.response.status(), JSON.stringify(approvalDecision.data)).toBe(200);
     await readUntil(ownerApi, `/runs/${reviewRunId}`, (run) => run.state === 'succeeded', 'Die Reviewphase muss unabhängig von der Ticketentscheidung abschließen.');
     const succeededWorkflow = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.state === 'succeeded', 'Der zweiphasige Workflow muss nach der Reviewentscheidung enden.');
@@ -503,7 +505,7 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     expect(reviewerLaunch?.payload.message).toContain(implementationEvidenceId);
     recordEvidence(
       'M4: Umsetzung → Review ist eine echte, eingefrorene Übergabe mit zwei T3-Runs, getrennten Reports/Evidenzen und separatem Ticketabschluss.',
-      `T3 startete getrennte Profile ${implementer.id} und ${reviewer.id} genau zweimal. Run ${reviewRunId} fror source_run_id=${firstRunId}, Report ${implementationResult.reportId}, Dispatchversuch ${implementationRun.attempts[0].dispatch_id}, Aufgabenrevision ${task.version} und Evidence ${implementationEvidenceId} ein; dieselben Übergabedaten standen im echten Reviewer-Launchtext. Report ${reviewResult.reportId} und Evidence ${reviewEvidenceId} blieben dem Review-Run zugeordnet. Die Reviewphase und ihr Ownerbeschluss schlossen Workflow ${instance.id}, während Ticket ${task.id} ready blieb. Der separate Browserabschluss war zunächst wegen completion_policy_unsatisfied gesperrt und gelang erst nach Ownerbestätigung von Review-Evidence und Pflichtkriterium.`,
+      `T3 startete getrennte Profile ${implementer.id} und ${reviewer.id} genau zweimal. Run ${reviewRunId} fror source_run_id=${firstRunId}, Report ${implementationResult.reportId}, Dispatchversuch ${implementationRun.attempts[0].dispatch_id}, Aufgabenrevision ${task.version} und Evidence ${implementationEvidenceId} ein; dieselben Übergabedaten standen im echten Reviewer-Launchtext. Report ${reviewResult.reportId} und Evidence ${reviewEvidenceId} blieben dem Review-Run zugeordnet. Für den Review-Run entstand automatisch genau eine ausstehende Approval vom Typ review; der Ownerbeschluss schloss Workflow ${instance.id}, während Ticket ${task.id} ready blieb. Der separate Browserabschluss war zunächst wegen completion_policy_unsatisfied gesperrt und gelang erst nach Ownerbestätigung von Review-Evidence und Pflichtkriterium.`,
       { t3 },
     );
   } finally {

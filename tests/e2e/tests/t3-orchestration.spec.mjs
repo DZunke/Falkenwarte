@@ -416,11 +416,20 @@ test('M4 workflow phase creates one pending owner decision and does not close th
       status: 'pending',
       kind: 'completion',
     });
+    const reconciliationRequest = await ownerApi.post(`/runs/${runId}/reconcile`, {
+      reason: 'Den abgeschlossenen T3-Stand nach Anlage der automatischen Freigabe erneut abgleichen.',
+    }, { version: awaitingApproval.version });
+    expect(reconciliationRequest.response.status(), JSON.stringify(reconciliationRequest.data)).toBe(202);
+    const reverifiedRun = await readUntil(ownerApi, `/runs/${runId}`, (run) => run.state === 'verifying' && run.version > awaitingApproval.version, 'Der erneute T3-Abgleich muss die bestehende offene Phasenentscheidung erhalten.');
+    const approvalsAfterReconciliation = await ownerApi.get(`/approvals?project_id=${project.id}&run_id=${runId}`);
+    expect(approvalsAfterReconciliation.response.status(), JSON.stringify(approvalsAfterReconciliation.data)).toBe(200);
+    expect(approvalsAfterReconciliation.data.items).toHaveLength(1);
+    expect(approvalsAfterReconciliation.data.items[0].id).toBe(approval.id);
     const duplicateRequest = await ownerApi.post(`/runs/${runId}/approvals`, {
       kind: 'completion',
       result_digest: awaitingApproval.result_digest,
       reason: 'Eine zusätzliche Anfrage für denselben Phasenstand darf keine zweite Entscheidung anlegen.',
-    }, { version: awaitingApproval.version });
+    }, { version: reverifiedRun.version });
     expect(duplicateRequest.response.status(), JSON.stringify(duplicateRequest.data)).toBe(201);
     expect(duplicateRequest.data.id).toBe(approval.id);
     expect((await ownerApi.get(`/approvals?project_id=${project.id}&run_id=${runId}`)).data.items).toHaveLength(1);
