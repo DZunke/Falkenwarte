@@ -12,8 +12,6 @@ Lade unter **Agents & T3 → Skill herunterladen** den aktuellen Falkenwarte-Ski
 
 Eine neue Vorlage enthält bereits eine Arbeitsphase. Richte diese erste Phase vollständig ein, bevor du weitere hinzufügst.
 
-Für weitere Projekte legst du jeweils eine eigene Vorlage an. Öffne **Vorlagen → Neue Vorlage**, wähle das Projekt und trage dessen Ablauf ein. Rollen, Boardspalten und Themenlabels werden für dieses Projekt angeboten. Eine allgemeine Agentrolle kannst du in mehreren Projekten oder Phasen wiederverwenden, wenn sie dafür freigegeben ist.
-
 ## 2. Discovery-Phase einrichten und weitere Phasen ergänzen
 
 Beim Anlegen ist die erste Phase bereits ausgewählt und **Phasendetails** sind geöffnet. Bei einer gespeicherten Vorlage klickst du im **Ablaufplan** auf die Phase, die du bearbeiten möchtest. Die Details erscheinen daneben oder bei schmalem Fenster darunter. Trage bei **Name der Phase 1** `DDD Discovery` ein. Wähle bei **Art der Phase** **Arbeitsphase** und bei **Agentrolle für Phase 1** eine für das Projekt und die aktive T3-Verbindung freigegebene Rolle.
@@ -108,6 +106,15 @@ Optional kannst du unter **Label für manuelle Tickets** ein aktives Themenlabel
 
 Die Boardvorgabe wählt einen Workflow für den späteren Start vor. Speichern oder Zuordnen startet keinen Lauf. Jede Aufgabe bleibt manuell, bis du in ihrem Ticket auf **Workflow starten** klickst. Die Auswahl wird pro Board gespeichert.
 
+### Eine zweite Vorlage im selben Projekt anlegen
+
+Für eine kurze Leseaufgabe kannst du zusätzlich die Vorlage **Kurze Bestandsprüfung** anlegen. Beide Vorlagen stehen später im Ticket zur Wahl.
+
+1. Klicke unter **Workflows → Vorlagen** auf **Neue Vorlage**. Wähle dasselbe Projekt und gib bei **Workflowname** `Kurze Bestandsprüfung` ein.
+2. Nenne die erste Phase `Bestandsprüfung`. Wähle **Arbeitsphase** und eine für dieses Projekt freigegebene Rolle.
+3. Gib bei **Auftrag für diese Phase** den Text `Lies das Ticket und die relevanten Projektstellen. Vergleiche die Anforderungen mit dem bestehenden Stand. Nenne Quellen, Abweichungen und offene Fragen. Ändere keine Dateien.` ein.
+4. Klicke auf **Workflow anlegen**. In der Vorlagenliste siehst du jetzt beide Abläufe.
+
 ## 7. Ein Ticket für den ersten Ablauf vorbereiten
 
 Öffne das Projektboard und wähle **Neues Ticket** oder ein vorhandenes Ticket mit einer klaren Aufgabe und prüfbaren Erfolgskriterien. Setze das Ticket auf **Bereit**, wenn es noch im **Backlog** steht.
@@ -116,7 +123,7 @@ Wenn dem Ticket eine Workflowlabel-Route zugeordnet ist, hat deren eingefrorene 
 
 ## 8. Den Workflow starten
 
-Öffne das Ticket und danach **Ausführung**. Prüfe im Abschnitt **Workflow starten** das Feld **Workflow**. Die Vorauswahl kannst du für diesen Start durch einen anderen aktiven und startbereiten Workflow des Projekts ersetzen. Das ändert weder den Boardstandard noch die Workflowlabel-Zuordnung. Kontrolliere die angezeigte Phasenzahl und Version und klicke einmal auf **Workflow starten**.
+Öffne das Ticket und danach **Ausführung**. Prüfe im Abschnitt **Workflow starten** das Feld **Workflow**. Für den mehrstufigen Auftrag wählst du **Discovery, Umsetzung und Review**. Für eine Leseaufgabe kannst du hier **Kurze Bestandsprüfung · Version 1** wählen. Die Auswahl gilt für diesen Start. Kontrolliere die angezeigte Phasenzahl und Version und klicke einmal auf **Workflow starten**.
 
 Unter **Ausführungen** siehst du den neuen Ablauf. **Start wird übertragen** zeigt den Versand an T3, danach sollte **Läuft in T3** oder ein bereits weiter fortgeschrittener Status erscheinen. Eine Providerberechtigungsanfrage bestätigst du im zugehörigen T3-Thread.
 
