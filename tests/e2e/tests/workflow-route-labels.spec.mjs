@@ -20,6 +20,10 @@ async function readUntil(ownerApi, route, matches, description, timeout = 45_000
   return current;
 }
 
+function displayedDateTime(value) {
+  return new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
 async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, project) {
   const created = await ownerApi.post('/connections', {
     name: `Route labels ${randomUUID().slice(0, 8)}`,
@@ -215,7 +219,7 @@ async function resumeWorkflow(ownerApi, instance) {
   return readUntil(ownerApi, `/workflow-instances/${instance.id}`, (current) => current.run_ids.length > instance.run_ids.length, 'Die korrigierte Route muss eine neue Phase starten.');
 }
 
-test('reporting role selects a frozen route back to Discovery with its report handoff', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+test('reporting role selects a frozen route back to Discovery with its report handoff', async ({ ownerApi, ownerPage, baseURL, qaMocks }, testInfo) => {
   test.setTimeout(240_000);
   await qaMocks.setT3Scenario('default');
   const suffix = randomUUID().slice(0, 6);
@@ -247,8 +251,9 @@ test('reporting role selects a frozen route back to Discovery with its report ha
   expect(firstRun.snapshot.workflow_routes).toEqual(expect.arrayContaining([
     expect.objectContaining({ on: 'accepted', to_stage_id: 'reporting', is_default: true, route_label_id: null }),
   ]));
+  let discoveryResult;
   try {
-    await submitReport(ownerApi, discoveryReporter.agent, firstRunId, {
+    discoveryResult = await submitReport(ownerApi, discoveryReporter.agent, firstRunId, {
       summary: 'Die Discovery hat die Ausgangslage gesammelt und zur redaktionellen Prüfung übergeben.',
     });
   } finally {
@@ -342,6 +347,45 @@ test('reporting role selects a frozen route back to Discovery with its report ha
       }),
     ]));
     expect(finalFlow.runs.at(-1)).toMatchObject({ id: returnedRunId, handoff: expect.objectContaining({ source_report_id: reportId }) });
+
+    await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}&tab=flow`);
+    await expect(ownerPage.getByRole('heading', { name: task.title })).toBeVisible();
+    await expect(ownerPage.getByRole('tab', { name: 'Ablauf' })).toHaveAttribute('aria-selected', 'true');
+    const flowPanel = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
+    await expect(flowPanel.getByText(`Workflow: ${workflow.name} · Version ${workflow.definition_version}`, { exact: true })).toBeVisible();
+    const workflowGraph = flowPanel.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
+    await expect(workflowGraph.getByTestId('workflow-graph-stage-discovery')).toContainText('Aktuell');
+    await expect(workflowGraph.getByTestId('workflow-graph-stage-reporting')).toContainText('Erledigt');
+    await expect(workflowGraph.getByTestId('workflow-graph-stage-research')).toContainText('Offen');
+    const alternativeIndex = finalFlow.candidate_transitions.findIndex((transition) => transition.route_label_id === labelB.id);
+    expect(alternativeIndex).toBeGreaterThanOrEqual(0);
+    const plannedAlternative = workflowGraph.getByTestId(`workflow-graph-planned-transition-${alternativeIndex}`);
+    await expect(plannedAlternative).toHaveAccessibleName(/Eingefrorene Route/);
+    await expect(plannedAlternative).toHaveAccessibleName(new RegExp(labelB.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    const actualRoute = workflowGraph.locator('[data-testid^="workflow-graph-run-route-"]').filter({ hasText: labelA.name });
+    await expect(actualRoute).toHaveCount(1);
+    await expect(actualRoute).toHaveAccessibleName(/1 tatsächliche Besuche/);
+    await actualRoute.click();
+    const activityDetails = flowPanel.getByTestId('task-flow-activity-details');
+    await expect(activityDetails).toBeVisible();
+    await expect(activityDetails).toContainText(`Themenlabel: ${labelA.name}`);
+    const selectedReport = activityDetails.getByTestId(`task-flow-report-${reportId}`);
+    await expect(selectedReport).toContainText(validResult.report.summary);
+    await expect(selectedReport).toContainText(labelA.name);
+    const actualTransition = finalFlow.selected_transitions.find((transition) => transition.report_id === reportId);
+    expect(actualTransition).toBeTruthy();
+    await expect(activityDetails).toContainText(displayedDateTime(actualTransition.selected_at));
+    await expect(selectedReport).toContainText(displayedDateTime(validResult.report.received_at));
+    const reportingFlowRun = finalFlow.runs.find((run) => run.id === reportingRunId);
+    expect(reportingFlowRun?.handoff).toBeTruthy();
+    const selectedHandoff = activityDetails.getByTestId(`task-flow-run-details-${reportingRunId}`).locator('details').filter({ hasText: 'Übergabeprotokoll ansehen' });
+    await expect(selectedHandoff).toHaveCount(1);
+    await expect(selectedHandoff).toHaveAttribute('open', '');
+    await expect(selectedHandoff).toContainText(discoveryResult.report.summary);
+    await expect(selectedHandoff).toContainText(`Herkunft: Versuch ${reportingFlowRun.handoff.source_attempt_no} · Ticketrevision ${reportingFlowRun.handoff.task_revision}`);
+    await expect(selectedHandoff).toContainText(displayedDateTime(discoveryResult.report.received_at));
+    await testInfo.attach('ticket-flow-selected-route-handoff', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
+
     const journal = await qaMocks.t3Journal();
     expect(journal.unexpected).toEqual([]);
     expect(journal.accepted_launches).toHaveLength(3);

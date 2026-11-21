@@ -386,7 +386,7 @@ export default function TaskSheet({ taskId, openFlow = false, project, board, st
   return (
     <>
       <Sheet open={Boolean(taskId)} onOpenChange={(open) => { if (!open) { setEditing(false); onClose() } }}>
-        <SheetContent side="right" className="flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
+        <SheetContent side="right" className={`flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full ${activeTab === 'flow' ? 'data-[side=right]:sm:max-w-[min(94vw,84rem)]' : 'data-[side=right]:sm:max-w-2xl'}`}>
           {taskQuery.isPending ? <div className="space-y-4 p-6"><div className="h-6 w-3/4 animate-pulse rounded bg-muted" /><div className="h-24 animate-pulse rounded bg-muted" /></div> : taskQuery.isError || !task ? (
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 p-8 text-center"><h2 className="font-semibold">Ticket konnte nicht geladen werden</h2><p className="text-sm text-muted-foreground">{formatError(taskQuery.error)}</p><Button variant="outline" onClick={() => void taskQuery.refetch()}><RefreshCw />Erneut laden</Button></div>
           ) : (

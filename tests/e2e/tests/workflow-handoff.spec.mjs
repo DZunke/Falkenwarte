@@ -20,6 +20,10 @@ async function readUntil(ownerApi, route, matches, description, timeout = 45_000
   return current;
 }
 
+function displayedDateTime(value) {
+  return new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
 async function configureT3(ownerApi, ownerPage, baseURL, qaMocks, project, name) {
   const connectionResult = await ownerApi.post('/connections', {
     name: `${name} ${randomUUID().slice(0, 6)}`,
@@ -181,7 +185,7 @@ async function submitReport(ownerApi, agent, runId, taskRevision, { outcome = 'r
   return { run: reportedRun, report: storedReport, reportId };
 }
 
-test('M4 implementation hands a frozen report to review and the owner completes the ticket separately', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+test('M4 implementation hands a frozen report to review and the owner completes the ticket separately', async ({ ownerApi, ownerPage, baseURL, qaMocks }, testInfo) => {
   test.setTimeout(240_000);
   test.info().annotations.push({ type: 'acceptance', description: 'A12' });
   test.info().annotations.push({ type: 'scenario', description: 'E24' });
@@ -304,6 +308,22 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     await readUntil(ownerApi, `/runs/${reviewRunId}`, (run) => run.state === 'succeeded', 'Die Reviewphase muss unabhängig von der Ticketentscheidung abschließen.');
     const succeededWorkflow = await readUntil(ownerApi, `/workflow-instances/${instance.id}`, (item) => item.state === 'succeeded', 'Der zweiphasige Workflow muss nach der Reviewentscheidung enden.');
     expect(succeededWorkflow.run_ids).toEqual([firstRunId, reviewRunId]);
+
+    const renamedWorkflow = await ownerApi.put(`/workflows/${workflow.id}`, {
+      project_id: workflow.project_id,
+      name: `${workflow.name} · aktuelle Vorlage`,
+      preset_id: workflow.preset_id,
+      stages: workflow.stages.map((stage) => ({ ...stage, name: `${stage.name} · aktuelle Vorlage` })),
+      transitions: workflow.transitions,
+      limits: workflow.limits,
+      enabled: workflow.enabled,
+    }, { version: workflow.version });
+    expect(renamedWorkflow.response.status(), JSON.stringify(renamedWorkflow.data)).toBe(200);
+    const currentWorkflow = await ownerApi.get(`/workflows/${workflow.id}`);
+    expect(currentWorkflow.response.status(), JSON.stringify(currentWorkflow.data)).toBe(200);
+    expect(currentWorkflow.data.definition_version).toBe(workflow.definition_version + 1);
+    expect(currentWorkflow.data.name).toBe(`${workflow.name} · aktuelle Vorlage`);
+
     const workflowFlowPage = await readUntil(ownerApi, `/tasks/${task.id}/flow`, (page) => page.items?.some((item) => item.id === instance.id && item.runs?.length === 2), 'Der Ticketablauf muss beide beendeten Workflowphasen enthalten.');
     const workflowFlow = workflowFlowPage.items.find((item) => item.id === instance.id);
     expect(workflowFlow).toMatchObject({
@@ -363,17 +383,51 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     }, { version: reviewEvidence.data.version });
     expect(confirmEvidence.response.status(), JSON.stringify(confirmEvidence.data)).toBe(200);
 
-    await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}`);
+    await ownerPage.goto(`/#/project/${project.id}/board?task=${task.id}&tab=flow`);
     await expect(ownerPage.getByRole('heading', { name: taskTitle })).toBeVisible();
-    await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
+    await expect(ownerPage.getByRole('tab', { name: 'Ablauf' })).toHaveAttribute('aria-selected', 'true');
     const flow = ownerPage.getByRole('tabpanel', { name: 'Ablauf' });
     await expect(flow.getByText(`Workflow: ${workflow.name} · Version ${workflow.definition_version}`, { exact: true })).toBeVisible();
+    await expect(flow.getByText(`Workflow: ${currentWorkflow.data.name} · Version ${currentWorkflow.data.definition_version}`, { exact: true })).toHaveCount(0);
     await expect(flow.getByRole('heading', { name: 'Umsetzung', exact: true })).toBeVisible();
     await expect(flow.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
     const actualTransitions = flow.getByRole('heading', { name: 'Tatsächliche Übergänge' }).locator('..');
     await expect(actualTransitions.getByText('Umsetzung → Review', { exact: true })).toBeVisible();
-    await expect(flow.getByText('Bereit', { exact: true })).toBeVisible();
-    await expect(flow.getByText('Erledigt', { exact: true })).toHaveCount(2);
+    const ticketStatus = flow.getByRole('region', { name: 'Ticketstand' });
+    await expect(ticketStatus.getByText('Bereit', { exact: true })).toBeVisible();
+    await expect(flow.getByRole('region', { name: 'Workflowphasen' }).getByText('Erledigt', { exact: true })).toHaveCount(2);
+    const workflowGraph = flow.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
+    const implementationNode = workflowGraph.getByTestId('workflow-graph-stage-implementation');
+    const reviewNode = workflowGraph.getByTestId('workflow-graph-stage-review');
+    await expect(implementationNode).toContainText('Erledigt');
+    await expect(reviewNode).toContainText('Erledigt');
+    await expect(implementationNode).toContainText('Umsetzung');
+    await expect(reviewNode).toContainText('Review');
+    await expect(implementationNode).not.toContainText('aktuelle Vorlage');
+    await expect(reviewNode).not.toContainText('aktuelle Vorlage');
+    const plannedEdges = workflowGraph.locator('[data-testid^="workflow-graph-planned-transition-"]');
+    await expect(plannedEdges).toHaveCount(workflowFlow.candidate_transitions.length);
+    await expect(plannedEdges.nth(0)).toHaveAccessibleName(/Eingefrorene Route/);
+    const actualEdges = workflowGraph.locator('[data-testid^="workflow-graph-run-route-"]');
+    await expect(actualEdges).toHaveCount(1);
+    await expect(actualEdges.nth(0)).toHaveAccessibleName(/1 tatsächliche Besuche/);
+    await actualEdges.nth(0).click();
+    const activityDetails = flow.getByTestId('task-flow-activity-details');
+    await expect(activityDetails).toBeVisible();
+    await expect(activityDetails).toContainText('Tatsächlicher Übergang');
+    const selectedImplementationReport = activityDetails.getByTestId(`task-flow-report-${implementationResult.reportId}`);
+    await expect(selectedImplementationReport).toContainText(implementationSummary);
+    await expect(selectedImplementationReport).toContainText(displayedDateTime(implementationResult.report.received_at));
+    await workflowGraph.getByTestId(`workflow-graph-run-${reviewRunId}`).click();
+    const selectedReviewRun = activityDetails.getByTestId(`task-flow-run-details-${reviewRunId}`);
+    await expect(selectedReviewRun).toBeVisible();
+    const selectedReviewHandoff = selectedReviewRun.locator('details').filter({ hasText: 'Übergabeprotokoll ansehen' });
+    await expect(selectedReviewHandoff).toHaveCount(1);
+    await expect(selectedReviewHandoff).toHaveAttribute('open', '');
+    await expect(selectedReviewHandoff).toContainText(implementationSummary);
+    await expect(selectedReviewHandoff).toContainText(`Herkunft: Versuch ${implementationRun.attempt_no} · Ticketrevision ${task.version}`);
+    await expect(selectedReviewHandoff).toContainText(displayedDateTime(implementationResult.report.received_at));
+    await testInfo.attach('ticket-flow-frozen-handoff', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
     const flowRunDetails = flow.locator('summary').filter({ hasText: /^Laufdetails ansehen · Lauf \d+ ·/ });
     await expect(flowRunDetails).toHaveCount(2);
     const reviewRunList = flow.getByRole('list', { name: 'Läufe der Phase Review' });
@@ -414,7 +468,7 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     await expect(ownerPage.getByRole('combobox', { name: 'Ticketstatus' })).toContainText('Erledigt');
     expect(completedTask.criteria[0]).toMatchObject({ state: 'human_confirmed', reviewed_by: { kind: 'owner' } });
     await ownerPage.getByRole('tab', { name: 'Ablauf' }).click();
-    await expect(ownerPage.getByRole('tabpanel', { name: 'Ablauf' }).getByText('Erledigt', { exact: true })).toHaveCount(3);
+    await expect(ticketStatus.getByText('Erledigt', { exact: true })).toBeVisible();
     const evidencePage = await ownerApi.get(`/evidence?task_id=${encodeURIComponent(task.id)}&limit=100`);
     expect(evidencePage.response.status(), JSON.stringify(evidencePage.data)).toBe(200);
     expect(evidencePage.data.items).toEqual(expect.arrayContaining([
@@ -456,7 +510,7 @@ test('M4 implementation hands a frozen report to review and the owner completes 
   }
 });
 
-test('M4 requires an owner-guided decision before one extra repair round beyond the configured limit', async ({ ownerApi, ownerPage, baseURL, qaMocks }) => {
+test('M4 requires an owner-guided decision before one extra repair round beyond the configured limit', async ({ ownerApi, ownerPage, baseURL, qaMocks }, testInfo) => {
   test.setTimeout(240_000);
   test.info().annotations.push({ type: 'acceptance', description: 'A12' });
   test.info().annotations.push({ type: 'scenario', description: 'E25' });
@@ -630,6 +684,37 @@ test('M4 requires an owner-guided decision before one extra repair round beyond 
     await runDetails.nth(2).click();
     const extraRepairDetails = runList.locator(':scope > li > details').nth(2);
     await expect(extraRepairDetails.getByText('Auch nach dem zusätzlichen Versuch bleibt Änderungsbedarf.', { exact: true })).toBeVisible();
+    const workflowGraph = flow.getByTestId(`task-flow-workflow-graph-${instance.id}`).getByTestId('workflow-editor-graph');
+    const repairNode = workflowGraph.getByTestId('workflow-graph-stage-implementation');
+    await expect(repairNode).toContainText('Blockiert');
+    const plannedEdges = workflowGraph.locator('[data-testid^="workflow-graph-planned-transition-"]');
+    await expect(plannedEdges).toHaveCount(finalFlowInstance.candidate_transitions.length);
+    await expect(plannedEdges.nth(0)).toHaveAccessibleName(/Eingefrorene Route/);
+    const runPicker = workflowGraph.getByRole('combobox', { name: 'Lauf für Bearbeitung wählen', exact: true });
+    await expect(runPicker).toBeVisible();
+    await expect(runPicker.locator('option')).toHaveCount(4);
+    await expect(runPicker).toContainText('Lauf 3 · Versuch 1');
+    await runPicker.selectOption(paused.run_ids[1]);
+    const activityDetails = flow.getByTestId('task-flow-activity-details');
+    await expect(activityDetails).toContainText('Lauf 2 · Bearbeitung');
+    const repeatedRoute = workflowGraph.getByRole('button', { name: /2 tatsächliche Besuche/ });
+    await expect(repeatedRoute).toHaveCount(1);
+    await repeatedRoute.click();
+    await expect(workflowGraph.getByTestId('workflow-graph-run-transition-0')).toBeVisible();
+    await expect(workflowGraph.getByTestId('workflow-graph-run-transition-1')).toBeVisible();
+    await workflowGraph.getByTestId('workflow-graph-run-transition-1').click();
+    const secondRepairRunDetails = activityDetails.getByTestId(`task-flow-run-details-${paused.run_ids[1]}`);
+    await expect(secondRepairRunDetails).toBeVisible();
+    const secondRepairReport = secondRepairRunDetails.getByTestId(`task-flow-report-${reportIds[1]}`);
+    await expect(secondRepairReport).toContainText('Die Implementierungsrolle meldet Änderungsbedarf 2.');
+    await expect(secondRepairReport).toContainText(displayedDateTime(reports[1].data.received_at));
+    await expect(activityDetails).toContainText(`Freigabe für eine weitere Überarbeitung: ${ownerGuidance}`);
+    const secondRepairHandoff = secondRepairRunDetails.locator('details').filter({ hasText: 'Übergabeprotokoll ansehen' });
+    await expect(secondRepairHandoff).toHaveCount(1);
+    await expect(secondRepairHandoff).toHaveAttribute('open', '');
+    await expect(secondRepairHandoff).toContainText('Die Implementierungsrolle meldet Änderungsbedarf 1.');
+    await expect(secondRepairHandoff).toContainText(`Herkunft: Versuch 1 · Ticketrevision ${task.version}`);
+    await testInfo.attach('ticket-flow-repeated-repair-handoff', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
     recordEvidence(
       'M4: Das Reparaturlimit stoppt automatisch. Nur eine begründete Eigentümerfreigabe startet genau eine zusätzliche Runde; deren Hinweis bleibt in der eingefrorenen Übergabe.',
       `Workflow ${instance.id} stoppte nach zwei needs_changes-Reports und zwei T3-Launches; resume wurde mit ${bypassAttempt.data.code} abgewiesen. Die Eigentümerin gab genau eine Runde mit Hinweis frei. Run ${extraRepairRunId} fror diesen Hinweis in seiner Übergabe ein und meldete erneut needs_changes. Die Instanz pausierte wieder mit genau drei Runs und drei T3-Launches; der vierte Run wurde nicht gestartet. Ticket ${task.id} blieb im Status ready.`,

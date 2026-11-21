@@ -1,13 +1,18 @@
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CircleAlert, FileCheck2, GitBranch, ListChecks, RotateCw } from 'lucide-react'
 import type { components } from '@/generated/api'
 import { api, request, type Task, type TaskStatus } from '@/lib/api'
+import { fetchAllPages } from '@/lib/queries'
+import { WorkflowGraph, type WorkflowGraphSelection } from '@/components/WorkflowGraph'
+import type { WorkflowBoardColumnOption, WorkflowStageEditorProfile } from '@/components/WorkflowStagesEditor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
 type TaskFlowCondition = components['schemas']['WorkflowCondition']
-type TaskFlowTransition = components['schemas']['TaskFlowCandidateTransition']
+type TaskFlowCandidateTransition = components['schemas']['TaskFlowCandidateTransition']
+type TaskFlowSelectedTransition = components['schemas']['TaskFlowSelectedTransition']
 type TaskFlowPhase = components['schemas']['TaskFlowPhase']
 type TaskFlowWorkflowItem = components['schemas']['TaskFlowWorkflowInstance']
 type TaskFlowItem = components['schemas']['TaskFlowItem']
@@ -15,6 +20,12 @@ type TaskFlowRun = components['schemas']['TaskFlowRun']
 type TaskFlowReport = components['schemas']['TaskFlowReport']
 type TaskFlowHandoff = components['schemas']['TaskFlowHandoff']
 type TaskFlowActorRef = components['schemas']['actor']
+type TaskFlowBoard = components['schemas']['Board']
+type TaskFlowGraphFocus =
+  | { type: 'phase'; phaseId: string }
+  | { type: 'run'; runId: string }
+  | { type: 'transition'; index: number; runId: string; reportId: string | null }
+  | null
 export type TaskFlowPage = components['schemas']['TaskFlowPage']
 
 const categoryLabels: Record<string, string> = {
@@ -48,7 +59,7 @@ const approvalStates: Record<string, string> = {
   pending: 'Offen', approved: 'Freigegeben', rejected: 'Abgelehnt', cancelled: 'Zurückgezogen', invalidated: 'Nicht mehr gültig',
 }
 
-const transitionSelectionStates: Record<TaskFlowTransition['selection_status'], string> = {
+const transitionSelectionStates: Record<TaskFlowCandidateTransition['selection_status'], string> = {
   selected: 'Ausgewählt', possible: 'Möglich', not_selected: 'Nicht ausgewählt', unknown: 'Auswahl nicht belegt',
 }
 
@@ -78,6 +89,25 @@ function actorName(actor: TaskFlowActorRef | string | null): string | null {
 function profileName(id: string, profileNames: Map<string, string>): string {
   // Keep the stored profile ID visible when its current display name cannot be loaded.
   return profileNames.get(id) ?? `Rollenprofil (${id})`
+}
+
+function taskFlowBoardColumns(boards: readonly TaskFlowBoard[] | undefined, statuses: readonly TaskStatus[]): WorkflowBoardColumnOption[] | undefined {
+  if (!boards) return undefined
+  const statusById = new Map(statuses.map((status) => [status.id, status]))
+
+  return boards.flatMap((board) => board.columns.map((column) => {
+    const status = column.default_drop_status_id ? statusById.get(column.default_drop_status_id) : undefined
+
+    return {
+      boardId: board.id,
+      boardName: board.name,
+      boardArchived: board.archived,
+      columnId: column.id,
+      columnName: column.name,
+      defaultDropStatusId: column.default_drop_status_id,
+      defaultDropStatusCategory: status?.category ?? null,
+    }
+  }))
 }
 
 function conditionText(condition: TaskFlowCondition): string {
@@ -137,14 +167,14 @@ function TextBlock({ label, children }: { label: string; children: string | null
   </div>
 }
 
-function HandoffDetails({ handoff, profileNames, reports, onOpenDetails }: { handoff: TaskFlowHandoff; profileNames: Map<string, string>; reports: Map<string, TaskFlowReport>; onOpenDetails: () => void }) {
+function HandoffDetails({ handoff, profileNames, reports, onOpenDetails, expanded = false }: { handoff: TaskFlowHandoff; profileNames: Map<string, string>; reports: Map<string, TaskFlowReport>; onOpenDetails: () => void; expanded?: boolean }) {
   const sourceReport = handoff.source_report_id ? reports.get(handoff.source_report_id) : undefined
   const sourceName = handoff.source_agent_profile_id ? profileNames.get(handoff.source_agent_profile_id) : undefined
   const targetName = handoff.target_agent_profile_id ? profileNames.get(handoff.target_agent_profile_id) : undefined
   const evidenceCount = handoff.reported_evidence_ids.length
   const links = handoff.link_collections.flatMap((collection) => collection.links.map((link) => ({ collection, link })))
 
-  return <details className="mt-3 rounded-md border bg-background">
+  return <details open={expanded} className="mt-3 rounded-md border bg-background">
     <summary className="cursor-pointer px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Übergabeprotokoll ansehen</summary>
     <div className="space-y-4 border-t p-3">
       <div className="grid gap-2 text-sm sm:grid-cols-2">
@@ -190,8 +220,8 @@ function HandoffDetails({ handoff, profileNames, reports, onOpenDetails }: { han
   </details>
 }
 
-function RunDetails({ run, ordinal, profileNames, reports, onOpenDetails }: { run: TaskFlowRun; ordinal: number; profileNames: Map<string, string>; reports: Map<string, TaskFlowReport>; onOpenDetails: () => void }) {
-  return <details className="rounded-md border bg-background">
+function RunDetails({ run, ordinal, profileNames, reports, onOpenDetails, expanded = false, selectedReportId = null }: { run: TaskFlowRun; ordinal: number; profileNames: Map<string, string>; reports: Map<string, TaskFlowReport>; onOpenDetails: () => void; expanded?: boolean; selectedReportId?: string | null }) {
+  return <details open={expanded} className="rounded-md border bg-background" data-testid={`task-flow-run-details-${run.id}`}>
     <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <span className="text-sm font-medium">Laufdetails ansehen · Lauf {ordinal} · {displayName(run.state, runStates)}</span>
       <span className="text-xs text-muted-foreground">{dateTime(run.created_at) ?? 'Zeitpunkt nicht überliefert'}</span>
@@ -213,7 +243,7 @@ function RunDetails({ run, ordinal, profileNames, reports, onOpenDetails }: { ru
       </div>}
       {run.reports.length > 0 && <div className="space-y-2">
         <h6 className="text-xs font-medium text-muted-foreground">Agentenmeldungen</h6>
-        {run.reports.map((report) => <article key={report.id} className="min-w-0 rounded-md bg-muted/40 p-3">
+        {run.reports.map((report) => <article key={report.id} data-testid={`task-flow-report-${report.id}`} className={`min-w-0 rounded-md p-3 ${report.id === selectedReportId ? 'border border-primary/50 bg-primary/5 ring-1 ring-primary/20' : 'bg-muted/40'}`}>
           <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{displayName(report.outcome, outcomes)}</Badge><span className="text-xs text-muted-foreground">Versuch {report.attempt_no} · Revision {report.task_revision}</span></div>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm">{report.summary}</p>
           {report.route_label_id !== undefined && <p className="mt-1 text-sm">Vom Agenten gewählte Route: {report.route_label_name ?? report.route_label_id ?? 'Standardroute'}</p>}
@@ -234,18 +264,83 @@ function RunDetails({ run, ordinal, profileNames, reports, onOpenDetails }: { ru
           {approval.reason && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{approval.reason}</p>}
         </article>)}
       </div>}
-      {run.handoff && <HandoffDetails handoff={run.handoff} profileNames={profileNames} reports={reports} onOpenDetails={onOpenDetails} />}
+      {run.handoff && <HandoffDetails handoff={run.handoff} profileNames={profileNames} reports={reports} onOpenDetails={onOpenDetails} expanded={expanded} />}
     </div>
   </details>
 }
 
-function TaskWorkflows({ item, criteria, profileNames, labelNames, onOpenDetails }: { item: TaskFlowWorkflowItem; criteria: Task['criteria']; profileNames: Map<string, string>; labelNames: Map<string, string>; onOpenDetails: () => void }) {
+function TaskWorkflows({ item, criteria, profileNames, profiles, boardColumns, boardLookupError, labelNames, onOpenDetails }: { item: TaskFlowWorkflowItem; criteria: Task['criteria']; profileNames: Map<string, string>; profiles: readonly WorkflowStageEditorProfile[]; boardColumns?: readonly WorkflowBoardColumnOption[]; boardLookupError: boolean; labelNames: Map<string, string>; onOpenDetails: () => void }) {
+  const [focus, setFocus] = useState<TaskFlowGraphFocus>(null)
+  const graphRef = useRef<HTMLDivElement>(null)
+  const activityDetailsRef = useRef<HTMLElement>(null)
+  const scrollAfterFocus = useRef(false)
   const phaseNames = new Map(item.phases.map((phase) => [phase.id, phase.name]))
   const reports = new Map(item.runs.flatMap((run) => run.reports.map((report) => [report.id, report] as const)))
   const runsByStage = new Map<string, TaskFlowRun[]>()
   for (const run of item.runs) runsByStage.set(run.stage, [...(runsByStage.get(run.stage) ?? []), run])
   const knownPhaseIds = new Set(item.phases.map((phase) => phase.id))
   const unassignedRuns = item.runs.filter((run) => !knownPhaseIds.has(run.stage))
+  const selectedTransitions = item.selected_transitions ?? []
+  const selectedRunTransition = focus?.type === 'transition' ? selectedTransitions[focus.index] : undefined
+  const selectedRunId = focus?.type === 'run' ? focus.runId : focus?.type === 'transition' ? focus.runId : null
+  const selectedRun = selectedRunId ? item.runs.find((run) => run.id === selectedRunId) : undefined
+  const selectedRunOrdinal = selectedRun ? (runsByStage.get(selectedRun.stage) ?? []).findIndex((run) => run.id === selectedRun.id) + 1 : 1
+  const selectedPhaseId = focus?.type === 'phase'
+    ? focus.phaseId
+    : selectedRun?.stage ?? selectedRunTransition?.from_stage_id ?? null
+  const selectedPhase = selectedPhaseId ? item.phases.find((phase) => phase.id === selectedPhaseId) : undefined
+  const phaseRuns = selectedPhase ? runsByStage.get(selectedPhase.id) ?? [] : []
+  const selectedReportId = focus?.type === 'transition' ? focus.reportId : null
+  const graphSelection: WorkflowGraphSelection = focus?.type === 'phase'
+    ? { type: 'stage', stageId: focus.phaseId }
+    : focus?.type === 'run' && selectedRun
+      ? { type: 'stage', stageId: selectedRun.stage }
+      : focus?.type === 'transition'
+        ? { type: 'transition', transitionIndex: focus.index }
+        : null
+  const graphRouteLabels = new Map<string, string>()
+  for (const transition of item.candidate_transitions) {
+    if (transition.route_label_id) graphRouteLabels.set(transition.route_label_id, labelNames.get(transition.route_label_id) ?? 'Themenlabel')
+  }
+  for (const transition of selectedTransitions) {
+    if (transition.route_label_id) graphRouteLabels.set(transition.route_label_id, transition.route_label_name ?? labelNames.get(transition.route_label_id) ?? 'Themenlabel')
+  }
+
+  useEffect(() => {
+    if (!scrollAfterFocus.current) return
+    scrollAfterFocus.current = false
+    if (!window.matchMedia('(max-width: 1279px)').matches) return
+    activityDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    activityDetailsRef.current?.querySelector<HTMLElement>('[data-testid="task-flow-activity-details-heading"]')?.focus({ preventScroll: true })
+  }, [focus])
+
+  const focusActivity = (nextFocus: TaskFlowGraphFocus) => {
+    scrollAfterFocus.current = nextFocus !== null
+    setFocus(nextFocus)
+  }
+
+  const returnToGraph = () => {
+    focusActivity(null)
+    if (!window.matchMedia('(max-width: 1279px)').matches) return
+    requestAnimationFrame(() => {
+      graphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      graphRef.current?.querySelector<HTMLElement>('[data-testid^="workflow-graph-stage-"]')?.focus({ preventScroll: true })
+    })
+  }
+
+  const selectGraphElement = (selection: WorkflowGraphSelection) => {
+    if (!selection) {
+      focusActivity(null)
+    } else if (selection.type === 'stage') {
+      focusActivity({ type: 'phase', phaseId: selection.stageId })
+    } else {
+      const transition = selectedTransitions[selection.transitionIndex]
+      if (transition) focusActivity({ type: 'transition', index: selection.transitionIndex, runId: transition.source_run_id, reportId: transition.report_id })
+    }
+  }
+
+  const selectRun = (run: TaskFlowRun) => focusActivity({ type: 'run', runId: run.id })
+  const selectRunTransition = (index: number, transition: TaskFlowSelectedTransition) => focusActivity({ type: 'transition', index, runId: transition.source_run_id, reportId: transition.report_id })
 
   return <Card>
     <CardContent className="space-y-5 p-4 sm:p-5">
@@ -254,7 +349,7 @@ function TaskWorkflows({ item, criteria, profileNames, labelNames, onOpenDetails
           <GitBranch className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
           <div className="min-w-0">
             <h4 className="break-words text-base font-semibold">Workflow: {item.workflow_name || 'Name nicht gespeichert'} · Version {item.definition_version}</h4>
-            <p className="mt-1 text-sm text-muted-foreground">{displayName(item.state, workflowStates)} · Gestartet: {dateTime(item.started_at) ?? dateTime(item.created_at) ?? 'Zeitpunkt nicht überliefert'}{item.ended_at ? ` · Beendet: ${dateTime(item.ended_at) ?? 'Zeitpunkt nicht überliefert'}` : ''}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Gestartet: {dateTime(item.started_at) ?? dateTime(item.created_at) ?? 'Zeitpunkt nicht überliefert'}{item.ended_at ? ` · Beendet: ${dateTime(item.ended_at) ?? 'Zeitpunkt nicht überliefert'}` : ''}</p>
           </div>
         </div>
         <Badge variant={item.state === 'succeeded' ? 'secondary' : item.state === 'failed' || item.state === 'cancelled' ? 'destructive' : 'outline'}>{displayName(item.state, workflowStates)}</Badge>
@@ -262,6 +357,70 @@ function TaskWorkflows({ item, criteria, profileNames, labelNames, onOpenDetails
 
       {item.pause_reason && <div role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p className="font-medium">Warum pausiert</p><p className="mt-1 whitespace-pre-wrap break-words">{item.pause_reason}</p></div>}
       {item.repair_round !== null && item.repair_round > 0 && <p className="text-sm text-muted-foreground">Überarbeitungsrunde: {item.repair_round}</p>}
+
+      {item.definition_available && item.phases.length > 0 && <section aria-label="Gespeicherter Workflowablauf" className="space-y-3">
+        <h5 className="text-sm font-semibold">Workflowablauf</h5>
+        {item.branch_history_status === 'partial' && <p role="status" className="text-xs text-muted-foreground">Ein Teil der tatsächlichen Übergänge ist nicht gespeichert. Geplante Routen stammen aus Version {item.definition_version}.</p>}
+        {item.branch_history_status === 'not_recorded' && <p role="status" className="text-xs text-muted-foreground">Für diesen Ablauf ist keine tatsächliche Übergangshistorie gespeichert. Geplante Routen stammen aus Version {item.definition_version}.</p>}
+        {boardLookupError && item.phases.some((phase) => phase.board_target) && <p role="status" className="text-xs text-muted-foreground">Projektspalten konnten nicht geladen werden. Gespeicherte Boardziele werden ohne Spaltennamen dargestellt.</p>}
+        <div className={focus ? 'grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(19rem,1fr)]' : 'min-w-0'}>
+          <div ref={graphRef} data-testid={`task-flow-workflow-graph-${item.id}`} className="min-w-0">
+            <WorkflowGraph
+              mode="run"
+              label={`Ablaufdiagramm · ${item.workflow_name || `Version ${item.definition_version}`}`}
+              className="h-[26rem] sm:h-[min(58vh,36rem)]"
+              selectedRunId={selectedRunId}
+              routeLabelNames={labelNames}
+              stages={item.phases}
+              transitions={[]}
+              profiles={profiles}
+              boardColumns={boardColumns}
+              routeLabels={[...graphRouteLabels].map(([id, name]) => ({ id, name, active: true, kind: 'topic' }))}
+              selection={graphSelection}
+              onSelect={selectGraphElement}
+              runActivity={{
+                currentStageId: item.current_stage_id,
+                selectedTransitions: item.selected_transitions,
+                plannedTransitions: item.candidate_transitions,
+                runs: item.runs,
+                branchHistoryStatus: item.branch_history_status,
+              }}
+              onSelectRun={selectRun}
+              onSelectRunTransition={selectRunTransition}
+            />
+          </div>
+
+          {focus && <section ref={activityDetailsRef} data-testid="task-flow-activity-details" className="min-w-0 scroll-mt-4 space-y-3 rounded-lg border bg-card p-3 text-card-foreground">
+          <header className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h6 tabIndex={-1} data-testid="task-flow-activity-details-heading" className="break-words text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">{selectedRunTransition
+                ? `${phaseNames.get(selectedRunTransition.from_stage_id) ?? 'Vorherige Phase'} → ${phaseNames.get(selectedRunTransition.to_stage_id) ?? 'Folgephase'}`
+                : selectedRun
+                  ? `Lauf ${selectedRunOrdinal} · ${phaseNames.get(selectedRun.stage) ?? 'Phase nicht verfügbar'}`
+                  : selectedPhase?.name ?? 'Phase nicht verfügbar'}</h6>
+              {selectedPhase && <p className="mt-1 text-xs text-muted-foreground">{selectedPhase.agent_profile_id ? `Rolle: ${profileName(selectedPhase.agent_profile_id, profileNames)}` : 'Keine feste Agentrolle'}</p>}
+            </div>
+            <Button type="button" size="sm" variant="ghost" onClick={returnToGraph}>Details schließen</Button>
+          </header>
+
+          {selectedRunTransition && <div className="rounded-md bg-muted/40 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{displayName(selectedRunTransition.outcome, outcomes)}</Badge><span className="text-xs text-muted-foreground">Tatsächlicher Übergang · {dateTime(selectedRunTransition.selected_at) ?? 'Zeitpunkt nicht überliefert'}</span></div>
+            {selectedRunTransition.route_label_id !== undefined && <p className="mt-1 text-xs">{selectedRunTransition.route_label_id ? `Themenlabel: ${selectedRunTransition.route_label_name ?? labelNames.get(selectedRunTransition.route_label_id) ?? 'nicht mehr verfügbar'}` : 'Standardroute'}</p>}
+            {selectedRunTransition.owner_guidance && <p className="mt-2 whitespace-pre-wrap break-words">Freigabe für eine weitere Überarbeitung: {selectedRunTransition.owner_guidance}</p>}
+            {selectedRunTransition.report_id && !selectedRun?.reports.some((report) => report.id === selectedRunTransition.report_id) && <p role="status" className="mt-2 text-xs text-muted-foreground">Die zugeordnete Agentenmeldung ist in diesem Lauf nicht enthalten.</p>}
+          </div>}
+
+          {selectedPhase && phaseRuns.length > 0 && !selectedRun && <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Läufe dieser Phase</p>
+            <ul className="space-y-1.5">{phaseRuns.map((run, index) => <li key={run.id}><Button type="button" variant="outline" size="sm" className="h-auto w-full justify-between gap-3 py-2 text-left" data-testid={`task-flow-run-select-${run.id}`} onClick={() => selectRun(run)}><span className="min-w-0 truncate">Lauf {index + 1} · {displayName(run.state, runStates)}</span><span className="shrink-0 text-xs text-muted-foreground">{dateTime(run.created_at) ?? 'Zeitpunkt nicht überliefert'}</span></Button></li>)}</ul>
+          </div>}
+
+          {selectedPhase && phaseRuns.length === 0 && <p className="text-sm text-muted-foreground">Für diese Phase ist noch kein Lauf gespeichert.</p>}
+          {selectedRun && <RunDetails run={selectedRun} ordinal={selectedRunOrdinal} profileNames={profileNames} reports={reports} onOpenDetails={onOpenDetails} expanded selectedReportId={selectedReportId} />}
+          {!selectedPhase && !selectedRunTransition && <p className="text-sm text-muted-foreground">Die ausgewählte Phase ist in der gespeicherten Workflowversion nicht enthalten.</p>}
+          </section>}
+        </div>
+      </section>}
 
       <section aria-label="Workflowphasen" className="space-y-3">
         <h5 className="text-sm font-semibold">Phasen</h5>
@@ -383,9 +542,23 @@ export default function TaskFlow({ task, projectId, statuses, labelNames, flow, 
     },
   })
   const profileNames = new Map((profilesQuery.data?.items ?? []).map((profile) => [profile.id, profile.name]))
+  const profileOptions: WorkflowStageEditorProfile[] = (profilesQuery.data?.items ?? []).map((profile) => ({ id: profile.id, name: profile.name, role: profile.role }))
+  const hasWorkflowBoardTargets = Boolean(flow?.items.some((item) => item.kind === 'workflow_instance' && item.phases.some((phase) => phase.board_target)))
+  const workflowBoardsQuery = useQuery({
+    queryKey: ['task-flow-workflow-boards', projectId],
+    enabled: Boolean(projectId && hasWorkflowBoardTargets),
+    queryFn: async () => {
+      const load = (archived: boolean) => fetchAllPages((cursor) => request(api.GET('/projects/{project_id}/boards', {
+        params: { path: { project_id: projectId }, query: { limit: 100, archived, ...(cursor ? { cursor } : {}) } },
+      })))
+      const [active, archived] = await Promise.all([load(false), load(true)])
 
-  return <div className="space-y-5 pb-6">
-    <section aria-labelledby="task-flow-ticket-status" className="space-y-4 rounded-lg border p-4">
+      return [...active.items, ...archived.items]
+    },
+  })
+  const boardColumns = taskFlowBoardColumns(workflowBoardsQuery.data, statuses)
+
+  const ticketStatusSection = <section aria-labelledby="task-flow-ticket-status" className="space-y-4 rounded-lg border p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <ListChecks className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
@@ -419,7 +592,7 @@ export default function TaskFlow({ task, projectId, statuses, labelNames, flow, 
       </div>
     </section>
 
-    <section aria-labelledby="task-flow-sessions" className="space-y-3">
+  const workflowSessionsSection = <section aria-labelledby="task-flow-sessions" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 id="task-flow-sessions" className="text-sm font-semibold">Workflows und Agentenläufe</h3>
         <Button size="sm" variant="outline" onClick={onOpenExecution}>Ausführung öffnen</Button>
@@ -431,7 +604,7 @@ export default function TaskFlow({ task, projectId, statuses, labelNames, flow, 
         </div>
           : flow?.items.length ? <div className="space-y-4">
             {flow.items.map((item) => item.kind === 'workflow_instance'
-              ? <TaskWorkflows key={`${item.kind}-${item.id}`} item={item} criteria={task.criteria} profileNames={profileNames} labelNames={labelNames} onOpenDetails={onOpenDetails} />
+              ? <TaskWorkflows key={`${item.kind}-${item.id}`} item={item} criteria={task.criteria} profileNames={profileNames} profiles={profileOptions} boardColumns={boardColumns} boardLookupError={workflowBoardsQuery.isError} labelNames={labelNames} onOpenDetails={onOpenDetails} />
               : <TaskRunItem key={`${item.kind}-${item.run.id}`} item={item} profileNames={profileNames} onOpenDetails={onOpenDetails} />)}
             {hasMore && <div className="flex justify-center"><Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>{loadingMore ? 'Weitere Abläufe werden geladen …' : 'Ältere Abläufe laden'}</Button></div>}
           </div>
@@ -440,5 +613,9 @@ export default function TaskFlow({ task, projectId, statuses, labelNames, flow, 
               <p className="mt-1 text-sm text-muted-foreground">Du kannst das Ticket trotzdem selbst bearbeiten. Der Ticketstand oben bleibt davon unabhängig.</p>
             </div>}
     </section>
+  const hasVisibleWorkflowGraph = Boolean(flow?.items.some((item) => item.kind === 'workflow_instance' && item.definition_available && item.phases.length > 0))
+
+  return <div className="space-y-5 pb-6">
+    {hasVisibleWorkflowGraph ? <>{workflowSessionsSection}{ticketStatusSection}</> : <>{ticketStatusSection}{workflowSessionsSection}</>}
   </div>
 }
