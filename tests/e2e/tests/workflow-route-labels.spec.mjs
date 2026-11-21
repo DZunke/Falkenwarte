@@ -284,11 +284,15 @@ test('reporting role selects a frozen route back to Discovery with its report ha
   try {
     const reportId = randomUUID();
     const beforeInvalid = (await ownerApi.get(`/runs/${reportingRunId}`)).data;
+    expect(beforeInvalid.report_ids ?? []).toEqual([]);
     const taskBeforeInvalid = (await ownerApi.get(`/tasks/${task.id}`)).data;
     const evidenceBeforeInvalid = await ownerApi.get(`/evidence?task_id=${encodeURIComponent(task.id)}&limit=100`);
     expect(evidenceBeforeInvalid.response.status(), JSON.stringify(evidenceBeforeInvalid.data)).toBe(200);
     const existingEvidenceIds = evidenceBeforeInvalid.data.items.map((item) => item.id).sort();
-    const invalid = await reporter.agent.callRaw('runs_report_result', {
+    const flowBeforeInvalid = await taskFlow(ownerApi, task.id, instance.id);
+    expect(flowBeforeInvalid.selected_transitions).toHaveLength(1);
+    const t3JournalBeforeInvalid = await qaMocks.t3Journal();
+    const invalidReport = {
       run_id: reportingRunId,
       report_id: reportId,
       attempt_no: reportingRun.attempt_no,
@@ -299,22 +303,54 @@ test('reporting role selects a frozen route back to Discovery with its report ha
       artifacts: [{ kind: 'note', label: 'Nicht speichern', text: 'Die Route-ID gehört zu keiner eingefrorenen Option.' }],
       route_label_id: randomUUID(),
       client_request_id: randomUUID(),
-      expected_version: beforeInvalid.version,
-    });
-    expect(invalid.response.status(), JSON.stringify(invalid.data)).toBe(200);
-    expect(invalid.data?.error).toBeUndefined();
-    expect(invalid.data?.result?.isError).toBe(true);
-    expect(invalid.data?.result?.structuredContent).toMatchObject({ status: 409, code: 'workflow_route_unavailable' });
-    expect((await ownerApi.get(`/runs/${reportingRunId}`)).data).toMatchObject({ version: beforeInvalid.version, report_ids: [] });
+    };
+    // Keep the report and idempotency IDs stable; only refresh the optimistic run version after a 412.
+    let expectedRunVersion = beforeInvalid.version;
+    let invalid;
+    for (let submission = 0; submission < 3; submission += 1) {
+      invalid = await reporter.agent.callRaw('runs_report_result', {
+        ...invalidReport,
+        expected_version: expectedRunVersion,
+      });
+      expect(invalid.response.status(), JSON.stringify(invalid.data)).toBe(200);
+      expect(invalid.data?.error).toBeUndefined();
+      expect(invalid.data?.result?.isError).toBe(true);
+      const problem = invalid.data?.result?.structuredContent;
+      if (problem?.status === 409 && problem?.code === 'workflow_route_unavailable') break;
+
+      expect(problem, JSON.stringify(problem)).toMatchObject({ status: 412, code: 'version_conflict' });
+      expect(submission, 'Der ungültige Bericht darf höchstens zweimal nach einer konkreten Runversionsänderung erneut gesendet werden.').toBeLessThan(2);
+      const latest = await readUntil(
+        ownerApi,
+        `/runs/${reportingRunId}`,
+        (run) => run.version > expectedRunVersion,
+        'Nach 412 muss die aktuelle Runversion über den Owner-Endpunkt neu gelesen werden.',
+      );
+      expect(latest.id).toBe(beforeInvalid.id);
+      expect(latest.attempt_no).toBe(beforeInvalid.attempt_no);
+      expect(latest.snapshot.task_revision).toBe(beforeInvalid.snapshot.task_revision);
+      expect(latest.report_ids ?? []).toEqual(beforeInvalid.report_ids ?? []);
+      expect(['running', 'verifying']).toContain(latest.state);
+      expectedRunVersion = latest.version;
+    }
+    expect(invalid?.data?.result?.structuredContent, JSON.stringify(invalid?.data?.result?.structuredContent))
+      .toMatchObject({ status: 409, code: 'workflow_route_unavailable' });
+    const runAfterRejection = (await ownerApi.get(`/runs/${reportingRunId}`)).data;
+    expect(runAfterRejection.attempt_no).toBe(beforeInvalid.attempt_no);
+    expect(runAfterRejection.snapshot.task_revision).toBe(beforeInvalid.snapshot.task_revision);
+    expect(runAfterRejection.report_ids ?? []).toEqual(beforeInvalid.report_ids ?? []);
     expect((await ownerApi.get(`/tasks/${task.id}`)).data.version).toBe(taskBeforeInvalid.version);
     expect((await ownerApi.get(`/runs/${reportingRunId}/result-reports/${reportId}`)).response.status()).toBe(404);
     const evidenceAfterRejection = await ownerApi.get(`/evidence?task_id=${encodeURIComponent(task.id)}&limit=100`);
     expect(evidenceAfterRejection.response.status(), JSON.stringify(evidenceAfterRejection.data)).toBe(200);
     expect(evidenceAfterRejection.data.items.map((item) => item.id).sort()).toEqual(existingEvidenceIds);
     expect(evidenceAfterRejection.data.items.map((item) => item.label)).not.toContain('Nicht speichern');
+    const t3JournalAfterInvalid = await qaMocks.t3Journal();
+    expect(t3JournalAfterInvalid.accepted_launches).toHaveLength(t3JournalBeforeInvalid.accepted_launches.length);
+    expect(t3JournalAfterInvalid.unexpected).toEqual(t3JournalBeforeInvalid.unexpected);
     const flowAfterRejection = await taskFlow(ownerApi, task.id, instance.id);
     expect(flowAfterRejection.runs.map((run) => run.id)).toEqual([firstRunId, reportingRunId]);
-    expect(flowAfterRejection.selected_transitions).toHaveLength(1);
+    expect(flowAfterRejection.selected_transitions).toEqual(flowBeforeInvalid.selected_transitions);
 
     const validResult = await submitReport(ownerApi, reporter.agent, reportingRunId, {
       outcome: 'needs_changes',
