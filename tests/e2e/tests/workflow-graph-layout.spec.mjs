@@ -957,6 +957,75 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
   await ownerPage.setViewportSize({ width: 390, height: 844 });
   await expect(editor).toBeVisible();
   await assertPageFits(ownerPage, { width: 390, height: 844 }, 'Dense Graph Mobile');
+
+  const navigationTab = graph.getByTestId('workflow-graph-mobile-view-navigation');
+  const diagramTab = graph.getByTestId('workflow-graph-mobile-view-graph');
+  const navigation = graph.getByTestId('workflow-graph-mobile-navigation');
+  const navigationContent = navigation.getByTestId('workflow-mobile-navigation-content');
+  await expect(navigationTab).toHaveAttribute('aria-pressed', 'true');
+  await expect(diagramTab).toHaveAttribute('aria-pressed', 'false');
+  await expect(navigation).toBeVisible();
+  await expect(navigationContent).toBeVisible();
+  await expect(navigationContent.locator('ol > li[data-testid^="workflow-mobile-stage-"]')).toHaveCount(4);
+
+  const mobileNavigationControls = [];
+  for (const [index, stage] of stages.entries()) {
+    const card = navigationContent.getByTestId(`workflow-mobile-stage-${stage.id}`);
+    const phaseName = card.getByTestId(`workflow-mobile-stage-select-${stage.id}`);
+    const role = card.locator('p').filter({ hasText: 'Rolle:' });
+    await expect(phaseName).toHaveText(stage.name);
+    await expect(card).toContainText(index === 3 ? 'Reviewphase' : 'Arbeitsphase');
+    await expect(role).toContainText('Keine Agentrolle');
+    const fontSizes = await Promise.all([
+      phaseName.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
+      role.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
+    ]);
+    expect(fontSizes[0], `Die Phase ${stage.name} ist auf Mobil gut lesbar.`).toBeGreaterThanOrEqual(16);
+    expect(fontSizes[1], `Die Rolleninformation für ${stage.name} ist auf Mobil gut lesbar.`).toBeGreaterThanOrEqual(14);
+    mobileNavigationControls.push({ name: `Phase ${stage.name}`, locator: phaseName });
+    mobileNavigationControls.push({ name: `Rolle ${stage.name}`, locator: role });
+  }
+  await expect(navigationContent.getByTestId('workflow-mobile-route-0')).toContainText('Bearbeitung');
+  await expect(navigationContent.getByTestId('workflow-mobile-route-0')).toContainText('Standardroute');
+  await expect(navigationContent.getByTestId('workflow-mobile-route-0')).toContainText('Angenommen');
+  for (const route of routes) {
+    mobileNavigationControls.push({ name: `Route ${route.index}`, locator: navigationContent.getByTestId(`workflow-mobile-route-${route.index}`) });
+  }
+  const mobileControlBounds = [];
+  for (const control of mobileNavigationControls) {
+    const bounds = await control.locator.boundingBox();
+    expect(bounds, `${control.name} hat eine messbare mobile Trefferfläche.`).not.toBeNull();
+    mobileControlBounds.push({ name: control.name, ...bounds });
+  }
+  assertNoOverlap(mobileControlBounds, 'Mobile Phasen-, Rollen- und Routeninformationen überdecken sich nicht.');
+
+  const mobileRoute = navigationContent.getByTestId('workflow-mobile-route-0');
+  await mobileRoute.scrollIntoViewIfNeeded();
+  await mobileRoute.click();
+  await expect(mobileRoute).toHaveAttribute('aria-pressed', 'true');
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByLabel('Von Phase')).toContainText(routes[0].from);
+  await expect(inspector.getByLabel('Ergebnis')).toContainText(routes[0].outcome);
+  await expect(inspector.getByLabel('Zu Phase')).toContainText(routes[0].to);
+  await expect(inspector.getByLabel('Label für diesen Übergang')).toContainText(routes[0].label);
+  await expect(inspector.getByTestId('workflow-inspector-heading')).toBeFocused();
+  await expect(inspector.getByTestId('workflow-inspector-heading')).toBeInViewport();
+  await assertGraphGridColumns(inspector, 1, 'Mobile Navigationroute zeigt den Inspector unter der Phase-/Routenansicht.');
+  const mobileNavigationBounds = await graph.boundingBox();
+  const mobileInspectorBounds = await inspector.boundingBox();
+  expect(mobileNavigationBounds).not.toBeNull();
+  expect(mobileInspectorBounds).not.toBeNull();
+  assertNoOverlap([
+    { name: 'Phasen- und Routenansicht', ...mobileNavigationBounds },
+    { name: 'Übergangsinspector', ...mobileInspectorBounds },
+  ], 'Mobile Phasen-/Routenansicht und Inspector überdecken sich nicht.');
+  await inspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
+  await expect(inspector).toHaveCount(0);
+  await expect(navigationTab).toHaveAttribute('aria-pressed', 'true');
+
+  await diagramTab.click();
+  await expect(diagramTab).toHaveAttribute('aria-pressed', 'true');
+  await expect(navigationTab).toHaveAttribute('aria-pressed', 'false');
   await assertDenseGraphFitsPane(graph, 'Dense Graph Mobile Ausgangsansicht');
 
   for (const route of routes) {
@@ -982,15 +1051,25 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
     }
     await assertSelectedRoute(route, { width: 390, height: 844 }, `Keyboardroute ${route.index}`);
     await assertDenseGraphFitsPane(graph, `Dense Graph Mobile nach Route ${route.index}`);
-    await inspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
-    await expect(inspector).toHaveCount(0);
-    await graph.scrollIntoViewIfNeeded();
+    if (route.index < routes.length - 1) {
+      await inspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
+      await expect(inspector).toHaveCount(0);
+      await graph.scrollIntoViewIfNeeded();
+    }
   }
 
   await expect(editor).toBeVisible();
+  await navigationTab.click();
+  await expect(navigationTab).toHaveAttribute('aria-pressed', 'true');
+  await expect(diagramTab).toHaveAttribute('aria-pressed', 'false');
+  await expect(navigationContent.getByTestId('workflow-mobile-route-9')).toHaveAttribute('aria-pressed', 'true');
+  await expect(inspector.getByLabel('Von Phase')).toContainText(routes[9].from);
+  await expect(inspector.getByLabel('Ergebnis')).toContainText(routes[9].outcome);
+  await expect(inspector.getByLabel('Zu Phase')).toContainText(routes[9].to);
+  await expect(inspector.getByLabel('Label für diesen Übergang')).toContainText(routes[9].label);
   recordEvidence(
     'Der Workfloweditor hält vier Phasen und zehn dichte Routen auf Desktop und Mobil bedienbar.',
-    `Ein isoliertes QA-Projekt enthielt vier Phasen und zehn Übergänge. Vier gebündelte Routen von Bearbeitung nach Abschluss (Angenommen Standardroute, Angenommen Risiko, Blockiert und Fehlgeschlagen) sowie die sechs übrigen Routen wurden am 1588×850-Desktop per Pointer und bei 390×844 per Tastatur ausgewählt. Jeder Inspector zeigte Quelle, Ergebnis, Ziel und Route; alle sichtbaren Phasen-, Routen- und Bündelcontrols blieben innerhalb der Graphpane und überdeckten weder einander noch den Inspector. Es wurde kein Workflowlauf gestartet.`,
+    `Ein isoliertes QA-Projekt enthielt vier Phasen und zehn Übergänge. Vier gebündelte Routen von Bearbeitung nach Abschluss (Angenommen Standardroute, Angenommen Risiko, Blockiert und Fehlgeschlagen) sowie die sechs übrigen Routen wurden am 1588×850-Desktop per Pointer und bei 390×844 per Tastatur ausgewählt. Die mobile Ansicht zeigte Phasennamen und Rollen lesbar ohne überlappende Routecontrols; eine Routenauswahl öffnete den passenden Inspector. Der Wechsel zum Diagramm und zurück behielt die ausgewählte Route bei. Jeder Inspector zeigte Quelle, Ergebnis, Ziel und Route; alle sichtbaren Phasen-, Routen- und Bündelcontrols blieben innerhalb der Graphpane und überdeckten weder einander noch den Inspector. Es wurde kein Workflowlauf gestartet.`,
     {},
   );
 });
