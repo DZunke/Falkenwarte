@@ -10,7 +10,6 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
-  useNodesInitialized,
   type Connection,
   type Edge,
   type EdgeProps,
@@ -669,9 +668,10 @@ function WorkflowGraphCanvas({
   controlledSelection,
   setSelection,
 }: WorkflowGraphCanvasProps) {
-  const { fitBounds, getNodesBounds, zoomIn, zoomOut, screenToFlowPosition } = useReactFlow<WorkflowStageNode, WorkflowTransitionEdge>()
+  const { fitBounds, getNodesBounds, zoomIn, zoomOut, screenToFlowPosition, viewportInitialized } = useReactFlow<WorkflowStageNode, WorkflowTransitionEdge>()
   const canvasRef = useRef<HTMLDivElement>(null)
-  const nodesInitialized = useNodesInitialized()
+  const fitApiRef = useRef({ fitBounds, getNodesBounds, screenToFlowPosition })
+  fitApiRef.current = { fitBounds, getNodesBounds, screenToFlowPosition }
   const [connecting, setConnecting] = useState(false)
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [connectionStatus, setConnectionStatus] = useState('')
@@ -699,6 +699,8 @@ function WorkflowGraphCanvas({
       id: stage.id,
       type: 'workflowStage' as const,
       position: { x: geometry.x, y: geometry.y },
+      width: geometry.width,
+      height: geometry.height,
       style: { width: geometry.width, height: geometry.height },
       draggable: false,
       selectable: false,
@@ -849,9 +851,10 @@ function WorkflowGraphCanvas({
   ])
   const fitGraph = useCallback((duration = 180) => {
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const { fitBounds: fitToBounds, getNodesBounds: getCurrentNodesBounds, screenToFlowPosition: screenToCurrentFlow } = fitApiRef.current
       const { nodes, layout: currentLayout } = fitDataRef.current
       if (!canvasRef.current || nodes.length === 0) return
-      const nodesBounds = getNodesBounds(nodes)
+      const nodesBounds = getCurrentNodesBounds(nodes)
       const layoutNodes = [...currentLayout.nodes.values()]
       if (layoutNodes.length === 0) return
       let minX = Math.min(...layoutNodes.map((node) => node.x))
@@ -867,8 +870,8 @@ function WorkflowGraphCanvas({
       const labels = canvasRef.current.querySelectorAll<HTMLElement>('.workflow-graph__edge-label')
       for (const label of labels) {
         const box = label.getBoundingClientRect()
-        const topLeft = screenToFlowPosition({ x: box.left, y: box.top })
-        const bottomRight = screenToFlowPosition({ x: box.right, y: box.bottom })
+        const topLeft = screenToCurrentFlow({ x: box.left, y: box.top })
+        const bottomRight = screenToCurrentFlow({ x: box.right, y: box.bottom })
         minX = Math.min(minX, topLeft.x - 10)
         minY = Math.min(minY, topLeft.y - 10)
         maxX = Math.max(maxX, bottomRight.x + 10)
@@ -883,16 +886,16 @@ function WorkflowGraphCanvas({
         }
       }
       if (maxX <= minX || maxY <= minY) return
-      void fitBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }, { padding: 0.035, duration })
+      void fitToBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }, { padding: 16, duration })
     }))
-  }, [fitBounds, screenToFlowPosition, getNodesBounds])
+  }, [])
 
   useEffect(() => {
-    if (graphNodes.length === 0 || !nodesInitialized) return
+    if (graphNodes.length === 0 || !viewportInitialized || containerWidth <= 0 || containerHeight <= 0) return
     const frame = window.requestAnimationFrame(() => fitGraph(0))
 
     return () => window.cancelAnimationFrame(frame)
-  }, [fitGraph, geometryKey, containerWidth, containerHeight, graphNodes.length, nodesInitialized])
+  }, [fitGraph, geometryKey, containerWidth, containerHeight, graphNodes.length, viewportInitialized])
 
   const cancelConnectionMode = useCallback(() => {
     setConnecting(false)
