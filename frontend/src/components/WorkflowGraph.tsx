@@ -10,6 +10,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useNodesInitialized,
   type Connection,
   type Edge,
   type EdgeProps,
@@ -668,6 +669,7 @@ function WorkflowGraphCanvas({
 }: WorkflowGraphCanvasProps) {
   const { fitBounds, getNodesBounds, zoomIn, zoomOut, screenToFlowPosition } = useReactFlow<WorkflowStageNode, WorkflowTransitionEdge>()
   const canvasRef = useRef<HTMLDivElement>(null)
+  const nodesInitialized = useNodesInitialized()
   const [connecting, setConnecting] = useState(false)
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
   const [connectionStatus, setConnectionStatus] = useState('')
@@ -837,10 +839,18 @@ function WorkflowGraphCanvas({
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
       if (!canvasRef.current || graphNodes.length === 0) return
       const nodesBounds = getNodesBounds(graphNodes)
-      let minX = nodesBounds.x
-      let minY = nodesBounds.y
-      let maxX = nodesBounds.x + nodesBounds.width
-      let maxY = nodesBounds.y + nodesBounds.height
+      const layoutNodes = [...graphLayout.nodes.values()]
+      if (layoutNodes.length === 0) return
+      let minX = Math.min(...layoutNodes.map((node) => node.x))
+      let minY = Math.min(...layoutNodes.map((node) => node.y))
+      let maxX = Math.max(...layoutNodes.map((node) => node.x + node.width))
+      let maxY = Math.max(...layoutNodes.map((node) => node.y + node.height))
+      if (nodesBounds.width > 0 && nodesBounds.height > 0) {
+        minX = Math.min(minX, nodesBounds.x)
+        minY = Math.min(minY, nodesBounds.y)
+        maxX = Math.max(maxX, nodesBounds.x + nodesBounds.width)
+        maxY = Math.max(maxY, nodesBounds.y + nodesBounds.height)
+      }
       const labels = canvasRef.current.querySelectorAll<HTMLElement>('.workflow-graph__edge-label')
       for (const label of labels) {
         const box = label.getBoundingClientRect()
@@ -862,14 +872,14 @@ function WorkflowGraphCanvas({
       if (maxX <= minX || maxY <= minY) return
       void fitBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }, { padding: 0.035, duration })
     }))
-  }, [fitBounds, graphNodes, graphLayout, screenToFlowPosition])
+  }, [fitBounds, graphNodes, graphLayout, screenToFlowPosition, getNodesBounds])
 
   useEffect(() => {
-    if (graphNodes.length === 0) return
+    if (graphNodes.length === 0 || !nodesInitialized) return
     const frame = window.requestAnimationFrame(() => fitGraph(250))
 
     return () => window.cancelAnimationFrame(frame)
-  }, [fitGraph, currentDefinition, containerWidth, graphNodes.length])
+  }, [fitGraph, currentDefinition, containerWidth, graphNodes.length, nodesInitialized])
 
   const cancelConnectionMode = useCallback(() => {
     setConnecting(false)
