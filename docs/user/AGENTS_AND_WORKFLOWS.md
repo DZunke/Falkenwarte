@@ -119,7 +119,7 @@ Klicke unter **Details → Erfolgskriterien** beim ersten belegten Kriterium auf
 
 Klicke oben im geöffneten Ticket auf das Statusfeld **Bereit** und wähle **Erledigt**. Schließe die Ticketansicht, sobald der neue Status angezeigt wird. Auf dem Board findest du deine Karte jetzt in der Spalte **Erledigt**.
 
-Verhindert eine Abschlussregel den Wechsel, öffne im Ticket den Reiter **Ablauf** und lies unter **Ticketstand**, was noch aussteht. Eine ausstehende Phasenfreigabe findest du im Reiter **Entscheidungen**.
+Verhindert eine Abschlussregel den Wechsel, öffne im Ticket den Reiter **Ablauf** und lies unter **Ticketstand**, was noch aussteht. Wenn eine Phase **Menschliche Freigabe** verlangt, erstellt Falkenwarte die offene Entscheidung automatisch, sobald der aktuelle Phasenbericht und die übrigen Abschlussprüfungen passen. Öffne **Entscheidungen → Freigabe ausstehend**, begründe deine Entscheidung und wähle **Annehmen** oder **Zurückweisen**. Eine zusätzliche manuelle Phasenreview kannst du am aktuellen Lauf unter **Ausführung** anfordern, sofern dafür noch keine passende Freigabe existiert.
 
 ### Den Ablauf eines Tickets lesen
 

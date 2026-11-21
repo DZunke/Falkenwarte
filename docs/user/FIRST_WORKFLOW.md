@@ -88,7 +88,9 @@ Hat ein Ticket mehrere passende Themenlabels mit verschiedenen Zielen, pausiert 
 
 Aktiviere **Menschliche Freigabe** für eine Phase, wenn du ihren Bericht prüfen möchtest, bevor der Ablauf weitergeht. Für das Beispiel kannst du die Freigabe bei **DDD Discovery** einschalten, damit du die fachliche Einordnung vor der Programmierung abnimmst. Ohne diesen Haken kann die nächste Phase nach erfolgreichem Abschluss automatisch starten.
 
-Bei einer Phase mit Freigabepflicht fordert der Phasenlauf weiterhin eine Entscheidung an. Öffne dafür im Ticket **Ausführung**, wähle den Phasenlauf, lies den Bericht und klicke auf **Freigabe anfordern**. Entscheide die offene Freigabe anschließend unter **Entscheidungen**. Bereits gespeicherte Eingangsbedingungen bleiben sichtbar und erhalten, lassen sich im Editor aber nicht als freie Ausdrücke neu formulieren.
+Bei aktivierter **Menschliche Freigabe** musst du keine Freigabe bei dir selbst beantragen. Sobald der aktuelle positive Phasenbericht, der abgeschlossene T3-Stand und die übrigen Abschlussprüfungen passen, legt Falkenwarte die offene Eigentümerentscheidung automatisch an. Öffne **Entscheidungen → Freigabe ausstehend**, lies Bericht und Nachweise, gib unter **Begründung** deine Einschätzung ein und wähle **Annehmen** oder **Zurückweisen**.
+
+Du kannst auch für einen Lauf ohne Freigabepflicht ein Review anfordern. Öffne **Ausführung** und wähle den betreffenden Lauf. Stelle **Entscheidungstyp** auf **Phasenreview**, gib bei Bedarf einen Hinweis ein und klicke auf **Freigabe anfordern**.
 
 Wähle für den ersten Durchgang unter **Überarbeitungsrunden** zum Beispiel `1`. Möglich sind Werte von `0` bis `20`. Jedes Ergebnis **Änderungen nötig** und jeder Rücksprung in eine bereits besuchte frühere Phase zählt, auch über eine Standardroute. Bis zum Limit kann Falkenwarte solche Runden automatisch fortsetzen. Bei `0` wartet die erste Runde auf deine Entscheidung. Am Limit prüfst du den letzten Bericht und kannst eine einzelne zusätzliche Runde mit Hinweis freigeben oder den Workflow abbrechen.
 

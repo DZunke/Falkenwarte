@@ -64,6 +64,8 @@ Ein Ergebnisbericht ist eine Agentmeldung und kann Nachweise mit Status `reporte
 
 `RunCompletionEvaluator` prüft T3-Beobachtung und gespeicherte Phasenpolicy, bevor der Run abgeschlossen wird. Ein Approval bindet Aufgabenrevision, Runversuch und Ergebnisdigest. Bei geändertem Bezug setzt `RunHandler` den Status auf `invalidated`.
 
+Verlangt die Phasenpolicy eine Eigentümerentscheidung, legt `RunHandler` das offene Approval automatisch an, sobald der aktuelle positive Bericht, der abgeschlossene T3-Stand und die übrigen Abschlussprüfungen passen. Der Eigentümer entscheidet über diesen Ergebnisstand. Ein Review lässt sich auch für einen einzelnen Lauf ausdrücklich anfordern.
+
 | Approvalstatus | Wirkung |
 |---|---|
 | `pending` | Für den aktuellen Ergebnisdigest steht eine Eigentümerentscheidung aus. |
