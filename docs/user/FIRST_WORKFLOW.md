@@ -145,7 +145,7 @@ Unter **Ausführungen** siehst du den neuen Ablauf. **Start wird übertragen** z
 
 ## 9. Fortschritt und Übergaben lesen
 
-Öffne im Ticket **Ablauf**. Unter **Workflows und Agentenläufe** siehst du die gespeicherten Phasen, ihre Rollen und Zustände. Im **Workflowablauf** zeigt das Diagramm außerdem die möglichen Routen dieser Version. Klicke auf eine tatsächliche Route, um das gewählte Ergebnis, den zugehörigen Lauf und die verknüpfte Agentenmeldung zu lesen; das **Übergabeprotokoll ansehen** ist dabei geöffnet. Mit **Details schließen** kehrst du zum Diagramm zurück. Du erreichst dieselbe Ansicht über **Workflows → Läufe → Ticketablauf ansehen**.
+Öffne im Ticket **Ablauf**. Unter **Workflows und Agentenläufe** siehst du die gespeicherten Phasen, ihre Rollen und Zustände. Bei dichten Abläufen zeigt eine schmale Ansicht zuerst **Phasen & Routen** mit auswählbaren Phasen und ihren Routen; **Diagramm** wechselt zur Grafik und zurück, ohne die Auswahl zu verlieren. Im **Workflowablauf** zeigt das Diagramm außerdem die möglichen Routen dieser Version. Klicke auf eine tatsächliche Route, um das gewählte Ergebnis, den zugehörigen Lauf und die verknüpfte Agentenmeldung zu lesen; das **Übergabeprotokoll ansehen** ist dabei geöffnet. Mit **Details schließen** kehrst du zum Diagramm zurück. Du erreichst dieselbe Ansicht über **Workflows → Läufe → Ticketablauf ansehen**.
 
 Öffne den Lauf der empfangenden Phase und klicke auf **Übergabeprotokoll ansehen**. Dort liest du den Bericht, offene Fragen und Links, die diese Rolle zu Beginn erhalten hat. Falkenwarte speichert die Übergabe mit dem Quellbericht und dem beim Übergang gültigen Stand.
 
