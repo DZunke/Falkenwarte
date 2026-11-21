@@ -21,7 +21,14 @@ import '@xyflow/react/dist/style.css'
 import './WorkflowGraph.css'
 import type { components } from '@/generated/api'
 import { workflowLayout } from '@/components/WorkflowGraphLayout'
-import { workflowGraphOutcomeLabels as outcomes, workflowGraphPhaseStatusLabels as phaseStatusLabels, workflowGraphSelectionStatusLabels as selectionStatusLabels } from '@/components/WorkflowGraphLabels'
+import {
+  workflowGraphDisplayName,
+  workflowGraphOutcomeLabels as outcomes,
+  workflowGraphPhaseStatusLabels as phaseStatusLabels,
+  workflowGraphReportOutcomeLabels,
+  workflowGraphRunStateLabels,
+  workflowGraphSelectionStatusLabels as selectionStatusLabels,
+} from '@/components/WorkflowGraphLabels'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -1352,7 +1359,7 @@ function WorkflowGraphCanvas({
                 setOpenVisitsEdgeIndex(null)
               }}
             >
-              <span className="min-w-0 truncate">Besuch {ordinal + 1} · {run ? `${run.attempt_no ? `Versuch ${run.attempt_no}` : 'Lauf'} · ${run.state.replaceAll('_', ' ')}` : 'Laufdetails nicht verfügbar'}{linkedReport ? ` · Meldung: ${linkedReport.outcome.replaceAll('_', ' ')}` : event.report_id ? ' · Zugeordnete Meldung fehlt' : ''}{run?.handoff ? ' · Übergabeprotokoll vorhanden' : ''}</span>
+              <span className="min-w-0 truncate">Besuch {ordinal + 1} · {run ? `${run.attempt_no ? `Versuch ${run.attempt_no}` : 'Lauf'} · ${workflowGraphDisplayName(run.state, workflowGraphRunStateLabels)}` : 'Laufdetails nicht verfügbar'}{linkedReport ? ` · Meldung: ${workflowGraphDisplayName(linkedReport.outcome, workflowGraphReportOutcomeLabels)}` : event.report_id ? ' · Zugeordnete Meldung fehlt' : ''}{run?.handoff ? ' · Übergabeprotokoll vorhanden' : ''}</span>
               <span className="shrink-0 text-xs text-muted-foreground">{new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(event.selected_at))}</span>
             </Button>
           </li>
