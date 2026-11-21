@@ -868,7 +868,7 @@ function routeLabelPosition(
 
 function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
   const [selectedBundleItem, setSelectedBundleItem] = useState<GraphRouteBundleItem | null>(null)
-  const focusInspectorAfterBundleSelection = useRef(false)
+  const pendingBundleSelection = useRef<{ transitionIndex: number; onSelect: (transitionIndex: number) => void } | null>(null)
   const data = props.data
   const path = useMemo(() => transitionPath(props), [
     props.sourceX,
@@ -915,8 +915,12 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
       }
       setSelectedBundleItem(item)
       event.preventDefault()
+    } else if (data.graphKind === 'definition' && data.onSelectBundleTransition) {
+      pendingBundleSelection.current = {
+        transitionIndex: item.transitionIndex,
+        onSelect: data.onSelectBundleTransition,
+      }
     } else {
-      focusInspectorAfterBundleSelection.current = data.graphKind === 'definition' && Boolean(data.onSelectBundleTransition)
       data.onSelectBundleTransition?.(item.transitionIndex)
     }
   }
@@ -955,9 +959,11 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
             align="center"
             sideOffset={6}
             onCloseAutoFocus={(event) => {
-              if (!focusInspectorAfterBundleSelection.current) return
-              focusInspectorAfterBundleSelection.current = false
+              const pendingSelection = pendingBundleSelection.current
+              if (!pendingSelection) return
+              pendingBundleSelection.current = null
               event.preventDefault()
+              pendingSelection.onSelect(pendingSelection.transitionIndex)
             }}
             className="w-[min(26rem,calc(100vw-2rem))] max-w-[calc(100vw-1rem)]"
           >
