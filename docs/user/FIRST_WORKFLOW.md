@@ -86,6 +86,18 @@ Ein Themenabzweig wählt das nächste Ziel und fordert für sich allein keine me
 
 Hat ein Ticket mehrere passende Themenlabels mit verschiedenen Zielen, pausiert der Ablauf zur Klärung. Das gilt auch, wenn es für ein Ergebnis nur gelabelte Alternativen gibt und weder Bericht noch Ticketlabel eine davon bestimmen. Öffne dann **Ablauf**, lies den Pausegrund und prüfe die angebotenen Routen im letzten Phasenbericht.
 
+Im Workfloweditor fasst **N Routen** mindestens drei Übergänge zwischen demselben Phasenpaar zusammen. Im Ticketablauf öffnet **N mögliche Routen** die ungeprüften Kandidaten eines solchen Paars; wenn bereits eine Route besucht wurde, heißen die übrigen Kandidaten **N weitere Routen**. Die Liste benennt das Phasenpaar und zeigt je Eintrag Ergebnis, Standardroute oder Themenlabel sowie zusätzliche Bedingungen und im Ticket den Auswahlstatus. Du kannst die Einträge mit Maus oder Tastatur auswählen. Bereits durchgeführte Routen bleiben einzeln auswählbar und öffnen den jeweiligen Besuch.
+
+### Redaktionsrückrunde in einer Zeitungsdemo
+
+Für eine Zeitungsdemo kann ein Ticket eine Seite für die im Auftrag genannten Ressorts und den dort festgelegten Zeitraum verlangen. Jede Meldung nennt ihre Quelle. Aktuelle Daten, Zahlen und Ereignisse, die noch nicht belegt sind, werden als `noch vom Faktencheck zu ermitteln` markiert und nicht als Tatsachen ausgegeben. Dieses Beispiel beschreibt eine Vorlage, keinen ausgeführten oder verifizierten Auftrag.
+
+Verwende dafür die Phasen **Recherche**, **Redaktion** und **Faktencheck**. Die Standardroute führt von der Recherche zur Redaktion und von dort zum Faktencheck. Findet der Faktencheck eine belegte, korrigierbare Abweichung, meldet er **Änderungen nötig**, nennt die betroffene Aussage und den widersprechenden oder fehlenden Beleg und wählt die Standardroute zurück zur Redaktion. Die zweite Redaktionsphase erhält diese Begründung in ihrer Übergabe, aktualisiert den Entwurf und meldet die vorgenommenen Änderungen. Der Faktencheck läuft danach erneut. Ein abschließend angenommener Faktencheck beendet den Workflow.
+
+Im Ticket öffnest du **Ablauf** und wählst im **Workflowablauf** den Knoten **Redaktion**. Unter dem Knoten wählst du **Lauf 1** für den ersten Entwurf und **Lauf 2** für den überarbeiteten Entwurf. Bei mehr als zwei Läufen wählst du den Eintrag im Auswahlfeld unter dem Knoten. Der ausgewählte Lauf öffnet Bericht und **Übergabeprotokoll ansehen**. Öffne so Lauf 2 der Redaktion, um den Auftrag aus dem ersten Faktencheck zu lesen, und danach Lauf 2 des Faktenchecks, um die Prüfung des neuen Entwurfs zu sehen.
+
+Die tatsächliche Kante **Redaktion → Faktencheck** wurde in diesem Ablauf zweimal durchlaufen. Klicke im Graphen auf die Kante mit **×2** und wähle im Dialog **Besuch auswählen · 2 tatsächliche Übergänge** den ersten oder zweiten Besuch. So öffnest du den jeweils zugehörigen Lauf, die Agentenmeldung und das Übergabeprotokoll getrennt.
+
 ## 4. Optionale Phasenfreigaben und Überarbeitungsrunden festlegen
 
 Aktiviere **Menschliche Freigabe** für eine Phase, wenn du ihren Bericht prüfen möchtest, bevor der Ablauf weitergeht. Für das Beispiel kannst du die Freigabe bei **DDD Discovery** einschalten, damit du die fachliche Einordnung vor der Programmierung abnimmst. Ohne diesen Haken kann die nächste Phase nach erfolgreichem Abschluss automatisch starten.
