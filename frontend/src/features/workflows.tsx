@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { GitBranch, Pencil, Plus, Route, TimerReset, X } from 'lucide-react'
+import { ArrowDownRight, ArrowRight, ChevronLeft, GitBranch, Plus, Route, TimerReset } from 'lucide-react'
 import { toast } from 'sonner'
 import type { components } from '@/generated/api'
 import { api, formatError, mutationParams, request } from '@/lib/api'
@@ -28,6 +28,7 @@ type WorkflowWriteDraft = components['schemas']['WorkflowWrite']
 type AgentProfile = components['schemas']['AgentProfile']
 type Board = components['schemas']['Board']
 type ProjectBinding = components['schemas']['ProjectBinding']
+type WorkflowSection = 'templates' | 'routing' | 'runs'
 
 type WorkflowEditorState = {
   workflow: Workflow
@@ -194,6 +195,70 @@ function hasUnnamedStage(stages: WorkflowStageEditorStage[]): boolean {
   return stages.some((stage) => !stage.name.trim())
 }
 
+function outcomeLabel(value: string): string {
+  const labels: Record<string, string> = {
+    accepted: 'angenommen',
+    needs_changes: 'Änderungen nötig',
+    rejected: 'abgelehnt',
+    blocked: 'blockiert',
+  }
+
+  return labels[value] ?? value.replaceAll('_', ' ')
+}
+
+function WorkflowTemplateCard({
+  workflow,
+  profiles,
+  projectName,
+  loading,
+  busy,
+  onOpen,
+}: {
+  workflow: Workflow
+  profiles: AgentProfile[]
+  projectName: string
+  loading: boolean
+  busy: boolean
+  onOpen: () => void
+}) {
+  const stageIndex = new Map(workflow.stages.map((stage, index) => [stage.id, index]))
+  const backEdges = workflow.transitions.some((transition) => (stageIndex.get(transition.to_stage_id) ?? -1) <= (stageIndex.get(transition.from_stage_id) ?? -1))
+  const branches = workflow.stages.some((stage) => workflow.transitions.filter((transition) => transition.from_stage_id === stage.id).length > 1)
+
+  return <article className="min-w-0 max-w-full overflow-hidden rounded-xl border bg-card p-4" data-testid={`workflow-card-${workflow.id}`}>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="font-semibold [overflow-wrap:anywhere]">{workflow.name}</h2>
+          {!workflow.enabled && <Badge variant="outline">Deaktiviert</Badge>}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">{projectName} · Version {workflow.definition_version}</p>
+      </div>
+      <Button type="button" size="sm" disabled={busy} onClick={onOpen}>{loading ? 'Wird geöffnet…' : <><GitBranch />Graph öffnen</>}</Button>
+    </div>
+
+    <div className="mt-4 flex flex-wrap items-center gap-2" data-testid={`workflow-compact-path-${workflow.id}`}>
+      {workflow.stages.map((stage, index) => {
+        const profile = profiles.find((item) => item.id === stage.agent_profile_id)
+        const nextStage = workflow.stages[index + 1]
+        const forwardTransition = nextStage && workflow.transitions.find((transition) => transition.from_stage_id === stage.id && transition.to_stage_id === nextStage.id)
+
+        return <div key={stage.id} className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+          <div className="min-w-0 max-w-full flex-1 basis-40 rounded-lg border bg-muted/30 px-3 py-2">
+            <p className="[overflow-wrap:anywhere] font-medium">{stage.name}</p>
+            <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{stage.kind === 'review' ? 'Review' : 'Agentenphase'} · {profile ? profile.name : stage.agent_profile_id ? 'Rolle nicht verfügbar' : 'Ohne Agentrolle'}</p>
+          </div>
+          {nextStage && <div className="flex items-center gap-1 text-muted-foreground" aria-label={forwardTransition ? `Bei ${outcomeLabel(forwardTransition.on)} weiter` : 'Keine direkte Verbindung zur nächsten Phase'}>
+            {forwardTransition ? <ArrowRight className="size-4" /> : <span aria-hidden="true" className="px-1">···</span>}
+            {forwardTransition && <span className="max-w-24 text-xs">{outcomeLabel(forwardTransition.on)}</span>}
+          </div>}
+        </div>
+      })}
+    </div>
+    {(backEdges || branches) && <div className="mt-2 flex flex-wrap gap-2">{branches && <Badge variant="outline">Verzweigung</Badge>}{backEdges && <Badge variant="outline"><ArrowDownRight />Rückweg</Badge>}</div>}
+  </article>
+}
+
 function WorkflowAvailability({
   projectId,
   bindingQuery,
@@ -223,7 +288,7 @@ function WorkflowAvailability({
     return <p role="status" className="text-xs text-muted-foreground">Keine aktivierte Rolle ist für dieses Projekt und dieselbe T3-Verbindung freigegeben. Du kannst ohne feste Rolle fortfahren oder eine passende Rolle unter <a className="underline underline-offset-4" href="#/roles">Rollen</a> einrichten.</p>
   }
 
-  return <p className="text-xs text-muted-foreground">Je Phase werden nur aktivierte Rollen angeboten, die für dieses Projekt freigegeben und an dieselbe T3-Verbindung gebunden sind.</p>
+  return null
 }
 
 export default function WorkflowsView() {
@@ -246,6 +311,10 @@ export default function WorkflowsView() {
     queryFn: () => fetchAllPages((cursor) => request(api.GET('/triggers', { params: { query: { limit: 100, ...(cursor ? { cursor } : {}) } } }))),
   })
   const [projectId, setProjectId] = useState('')
+  const [libraryProjectId, setLibraryProjectId] = useState('all')
+  const [section, setSection] = useState<WorkflowSection>('templates')
+  const [createMode, setCreateMode] = useState(false)
+  const [createBaseline, setCreateBaseline] = useState('')
   const [workflowName, setWorkflowName] = useState('')
   const [createDraft, setCreateDraft] = useState<WorkflowWriteDraft>(defaultWorkflowDraft)
   const [createDraftTouched, setCreateDraftTouched] = useState(false)
@@ -253,12 +322,14 @@ export default function WorkflowsView() {
   const [loadingWorkflowId, setLoadingWorkflowId] = useState('')
   const [routeLabelId, setRouteLabelId] = useState('')
   const [routeWorkflowId, setRouteWorkflowId] = useState('')
+  const [triggerWorkflowId, setTriggerWorkflowId] = useState('')
   const [triggerName, setTriggerName] = useState('')
   const projects = projectsQuery.data?.items ?? []
   const workflows = workflowsQuery.data?.items ?? []
   const profiles = profilesQuery.data?.items ?? []
   const selectedProject = projects.find((project) => project.id === projectId) ?? projects[0]
   const selectedProjectId = selectedProject?.id ?? ''
+  const editorOpen = createMode || Boolean(editingWorkflow)
   const createBindingQuery = useProjectBinding(selectedProjectId)
   const createProjectBinding = createBindingQuery.isSuccess && createBindingQuery.data?.active ? createBindingQuery.data : null
   const eligibleCreateProfiles = useMemo(
@@ -280,7 +351,9 @@ export default function WorkflowsView() {
     [createBoardsQuery.data, createStatusesQuery.data],
   )
   const createBoardOptionsReady = !createBoardsQuery.isPending && !createBoardsQuery.isError && !createStatusesQuery.isPending && !createStatusesQuery.isError
-  const createBoardOptionsForEditor = createBoardsQuery.isPending || createStatusesQuery.isPending ? undefined : createBoardOptions
+  const createBoardOptionsForEditor = createBoardsQuery.isPending || createBoardsQuery.isError || createStatusesQuery.isPending || createStatusesQuery.isError
+    ? undefined
+    : createBoardOptions
 
   const editContextProjectId = editingWorkflow?.contextProjectId ?? ''
   const editBindingQuery = useProjectBinding(editContextProjectId)
@@ -321,6 +394,8 @@ export default function WorkflowsView() {
         error: '',
         conflict: false,
       })
+      setCreateMode(false)
+      setSection('templates')
     } catch (error) {
       toast.error(formatError(error))
     } finally {
@@ -342,10 +417,14 @@ export default function WorkflowsView() {
         body: { ...createDraft, project_id: selectedProjectId, name: workflowName.trim() },
       }))
     },
-    onSuccess: async () => {
+    onSuccess: async (workflow) => {
       setWorkflowName('')
       setCreateDraft(defaultWorkflowDraft())
       setCreateDraftTouched(false)
+      setCreateMode(false)
+      setCreateBaseline('')
+      setSection('templates')
+      setLibraryProjectId(workflow.project_id ?? selectedProjectId)
       await refresh()
       toast.success('Workflow angelegt')
     },
@@ -367,6 +446,38 @@ export default function WorkflowsView() {
     setProjectId(nextProjectId)
     setRouteLabelId('')
     setRouteWorkflowId('')
+    setTriggerWorkflowId('')
+  }
+
+  const startCreate = () => {
+    const contextProjectId = libraryProjectId === 'all' ? selectedProjectId : libraryProjectId
+    const draft = defaultWorkflowDraft()
+    setProjectId(contextProjectId)
+    setWorkflowName('')
+    setCreateDraft(draft)
+    setCreateDraftTouched(false)
+    setCreateBaseline(JSON.stringify({ projectId: contextProjectId, name: '', write: draft }))
+    setEditingWorkflow(null)
+    setSection('templates')
+    setCreateMode(true)
+  }
+
+  const leaveEditor = () => {
+    if (createMode) {
+      if (createWorkflow.isPending) return
+      const current = JSON.stringify({ projectId: selectedProjectId, name: workflowName, write: createDraft })
+      if (createBaseline !== current && !window.confirm('Entwurf verwerfen? Deine ungespeicherten Änderungen gehen verloren.')) return
+      setCreateMode(false)
+      setCreateBaseline('')
+      return
+    }
+
+    if (editingWorkflow) {
+      const current = JSON.stringify(editingWorkflow.write)
+      const original = JSON.stringify(workflowWriteDraft(editingWorkflow.workflow))
+      if (current !== original && !window.confirm('Änderungen verwerfen? Deine ungespeicherten Änderungen gehen verloren.')) return
+      setEditingWorkflow(null)
+    }
   }
 
   const updateEditingDraft = (stages: WorkflowStageEditorStage[], transitions: WorkflowStageEditorTransition[]) => {
@@ -429,29 +540,25 @@ export default function WorkflowsView() {
 
   const createTrigger = useMutation({
     mutationFn: () => {
-      if (!selectedProjectId || !routeWorkflowId) throw new Error('Wähle zuerst ein Projekt und einen Workflow aus.')
+      if (!selectedProjectId || !triggerWorkflowId) throw new Error('Wähle zuerst ein Projekt und einen Workflow aus.')
       return request(api.POST('/triggers', {
         params: mutationParams(),
-        body: { project_id: selectedProjectId, name: triggerName.trim(), workflow_id: routeWorkflowId, task_id: null, spec: { type: 'manual' }, enabled: true },
+        body: { project_id: selectedProjectId, name: triggerName.trim(), workflow_id: triggerWorkflowId, task_id: null, spec: { type: 'manual' }, enabled: true },
       }))
     },
     onSuccess: async () => { setTriggerName(''); await refresh(); toast.success('Manueller Workflowstart eingerichtet') },
     onError: (error) => toast.error(formatError(error)),
   })
 
-  if ([projectsQuery, workflowsQuery, profilesQuery, instancesQuery, triggersQuery].some((query) => query.isPending)) return <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
+  if ([projectsQuery, workflowsQuery, profilesQuery, instancesQuery, triggersQuery].some((query) => query.isPending)) return <div className="space-y-4"><Skeleton className="h-10 w-48" /><Skeleton className="h-56 w-full" /></div>
   const pageError = projectsQuery.error ?? workflowsQuery.error ?? profilesQuery.error ?? instancesQuery.error ?? triggersQuery.error
   if (pageError) return <Card><CardContent className="p-6"><h2 className="font-semibold">Workflows konnten nicht geladen werden</h2><p className="mt-2 text-sm text-muted-foreground">{formatError(pageError)}</p><Button variant="outline" className="mt-4" onClick={() => void refresh()}>Erneut laden</Button></CardContent></Card>
 
   const instances = instancesQuery.data?.items ?? []
   const triggers = triggersQuery.data?.items ?? []
-  const workflowCards = workflows.map((workflow) => ({
-    workflow,
-    stageProfiles: workflow.stages.map((stage) => ({
-      stage,
-      profile: profiles.find((profile) => profile.id === stage.agent_profile_id),
-    })),
-  }))
+  const visibleWorkflows = libraryProjectId === 'all'
+    ? workflows
+    : workflows.filter((workflow) => workflow.project_id === libraryProjectId || workflow.project_id === null)
   const createRoleConflict = hasNewUnavailableRole(createDraft.stages, eligibleCreateProfiles)
   const createHasUnnamedStage = hasUnnamedStage(createDraft.stages)
   const createBoardConflict = createDraft.stages.some((stage) => stage.board_target)
@@ -459,110 +566,123 @@ export default function WorkflowsView() {
   const editRoleConflict = editingWorkflow ? hasNewUnavailableRole(editingWorkflow.write.stages, eligibleEditProfiles, editingWorkflow.workflow) : false
   const editHasUnnamedStage = editingWorkflow ? hasUnnamedStage(editingWorkflow.write.stages) : false
   const editBoardConflict = editingWorkflow ? hasNewUnavailableBoardTarget(editingWorkflow.write.stages, editBoardOptions, editingWorkflow.workflow) : false
-  const createRouteLabels: WorkflowStageEditorRouteLabel[] = routeLabels.map(({ id, name, active, kind }) => ({ id, name, active, kind }))
-  const editRouteLabelsForEditor: WorkflowStageEditorRouteLabel[] = editRouteLabels.map(({ id, name, active, kind }) => ({ id, name, active, kind }))
+  const createRouteLabels: WorkflowStageEditorRouteLabel[] | undefined = createLabelsQuery.isPending || createLabelsQuery.isError
+    ? undefined
+    : routeLabels.map(({ id, name, active, kind }) => ({ id, name, active, kind }))
+  const editRouteLabelsForEditor: WorkflowStageEditorRouteLabel[] | undefined = editIsProjectWide || editLabelsQuery.isPending || editLabelsQuery.isError
+    ? undefined
+    : editRouteLabels.map(({ id, name, active, kind }) => ({ id, name, active, kind }))
   const createBoardsForEditor = createBoardOptionsForEditor
-  const editBoardsForEditor = editBoardOptionsForEditor
+  const editBoardsForEditor = editingWorkflow?.workflow.project_id === null || editBoardsQuery.isPending || editBoardsQuery.isError || editStatusesQuery.isPending || editStatusesQuery.isError
+    ? undefined
+    : editBoardOptionsForEditor
+  const routeWorkflows = workflows.filter((workflow) => workflow.enabled && (workflow.project_id === null || workflow.project_id === selectedProjectId))
+  const projectTriggers = triggers.filter((trigger) => trigger.project_id === selectedProjectId)
 
   return (
     <main className="space-y-6">
-      <header><p className="text-sm text-muted-foreground">Versionierte Phasen und kontrollierte Starts</p><h1 className="text-2xl font-semibold tracking-tight">Workflows</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Workflows legen fest, wann eine Phase endet und welche Entscheidung folgt. Workflowlabels ordnen eine Route zu und erteilen keine Startfreigabe.</p></header>
+      {editorOpen ? <header className="flex flex-wrap items-center gap-3">
+        <Button type="button" variant="ghost" className="-ml-3" disabled={createWorkflow.isPending || saveWorkflow.isPending} onClick={leaveEditor}><ChevronLeft />Zurück zu Vorlagen</Button>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">{createMode ? 'Neue Vorlage' : editingWorkflow?.write.name}</h1>
+          {editingWorkflow && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{editingWorkflow.workflow.project_id ? projects.find((project) => project.id === editingWorkflow.workflow.project_id)?.name ?? 'Projekt' : 'Projektübergreifend'} · Version {editingWorkflow.workflow.definition_version}</p>}
+        </div>
+      </header> : <>
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight">Workflows</h1>
+        </header>
+        <nav aria-label="Workflowbereiche" className="flex flex-wrap gap-2 border-b pb-3">
+          <Button type="button" size="sm" variant={section === 'templates' ? 'secondary' : 'ghost'} aria-current={section === 'templates' ? 'page' : undefined} onClick={() => setSection('templates')}>Vorlagen</Button>
+          <Button type="button" size="sm" variant={section === 'routing' ? 'secondary' : 'ghost'} aria-current={section === 'routing' ? 'page' : undefined} onClick={() => setSection('routing')}><Route />Routen &amp; Trigger</Button>
+          <Button type="button" size="sm" variant={section === 'runs' ? 'secondary' : 'ghost'} aria-current={section === 'runs' ? 'page' : undefined} onClick={() => setSection('runs')}><TimerReset />Läufe</Button>
+        </nav>
+      </>}
 
-      {editingWorkflow && <Card data-testid={`workflow-editor-${editingWorkflow.workflow.id}`}>
-        <CardHeader><CardTitle className="flex items-center justify-between gap-3"><span className="flex items-center gap-2"><Pencil className="size-4 text-muted-foreground" />Workflow bearbeiten · v{editingWorkflow.workflow.definition_version}</span><Button type="button" size="icon" variant="ghost" aria-label="Workflowbearbeitung schließen" onClick={() => setEditingWorkflow(null)}><X /></Button></CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5"><Label htmlFor={`workflow-editor-name-${editingWorkflow.workflow.id}`}>Workflowname</Label><Input id={`workflow-editor-name-${editingWorkflow.workflow.id}`} value={editingWorkflow.write.name} maxLength={120} onChange={(event) => setEditingWorkflow((current) => current ? { ...current, write: { ...current.write, name: event.target.value }, error: '', conflict: false } : current)} /></div>
-          <div className="space-y-1.5"><Label htmlFor={`workflow-editor-repair-limit-${editingWorkflow.workflow.id}`}>Automatische Überarbeitungsrunden</Label><Input id={`workflow-editor-repair-limit-${editingWorkflow.workflow.id}`} type="number" min={0} max={20} step={1} value={editingWorkflow.write.limits.max_repair_rounds} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 20) setEditingWorkflow((current) => current ? { ...current, write: { ...current.write, limits: { ...current.write.limits, max_repair_rounds: value } }, error: '', conflict: false } : current) }} /><p className="text-xs text-muted-foreground">0 bedeutet: Eine konfigurierte Rückkehr wegen „Änderungen nötig“ wartet schon vor der ersten automatischen Überarbeitung auf eine Eigentümerentscheidung. Nach Erreichen des Limits kann der Eigentümer mit Begründung eine zusätzliche Runde freigeben.</p></div>
-          <WorkflowAvailability projectId={editContextProjectId} bindingQuery={editBindingQuery} eligibleProfiles={eligibleEditProfiles} projectWide={editIsProjectWide} />
-          {editIsProjectWide && <p role="status" className="text-xs text-muted-foreground">Projektübergreifende Workflows bleiben projektunabhängig. Neue Boardziele und label-spezifische Übergänge sind hier nicht verfügbar; gespeicherte Werte bleiben erhalten, bis du sie ausdrücklich änderst.</p>}
-          {!editIsProjectWide && editBoardsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektboards konnten nicht geladen werden; gespeicherte Zuordnungen bleiben erhalten.</span><Button size="sm" variant="link" onClick={() => void editBoardsQuery.refetch()}>Boards erneut laden</Button></div>}
-          {!editIsProjectWide && editLabelsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektthemenlabels konnten nicht geladen werden; gespeicherte Übergänge bleiben erhalten.</span><Button size="sm" variant="link" onClick={() => void editLabelsQuery.refetch()}>Labels erneut laden</Button></div>}
-          <WorkflowStagesEditor
-            idPrefix={editingWorkflow.workflow.id}
-            projectId={editingWorkflow.workflow.project_id}
-            stages={editingWorkflow.write.stages}
-            transitions={editingWorkflow.write.transitions}
-            profiles={eligibleEditProfiles}
-            boardColumns={editBoardsForEditor}
-            routeLabels={editRouteLabelsForEditor}
-            onChange={updateEditingDraft}
-          />
-          <p className="text-xs text-muted-foreground">Speichern erzeugt eine neue unveränderliche Workflowversion. Bestehende Workflowlabel-Routen bleiben an ihrer gespeicherten Version, bis du sie unter „Workflowlabels zuordnen“ aktualisierst.</p>
-          {editRoleConflict && <p role="alert" className="text-xs text-destructive">Eine neu ausgewählte Agentrolle ist für dieses Projekt oder dessen T3-Verbindung nicht freigegeben. Wähle eine passende Rolle.</p>}
-          {editBoardConflict && <p role="alert" className="text-xs text-destructive">Ein neu ausgewähltes Boardziel hat keinen startbaren Standardstatus in Bereit, In Arbeit oder Review. Wähle eine passende Spalte.</p>}
-          {editingWorkflow.error && <div role="alert" className="rounded-md border border-destructive/30 p-3 text-sm"><p>{editingWorkflow.error}</p>{editingWorkflow.conflict && <Button type="button" size="sm" variant="outline" className="mt-2" disabled={Boolean(loadingWorkflowId)} onClick={() => void openWorkflowEditor(editingWorkflow.workflow.id, editingWorkflow.contextProjectId)}>{loadingWorkflowId === editingWorkflow.workflow.id ? 'Wird geladen…' : 'Aktuelle Workflowversion neu laden'}</Button>}</div>}
-          <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setEditingWorkflow(null)}>Abbrechen</Button><Button type="button" disabled={!editingWorkflow.write.name.trim() || saveWorkflow.isPending || editRoleConflict || editBoardConflict || editHasUnnamedStage} onClick={() => saveWorkflow.mutate()}>{saveWorkflow.isPending ? 'Speichert…' : 'Workflowversion speichern'}</Button></div>
+      {editorOpen && (createMode ? <Card data-testid="workflow-editor-create" className="w-full">
+        <CardContent className="space-y-5 p-4 md:p-6">
+          <div className="grid gap-4 md:grid-cols-[minmax(200px,1fr)_minmax(280px,2fr)]">
+            <div className="space-y-1.5"><Label htmlFor="workflow-project">Projekt</Label><Select value={selectedProjectId} disabled={createWorkflow.isPending} onValueChange={selectProject}><SelectTrigger id="workflow-project"><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5"><Label htmlFor="workflow-name">Workflowname</Label><Input id="workflow-name" disabled={createWorkflow.isPending} value={workflowName} onChange={(event) => { setWorkflowName(event.target.value); setCreateDraftTouched(true) }} placeholder="Discovery, Umsetzung und Review" maxLength={120} /></div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {!createDraftTouched && !workflowName.trim() && <Button type="button" variant="outline" disabled={createWorkflow.isPending} onClick={useTwoStageTemplate}><GitBranch />Zwei-Phasen-Vorlage verwenden</Button>}
+            <div className="flex items-center gap-2"><Label htmlFor="workflow-repair-limit" className="whitespace-nowrap">Überarbeitungsrunden</Label><Input id="workflow-repair-limit" className="w-24" type="number" min={0} max={20} step={1} disabled={createWorkflow.isPending} value={createDraft.limits.max_repair_rounds} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 20) { setCreateDraft((current) => ({ ...current, limits: { ...current.limits, max_repair_rounds: value } })); setCreateDraftTouched(true) } }} /></div>
+            <p className="text-xs text-muted-foreground">0 schaltet automatische Überarbeitungen aus.</p>
+          </div>
+          <WorkflowAvailability projectId={selectedProjectId} bindingQuery={createBindingQuery} eligibleProfiles={eligibleCreateProfiles} />
+          {createBoardsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektboards konnten nicht geladen werden.</span><Button size="sm" variant="link" onClick={() => void createBoardsQuery.refetch()}>Erneut prüfen</Button></div>}
+          {createLabelsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektthemenlabels konnten nicht geladen werden.</span><Button size="sm" variant="link" onClick={() => void createLabelsQuery.refetch()}>Erneut prüfen</Button></div>}
+          <WorkflowStagesEditor idPrefix="create" projectId={selectedProjectId || null} stages={createDraft.stages} transitions={createDraft.transitions} profiles={eligibleCreateProfiles} boardColumns={createBoardsForEditor} routeLabels={createRouteLabels} disabled={createWorkflow.isPending} onChange={updateCreateDraft} />
+          {createRoleConflict && <p role="alert" className="text-sm text-destructive">Eine Agentrolle ist für dieses Projekt oder dessen T3-Verbindung nicht freigegeben.</p>}
+          {createBoardConflict && <p role="alert" className="text-sm text-destructive">Ein Boardziel ist nicht mehr für Phasenstarts verfügbar.</p>}
+          <div className="flex flex-wrap justify-end gap-2 border-t pt-4"><Button type="button" variant="outline" disabled={createWorkflow.isPending} onClick={leaveEditor}>Abbrechen</Button><Button disabled={!workflowName.trim() || !selectedProjectId || createWorkflow.isPending || createRoleConflict || createBoardConflict || createHasUnnamedStage} onClick={() => createWorkflow.mutate()}><GitBranch />{createWorkflow.isPending ? 'Wird angelegt…' : 'Workflow anlegen'}</Button></div>
         </CardContent>
-      </Card>}
+      </Card> : editingWorkflow && <Card data-testid={`workflow-editor-${editingWorkflow.workflow.id}`} className="w-full">
+        <CardContent className="space-y-5 p-4 md:p-6">
+          <div className="grid gap-4 md:grid-cols-[minmax(200px,1fr)_minmax(280px,2fr)]">
+            <div className="space-y-1.5"><Label htmlFor={`workflow-editor-name-${editingWorkflow.workflow.id}`}>Workflowname</Label><Input id={`workflow-editor-name-${editingWorkflow.workflow.id}`} disabled={saveWorkflow.isPending} value={editingWorkflow.write.name} maxLength={120} onChange={(event) => setEditingWorkflow((current) => current ? { ...current, write: { ...current.write, name: event.target.value }, error: '', conflict: false } : current)} /></div>
+            <div className="flex items-end gap-3"><div className="space-y-1.5"><Label htmlFor={`workflow-editor-repair-limit-${editingWorkflow.workflow.id}`}>Überarbeitungsrunden</Label><Input id={`workflow-editor-repair-limit-${editingWorkflow.workflow.id}`} disabled={saveWorkflow.isPending} className="w-28" type="number" min={0} max={20} step={1} value={editingWorkflow.write.limits.max_repair_rounds} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 20) setEditingWorkflow((current) => current ? { ...current, write: { ...current.write, limits: { ...current.write.limits, max_repair_rounds: value } }, error: '', conflict: false } : current) }} /></div><p className="pb-2 text-xs text-muted-foreground">0 schaltet automatische Überarbeitungen aus.</p></div>
+          </div>
+          <WorkflowAvailability projectId={editContextProjectId} bindingQuery={editBindingQuery} eligibleProfiles={eligibleEditProfiles} projectWide={editIsProjectWide} />
+          {editIsProjectWide && <p role="status" className="text-xs text-muted-foreground">Projektübergreifende Workflows bieten keine neuen Boardziele oder label-spezifischen Übergänge. Gespeicherte Werte bleiben erhalten.</p>}
+          {!editIsProjectWide && editBoardsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektboards konnten nicht geladen werden; gespeicherte Ziele bleiben erhalten.</span><Button size="sm" variant="link" onClick={() => void editBoardsQuery.refetch()}>Erneut prüfen</Button></div>}
+          {!editIsProjectWide && editLabelsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektthemenlabels konnten nicht geladen werden; gespeicherte Übergänge bleiben erhalten.</span><Button size="sm" variant="link" onClick={() => void editLabelsQuery.refetch()}>Erneut prüfen</Button></div>}
+          <WorkflowStagesEditor idPrefix={editingWorkflow.workflow.id} projectId={editingWorkflow.workflow.project_id} stages={editingWorkflow.write.stages} transitions={editingWorkflow.write.transitions} profiles={eligibleEditProfiles} boardColumns={editBoardsForEditor} routeLabels={editRouteLabelsForEditor} selectFirstStageInitially={false} disabled={saveWorkflow.isPending} onChange={updateEditingDraft} />
+          {editRoleConflict && <p role="alert" className="text-sm text-destructive">Eine neu ausgewählte Agentrolle ist für dieses Projekt oder dessen T3-Verbindung nicht freigegeben.</p>}
+          {editBoardConflict && <p role="alert" className="text-sm text-destructive">Ein neues Boardziel ist nicht mehr für Phasenstarts verfügbar.</p>}
+          {editingWorkflow.error && <div role="alert" className="rounded-md border border-destructive/30 p-3 text-sm"><p>{editingWorkflow.error}</p>{editingWorkflow.conflict && <Button type="button" size="sm" variant="outline" className="mt-2" disabled={Boolean(loadingWorkflowId) || saveWorkflow.isPending} onClick={() => void openWorkflowEditor(editingWorkflow.workflow.id, editingWorkflow.contextProjectId)}>{loadingWorkflowId === editingWorkflow.workflow.id ? 'Wird geladen…' : 'Aktuelle Version neu laden'}</Button>}</div>}
+          <div className="flex flex-wrap justify-between gap-2 border-t pt-4"><p className="self-center text-xs text-muted-foreground">Speichern erzeugt eine neue Workflowversion.</p><div className="flex gap-2"><Button type="button" variant="outline" disabled={saveWorkflow.isPending} onClick={leaveEditor}>Abbrechen</Button><Button type="button" disabled={!editingWorkflow.write.name.trim() || saveWorkflow.isPending || editRoleConflict || editBoardConflict || editHasUnnamedStage} onClick={() => saveWorkflow.mutate()}>{saveWorkflow.isPending ? 'Speichert…' : 'Workflowversion speichern'}</Button></div></div>
+        </CardContent>
+      </Card>)}
 
-      <div className="grid gap-5 xl:grid-cols-2">
-        <Card data-testid="workflow-editor-create">
-          <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="size-4 text-muted-foreground" />Workflowvorlage anlegen</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5"><Label htmlFor="workflow-project">Projekt</Label><Select value={selectedProjectId} onValueChange={selectProject}><SelectTrigger id="workflow-project"><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-name">Workflowname</Label>
-              <Input
-                id="workflow-name"
-                value={workflowName}
-                onChange={(event) => { setWorkflowName(event.target.value); setCreateDraftTouched(true) }}
-                placeholder="Zum Beispiel Discovery, Umsetzung und Review"
-                maxLength={120}
-              />
-            </div>
-            {!createDraftTouched && !workflowName.trim() && <Button type="button" variant="outline" onClick={useTwoStageTemplate}><GitBranch />Zwei-Phasen-Vorlage verwenden</Button>}
-            <div className="space-y-1.5"><Label htmlFor="workflow-repair-limit">Automatische Überarbeitungsrunden</Label><Input id="workflow-repair-limit" type="number" min={0} max={20} step={1} value={createDraft.limits.max_repair_rounds} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 20) { setCreateDraft((current) => ({ ...current, limits: { ...current.limits, max_repair_rounds: value } })); setCreateDraftTouched(true) } }} /><p className="text-xs text-muted-foreground">0 bedeutet: Eine konfigurierte Rückkehr wegen „Änderungen nötig“ wartet schon vor der ersten automatischen Überarbeitung auf eine Eigentümerentscheidung. Nach Erreichen des Limits kann der Eigentümer mit Begründung eine zusätzliche Runde freigeben.</p></div>
-            <WorkflowAvailability projectId={selectedProjectId} bindingQuery={createBindingQuery} eligibleProfiles={eligibleCreateProfiles} />
-            {createBoardsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektboards konnten nicht geladen werden; neue Boardziele sind nicht verfügbar.</span><Button size="sm" variant="link" onClick={() => void createBoardsQuery.refetch()}>Boards erneut laden</Button></div>}
-            {createLabelsQuery.isError && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Projektthemenlabels konnten nicht geladen werden; nur Standardübergänge sind auswählbar.</span><Button size="sm" variant="link" onClick={() => void createLabelsQuery.refetch()}>Labels erneut laden</Button></div>}
-            <WorkflowStagesEditor
-              idPrefix="create"
-              projectId={selectedProjectId || null}
-              stages={createDraft.stages}
-              transitions={createDraft.transitions}
-              profiles={eligibleCreateProfiles}
-              boardColumns={createBoardsForEditor}
-              routeLabels={createRouteLabels}
-              onChange={updateCreateDraft}
-            />
-            {createRoleConflict && <p role="alert" className="text-xs text-destructive">Eine Phase enthält eine Rolle, die für dieses Projekt oder dessen T3-Verbindung nicht freigegeben ist. Wähle eine passende Rolle oder „Keine Agentrolle“.</p>}
-            {createBoardConflict && <p role="alert" className="text-xs text-destructive">Ein Boardziel ist nicht verfügbar oder sein Standardstatus ist keine startbare Phase. Wähle eine startbare Spalte oder „Spalte beibehalten“.</p>}
-            <Button disabled={!workflowName.trim() || !selectedProjectId || createWorkflow.isPending || createRoleConflict || createBoardConflict || createHasUnnamedStage} onClick={() => createWorkflow.mutate()}><GitBranch />Workflow anlegen</Button>
-          </CardContent>
-        </Card>
+      {!editorOpen && section === 'templates' && <section id="workflow-panel-templates" className="space-y-4" aria-label="Workflowvorlagen">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="w-full max-w-sm space-y-1.5"><Label htmlFor="workflow-library-project">Projekt</Label><Select value={libraryProjectId} onValueChange={setLibraryProjectId}><SelectTrigger id="workflow-library-project"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Alle Projekte</SelectItem>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
+          <Button type="button" onClick={startCreate} disabled={projects.length === 0}><Plus />Neue Vorlage</Button>
+        </div>
+        {projects.length === 0 && <Card><CardContent className="p-6"><h2 className="font-semibold">Zuerst ein Projekt anlegen</h2><p className="mt-1 text-sm text-muted-foreground">Workflows gehören zu einem Projekt und verwenden dessen Rollen und Boards.</p><Button asChild className="mt-4"><a href="#/projects">Zu Projekten</a></Button></CardContent></Card>}
+        {projects.length > 0 && visibleWorkflows.length === 0 && <Card className="border-dashed"><CardContent className="flex min-h-40 flex-col items-center justify-center p-8 text-center"><GitBranch className="mb-3 size-8 text-muted-foreground" /><h2 className="font-semibold">Noch keine Workflowvorlagen</h2><p className="mt-1 max-w-lg text-sm text-muted-foreground">Lege einen Ablauf mit Phasen und Übergängen an. Gespeicherte Vorlagen lassen sich danach direkt im Graph öffnen.</p></CardContent></Card>}
+        {visibleWorkflows.length > 0 && <div className="grid gap-4 lg:grid-cols-2">{visibleWorkflows.map((workflow) => <WorkflowTemplateCard key={workflow.id} workflow={workflow} profiles={profiles} projectName={workflow.project_id ? projects.find((project) => project.id === workflow.project_id)?.name ?? 'Projekt' : 'Projektübergreifend'} loading={loadingWorkflowId === workflow.id} busy={Boolean(loadingWorkflowId)} onOpen={() => void openWorkflowEditor(workflow.id, workflow.project_id ?? (libraryProjectId === 'all' ? selectedProjectId : libraryProjectId))} />)}</div>}
+      </section>}
 
+      {!editorOpen && section === 'routing' && <section id="workflow-panel-routing" className="space-y-4" aria-label="Routen und manuelle Trigger">
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Route className="size-4 text-muted-foreground" />Workflowlabels zuordnen</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Route className="size-4 text-muted-foreground" />Workflowlabel-Routen</CardTitle><p className="text-sm text-muted-foreground">Eine Route ordnet ein Label einer festen Workflowversion zu.</p></CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1.5"><Label htmlFor="route-project">Projekt</Label><Select value={selectedProjectId} onValueChange={selectProject}><SelectTrigger id="route-project"><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-3 md:items-end">
+              <div className="space-y-1.5"><Label htmlFor="route-project">Projekt</Label><Select value={selectedProjectId} onValueChange={selectProject}><SelectTrigger id="route-project"><SelectValue placeholder="Projekt wählen" /></SelectTrigger><SelectContent>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></div>
               <div className="space-y-1.5"><Label htmlFor="route-label">Workflowlabel</Label><Select value={routeLabelId} onValueChange={setRouteLabelId}><SelectTrigger id="route-label"><SelectValue placeholder="Label wählen" /></SelectTrigger><SelectContent>{workflowLabels.map((label) => <SelectItem key={label.id} value={label.id}>{label.name}</SelectItem>)}</SelectContent></Select></div>
-              <div className="space-y-1.5"><Label htmlFor="route-workflow">Workflow</Label><Select value={routeWorkflowId} onValueChange={setRouteWorkflowId}><SelectTrigger id="route-workflow"><SelectValue placeholder="Workflow wählen" /></SelectTrigger><SelectContent>{workflows.filter((workflow) => workflow.enabled && (workflow.project_id === null || workflow.project_id === selectedProjectId)).map((workflow) => <SelectItem key={workflow.id} value={workflow.id}>{workflow.name} · v{workflow.definition_version}</SelectItem>)}</SelectContent></Select></div>
+              <div className="space-y-1.5"><Label htmlFor="route-workflow">Workflow</Label><Select value={routeWorkflowId} onValueChange={setRouteWorkflowId}><SelectTrigger id="route-workflow"><SelectValue placeholder="Workflow wählen" /></SelectTrigger><SelectContent>{routeWorkflows.map((workflow) => <SelectItem key={workflow.id} value={workflow.id}>{workflow.name} · v{workflow.definition_version}</SelectItem>)}</SelectContent></Select></div>
             </div>
             <Button variant="outline" disabled={!routeLabelId || !routeWorkflowId || saveRoute.isPending || !routingQuery.data} onClick={() => saveRoute.mutate()}><Route />Zuordnung speichern</Button>
-            <div className="space-y-2 border-t pt-4">
-              <p className="text-sm font-medium">Aktuelle Zuordnungen</p>
-              {(routingQuery.data?.rules ?? []).map((rule) => <div key={rule.workflow_label_id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2 text-sm"><span>{workflowLabels.find((label) => label.id === rule.workflow_label_id)?.name ?? 'Workflowlabel'}</span><span className="text-muted-foreground">{workflows.find((workflow) => workflow.id === rule.workflow_id)?.name ?? 'Workflow'} · v{rule.workflow_definition_version}</span></div>)}
-              {(routingQuery.data?.rules ?? []).length === 0 && <p className="text-xs text-muted-foreground">Keine automatischen Zuordnungen konfiguriert.</p>}
-              <p className="text-xs text-muted-foreground">Bei fehlender oder mehrdeutiger Zuordnung ist eine menschliche Entscheidung erforderlich.</p>
-            </div>
+            <div className="space-y-2 border-t pt-4"><p className="text-sm font-medium">Aktuelle Zuordnungen</p>{(routingQuery.data?.rules ?? []).map((rule) => <div key={rule.workflow_label_id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2 text-sm"><span className="min-w-0 [overflow-wrap:anywhere]">{workflowLabels.find((label) => label.id === rule.workflow_label_id)?.name ?? 'Workflowlabel'}</span><span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">{workflows.find((workflow) => workflow.id === rule.workflow_id)?.name ?? 'Workflow'} · v{rule.workflow_definition_version}</span></div>)}{(routingQuery.data?.rules ?? []).length === 0 && <p className="text-xs text-muted-foreground">Keine Zuordnungen für dieses Projekt.</p>}</div>
           </CardContent>
         </Card>
-      </div>
+        <Card>
+          <CardHeader><CardTitle>Manuelle Trigger</CardTitle><p className="text-sm text-muted-foreground">Ein Trigger wird erst durch eine berechtigte Aktion gestartet.</p></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-[minmax(180px,1fr)_minmax(240px,1fr)_auto] md:items-end"><div className="space-y-1.5"><Label htmlFor="trigger-name">Name</Label><Input id="trigger-name" value={triggerName} onChange={(event) => setTriggerName(event.target.value)} maxLength={120} placeholder="Manueller Start" /></div><div className="space-y-1.5"><Label htmlFor="trigger-workflow">Workflow</Label><Select value={triggerWorkflowId} onValueChange={setTriggerWorkflowId}><SelectTrigger id="trigger-workflow"><SelectValue placeholder="Workflow wählen" /></SelectTrigger><SelectContent>{routeWorkflows.map((workflow) => <SelectItem key={workflow.id} value={workflow.id}>{workflow.name}</SelectItem>)}</SelectContent></Select></div><Button disabled={!triggerName.trim() || !triggerWorkflowId || !selectedProjectId || createTrigger.isPending} onClick={() => createTrigger.mutate()}><Plus />{createTrigger.isPending ? 'Wird eingerichtet…' : 'Trigger einrichten'}</Button></div>
+            <div className="space-y-2">{projectTriggers.map((trigger) => <div key={trigger.id} className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm"><div className="min-w-0"><p className="font-medium [overflow-wrap:anywhere]">{trigger.name}</p><p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{workflows.find((workflow) => workflow.id === trigger.workflow_id)?.name ?? 'Workflow'}</p></div><Badge variant={trigger.enabled ? 'secondary' : 'outline'}>{trigger.enabled ? 'Aktiv' : 'Pausiert'}</Badge></div>)}{projectTriggers.length === 0 && <p className="text-sm text-muted-foreground">Keine manuellen Trigger für dieses Projekt.</p>}</div>
+          </CardContent>
+        </Card>
+      </section>}
 
-      <section className="grid gap-5 xl:grid-cols-2">
-        <Card><CardHeader><CardTitle className="flex items-center gap-2"><TimerReset className="size-4 text-muted-foreground" />Workflows und laufende Instanzen</CardTitle></CardHeader><CardContent className="space-y-3">
-          {workflowCards.map(({ workflow, stageProfiles }) => <article key={workflow.id} className="rounded-lg border p-3" data-testid={`workflow-card-${workflow.id}`}><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">{workflow.name}</h3><div className="flex items-center gap-2"><Badge variant={workflow.enabled ? 'secondary' : 'outline'}>{workflow.enabled ? 'Aktiv' : 'Pausiert'}</Badge><Button type="button" size="sm" variant="outline" disabled={Boolean(loadingWorkflowId || editingWorkflow)} onClick={() => void openWorkflowEditor(workflow.id, selectedProjectId)}>{loadingWorkflowId === workflow.id ? 'Wird geladen…' : <><Pencil />Workflow bearbeiten</>}</Button></div></div><p className="mt-1 text-xs text-muted-foreground">{workflow.project_id ? projects.find((project) => project.id === workflow.project_id)?.name ?? 'Projekt' : 'Projektübergreifend'} · Version {workflow.definition_version} · {workflow.stages.length} Phasen</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{stageProfiles.map(({ stage, profile }) => <div key={stage.id} className="min-w-0 rounded-md bg-muted/40 p-2 text-xs"><p className="font-medium">{stage.name} <span className="font-normal text-muted-foreground">({stage.kind})</span></p><p className="mt-1 text-muted-foreground">Agentrolle: {stage.agent_profile_id ? profile ? `${profile.name} · ${profile.role}${profile.enabled ? '' : ' · deaktiviert'}` : `Nicht verfügbare Rolle · ${stage.agent_profile_id}` : 'Keine feste Rolle'}</p>{(stage as WorkflowStageEditorStage).instructions?.trim() && <p className="mt-1 text-muted-foreground">Phasenauftrag hinterlegt</p>}{(stage as WorkflowStageEditorStage).board_target && <p className="mt-1 text-muted-foreground">Boardziel hinterlegt</p>}</div>)}</div></article>)}
-          {workflows.length === 0 && <p className="py-3 text-sm text-muted-foreground">Noch keine Workflowvorlagen eingerichtet.</p>}
-          {instances.slice(0, 8).map((instance) => <div key={instance.id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm"><span>{workflows.find((workflow) => workflow.id === instance.workflow_id)?.name ?? 'Workflow'} · v{instance.definition_version}</span><Badge variant="outline">{instanceLabels[instance.state] ?? instance.state}</Badge></div>)}
+      {!editorOpen && section === 'runs' && <section id="workflow-panel-runs" aria-label="Workflow-Läufe">
+        <Card><CardHeader><CardTitle className="flex items-center gap-2"><TimerReset className="size-4 text-muted-foreground" />Workflow-Läufe</CardTitle></CardHeader><CardContent className="space-y-2">
+          {instances.map((instance) => {
+            const workflow = workflows.find((item) => item.id === instance.workflow_id)
+            const projectName = projects.find((project) => project.id === instance.project_id)?.name ?? 'Projekt'
+            const ticketFlow = `#/project/${instance.project_id}/board?task=${instance.task_id}&tab=flow`
+            return (
+              <div key={instance.id} className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
+                <div className="min-w-0"><p className="font-medium [overflow-wrap:anywhere]">{workflow?.name ?? 'Workflow'} · v{instance.definition_version}</p><p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{projectName}</p></div>
+                <div className="flex items-center gap-2"><Badge variant="outline">{instanceLabels[instance.state] ?? instance.state}</Badge><Button asChild size="sm" variant="outline"><a href={ticketFlow}><GitBranch />Ticketablauf ansehen</a></Button></div>
+              </div>
+            )
+          })}
+          {instances.length === 0 && <p className="py-3 text-sm text-muted-foreground">Noch keine Workflow-Läufe vorhanden.</p>}
         </CardContent></Card>
-
-        <Card><CardHeader><CardTitle>Manuelle Trigger</CardTitle></CardHeader><CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><div className="space-y-1.5"><Label htmlFor="trigger-name">Name</Label><Input id="trigger-name" value={triggerName} onChange={(event) => setTriggerName(event.target.value)} maxLength={120} placeholder="Manueller Start" /></div><div className="space-y-1.5"><Label htmlFor="trigger-workflow">Workflow</Label><Select value={routeWorkflowId} onValueChange={setRouteWorkflowId}><SelectTrigger id="trigger-workflow"><SelectValue placeholder="Workflow wählen" /></SelectTrigger><SelectContent>{workflows.filter((workflow) => workflow.enabled).map((workflow) => <SelectItem key={workflow.id} value={workflow.id}>{workflow.name}</SelectItem>)}</SelectContent></Select></div><Button disabled={!triggerName.trim() || !routeWorkflowId || !selectedProjectId || createTrigger.isPending} onClick={() => createTrigger.mutate()}><Plus />Einrichten</Button></div>
-          <p className="text-xs text-muted-foreground">Ein Trigger führt keinen Code aus und startet keinen Lauf, bevor eine berechtigte Aktion den Workflow anfordert.</p>
-          <div className="space-y-2">{triggers.map((trigger) => <div key={trigger.id} className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm"><div><p className="font-medium">{trigger.name}</p><p className="text-xs text-muted-foreground">{workflows.find((workflow) => workflow.id === trigger.workflow_id)?.name ?? 'Workflow'}</p></div><Badge variant={trigger.enabled ? 'secondary' : 'outline'}>{trigger.enabled ? 'Aktiv' : 'Pausiert'}</Badge></div>)}{triggers.length === 0 && <p className="text-sm text-muted-foreground">Keine manuellen Trigger eingerichtet.</p>}</div>
-        </CardContent></Card>
-      </section>
+      </section>}
     </main>
   )
 }

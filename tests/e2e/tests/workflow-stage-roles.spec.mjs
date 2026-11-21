@@ -99,12 +99,28 @@ async function selectOption(page, select, optionName) {
   await page.getByRole('option', { name: optionName, exact: true }).click();
 }
 
+async function graphStageIds(editor, expectedCount) {
+  const nodes = editor.getByTestId('workflow-editor-graph').locator('[data-testid^="workflow-graph-stage-"]');
+  await expect(nodes).toHaveCount(expectedCount);
+  return nodes.evaluateAll((nodes) => nodes
+    .map((node) => node.getAttribute('data-testid')?.replace('workflow-graph-stage-', '') ?? '')
+    .filter(Boolean));
+}
+
+async function selectWorkflowStage(editor, stageId) {
+  await editor.getByTestId('workflow-editor-graph').getByTestId('workflow-graph-stage-' + stageId).click();
+  const inspector = editor.getByTestId('workflow-stage-inspector');
+  await expect(inspector).toBeVisible();
+  return inspector;
+}
+
 function apiBoardTarget(target) {
   return { board_id: target.board_id, column_id: target.column_id };
 }
 
 async function chooseRole(page, editor, prefix, stageId, profile) {
-  const select = editor.getByTestId('workflow-' + prefix + '-stage-agent-role-' + stageId);
+  const inspector = await selectWorkflowStage(editor, stageId);
+  const select = inspector.getByTestId('workflow-' + prefix + '-stage-agent-role-' + stageId);
   await selectOption(page, select, profile.name + ' · ' + profile.role);
   await expect(select).toContainText(profile.name);
 }
@@ -112,6 +128,7 @@ async function chooseRole(page, editor, prefix, stageId, profile) {
 async function createWorkflowInUi(ownerPage, ownerApi, { project, name, stages, targets, useTwoStageTemplate = false, repairRoute = null }) {
   await ownerPage.goto('/#/workflows');
   await expect(ownerPage.getByRole('heading', { name: 'Workflows', exact: true })).toBeVisible();
+  await ownerPage.getByRole('button', { name: 'Neue Vorlage', exact: true }).click();
   const editor = ownerPage.getByTestId('workflow-editor-create');
   await expect(editor).toBeVisible();
   if (useTwoStageTemplate) {
@@ -121,38 +138,45 @@ async function createWorkflowInUi(ownerPage, ownerApi, { project, name, stages, 
   await editor.getByLabel('Workflowname').fill(name);
 
   const initialStageCount = useTwoStageTemplate ? 2 : 1;
+  const stageIds = [];
 
   for (let index = 0; index < stages.length; index += 1) {
     if (index >= initialStageCount) await editor.getByRole('button', { name: 'Phase hinzufügen', exact: true }).click();
     const phaseNumber = index + 1;
     const stage = stages[index];
-    await editor.getByLabel('Name der Phase ' + phaseNumber).fill(stage.name);
+    const currentStageIds = await graphStageIds(editor, Math.max(initialStageCount, index + 1));
+    const stageId = currentStageIds[index];
+    stageIds.push(stageId);
+    const inspector = await selectWorkflowStage(editor, stageId);
+    await inspector.getByLabel('Name der Phase ' + phaseNumber).fill(stage.name);
     if (stage.kind) {
-      await selectOption(ownerPage, editor.getByLabel('Art der Phase').nth(index), stage.kind === 'review' ? 'Reviewphase' : 'Arbeitsphase');
+      await selectOption(ownerPage, inspector.getByLabel('Art der Phase'), stage.kind === 'review' ? 'Reviewphase' : 'Arbeitsphase');
     }
     if (stage.profile) {
-      const roleSelect = editor.getByLabel('Agentrolle für Phase ' + phaseNumber);
+      const roleSelect = inspector.getByTestId('workflow-create-stage-agent-role-' + stageId);
       await selectOption(ownerPage, roleSelect, stage.profile.name + ' · ' + stage.profile.role);
     }
-    const instructions = editor.getByLabel('Auftrag für diese Phase').nth(index);
+    const instructions = inspector.getByLabel('Auftrag für diese Phase');
     await instructions.fill(stage.instructions);
-    const boardTarget = editor.getByLabel('Boardspalte bei Phasenstart für Phase ' + phaseNumber);
+    const boardTarget = inspector.getByLabel('Boardspalte bei Phasenstart für Phase ' + phaseNumber);
     await selectOption(ownerPage, boardTarget, targets[stage.boardCategory].option);
   }
 
   if (repairRoute) {
-    const stageRows = editor.locator('article[data-testid^="workflow-create-stage-"]');
-    const stageIds = await stageRows.evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid').replace('workflow-create-stage-', '')));
-    const transitionRows = editor.locator('article[data-testid^="workflow-create-transition-"]');
-    const transitionIndex = await transitionRows.count();
+    const graph = editor.getByTestId('workflow-editor-graph');
+    const transitionIndex = useTwoStageTemplate ? stages.length : stages.length - 1;
+    await expect(graph.locator('[data-testid^="workflow-graph-transition-"]')).toHaveCount(transitionIndex);
     await editor.getByRole('button', { name: 'Übergang hinzufügen', exact: true }).click();
-    const transitionRow = editor.getByTestId('workflow-create-transition-' + transitionIndex);
-    await selectOption(ownerPage, transitionRow.getByLabel('Von Phase'), stages[repairRoute.fromStageIndex].name + ' · ' + stageIds[repairRoute.fromStageIndex]);
-    await expect(transitionRow.getByLabel('Ergebnis')).toContainText('Änderungen nötig');
-    await expect(transitionRow.getByLabel('Zu Phase')).toContainText(stages[repairRoute.toStageIndex].name);
+    const transitionInspector = editor.getByTestId('workflow-transition-inspector');
+    await expect(transitionInspector).toBeVisible();
+    await expect(graph.getByTestId('workflow-graph-transition-' + transitionIndex)).toBeVisible();
+    await selectOption(ownerPage, transitionInspector.getByLabel('Von Phase'), stages[repairRoute.fromStageIndex].name);
+    await expect(transitionInspector.getByLabel('Ergebnis')).toContainText('Änderungen nötig');
+    await expect(transitionInspector.getByLabel('Zu Phase')).toContainText(stages[repairRoute.toStageIndex].name);
   }
 
-  const firstRole = editor.getByLabel('Agentrolle für Phase 1');
+  const firstStageInspector = await selectWorkflowStage(editor, stageIds[0]);
+  const firstRole = firstStageInspector.getByTestId('workflow-create-stage-agent-role-' + stageIds[0]);
   await firstRole.click();
   await expect(ownerPage.getByRole('option', { name: /Projektfremde Rolle/ })).toHaveCount(0);
   await ownerPage.keyboard.press('Escape');
@@ -473,16 +497,18 @@ test('UI versions a same-role two-phase template into separate work and review r
   expect(oldVersionBefore.data.id).toBe(workflowV1.id);
 
   const card = ownerPage.getByTestId('workflow-card-' + workflowV1.id);
-  await card.getByRole('button', { name: 'Workflow bearbeiten', exact: true }).click();
+  await card.getByRole('button', { name: 'Graph öffnen', exact: true }).click();
   const editor = ownerPage.getByTestId('workflow-editor-' + workflowV1.id);
   await expect(editor).toBeVisible();
   await expect(editor.getByLabel('Workflowname')).toHaveValue(workflowV1.name);
   await chooseRole(ownerPage, editor, workflowV1.id, 'work', workRole);
   await chooseRole(ownerPage, editor, workflowV1.id, 'review', reviewRole);
-  await editor.getByLabel('Automatische Überarbeitungsrunden').fill('0');
-  await editor.getByTestId('workflow-' + workflowV1.id + '-stage-instructions-work').fill('Setze den Auftrag als Redaktion um und dokumentiere das konkrete Ergebnis.');
-  await editor.getByTestId('workflow-' + workflowV1.id + '-stage-instructions-review').fill('Prüfe den eingefrorenen Umsetzungsbericht unabhängig und begründet.');
-  await selectOption(ownerPage, editor.getByLabel('Boardspalte bei Phasenstart für Phase 2'), 'Spalte beibehalten');
+  await editor.getByLabel('Überarbeitungsrunden').fill('0');
+  const workInspector = await selectWorkflowStage(editor, 'work');
+  await workInspector.getByTestId('workflow-' + workflowV1.id + '-stage-instructions-work').fill('Setze den Auftrag als Redaktion um und dokumentiere das konkrete Ergebnis.');
+  const reviewInspector = await selectWorkflowStage(editor, 'review');
+  await reviewInspector.getByTestId('workflow-' + workflowV1.id + '-stage-instructions-review').fill('Prüfe den eingefrorenen Umsetzungsbericht unabhängig und begründet.');
+  await selectOption(ownerPage, reviewInspector.getByLabel('Boardspalte bei Phasenstart für Phase 2'), 'Spalte beibehalten');
 
   const replaceResponsePromise = ownerPage.waitForResponse((response) => response.request().method() === 'PUT'
     && new URL(response.url()).pathname === apiPrefix + '/workflows/' + workflowV1.id);

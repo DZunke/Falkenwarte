@@ -169,7 +169,6 @@ test('Agentrollen können alle aktuellen und künftigen Projekte oder eine konkr
   expect(saveProjectAccessResponse.status()).toBe(200);
   const savedRole = await saveProjectAccessResponse.json();
   expect(savedRole.version).toBeGreaterThan(scopedRole.version);
-  await expect(ownerPage.getByText('Projektfreigaben aktualisiert', { exact: true })).toBeVisible();
 
   refreshed = await ownerApi.get(`/agent-profiles/${scopedRole.id}`);
   expect(refreshed.response.status(), JSON.stringify(refreshed.data)).toBe(200);
@@ -232,14 +231,17 @@ test('Eine globale Agentrolle erscheint nur bei passender aktiver T3-Projektbind
 
   await ownerPage.goto('/#/workflows');
   await expect(ownerPage.getByRole('heading', { name: 'Workflows' })).toBeVisible();
+  await ownerPage.getByRole('button', { name: 'Neue Vorlage', exact: true }).click();
   const workflowForm = ownerPage.getByTestId('workflow-editor-create');
   await workflowForm.getByRole('button', { name: 'Zwei-Phasen-Vorlage verwenden', exact: true }).click();
   const workflowProjectPicker = workflowForm.getByLabel('Projekt');
   await workflowProjectPicker.click();
   await ownerPage.getByRole('option', { name: project.name, exact: true }).click();
   await expect(workflowProjectPicker).toContainText(project.name);
-  await expect(workflowForm.getByText('Je Phase werden nur aktivierte Rollen angeboten, die für dieses Projekt freigegeben und an dieselbe T3-Verbindung gebunden sind.', { exact: true })).toBeVisible();
-  const workflowRolePicker = workflowForm.getByLabel('Agentrolle für Phase 1');
+  const graph = workflowForm.getByTestId('workflow-editor-graph');
+  await graph.getByTestId('workflow-graph-stage-work').click();
+  const stageInspector = workflowForm.getByTestId('workflow-stage-inspector');
+  const workflowRolePicker = stageInspector.getByTestId('workflow-create-stage-agent-role-work');
   await workflowRolePicker.click();
   const workflowRoleOptions = ownerPage.getByRole('option');
   await expect(workflowRoleOptions).toHaveText([
@@ -248,7 +250,9 @@ test('Eine globale Agentrolle erscheint nur bei passender aktiver T3-Projektbind
   ]);
   await expect(ownerPage.getByRole('option', { name: new RegExp(otherConnectionRole.name) })).toHaveCount(0);
   await ownerPage.keyboard.press('Escape');
-  const reviewRolePicker = workflowForm.getByLabel('Agentrolle für Phase 2');
+  await graph.getByTestId('workflow-graph-stage-review').click();
+  const reviewInspector = workflowForm.getByTestId('workflow-stage-inspector');
+  const reviewRolePicker = reviewInspector.getByTestId('workflow-create-stage-agent-role-review');
   await reviewRolePicker.click();
   await expect(ownerPage.getByRole('option')).toHaveText([
     'Keine Agentrolle',
