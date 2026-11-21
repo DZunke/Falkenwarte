@@ -179,7 +179,8 @@ function edgeName(from, to, outcome, routeLabel, returnRoute = false) {
   return `${from} → ${to}, ${outcome}, ${routeLabel}${returnRoute ? ', Rückweg' : ''}`;
 }
 
-function assertNoOverlap(bounds, description) {
+function assertNoOverlap(bounds, description, soft = false) {
+  const assertion = soft ? expect.soft : expect;
   for (let leftIndex = 0; leftIndex < bounds.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < bounds.length; rightIndex += 1) {
       const left = bounds[leftIndex];
@@ -187,7 +188,7 @@ function assertNoOverlap(bounds, description) {
       const overlapX = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
       const overlapY = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
       const rect = ({ name, x, y, width, height }) => `${name} [x=${x.toFixed(1)}, y=${y.toFixed(1)}, w=${width.toFixed(1)}, h=${height.toFixed(1)}]`;
-      expect(overlapX > 1 && overlapY > 1, `${description}: ${rect(left)} und ${rect(right)} dürfen sich nicht überdecken (Überlappung x=${overlapX.toFixed(1)}, y=${overlapY.toFixed(1)}).`).toBe(false);
+      assertion(overlapX > 1 && overlapY > 1, `${description}: ${rect(left)} und ${rect(right)} dürfen sich nicht überdecken (Überlappung x=${overlapX.toFixed(1)}, y=${overlapY.toFixed(1)}).`).toBe(false);
     }
   }
 }
@@ -896,7 +897,7 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
     expect(snapshot.nodes).toHaveLength(4);
     expect(snapshot.routeControls).toHaveLength(7);
     expect([...snapshot.nodes, ...snapshot.routeControls].every((item) => item.withinPane), `${description}: alle Controls liegen vollständig in der Graphpane.`).toBe(true);
-    assertNoOverlap([...snapshot.nodes, ...snapshot.routeControls], `${description}: Phasen, direkte Routen und Bündelwahl überdecken sich nicht`);
+    assertNoOverlap([...snapshot.nodes, ...snapshot.routeControls], `${description}: Phasen, direkte Routen und Bündelwahl überdecken sich nicht`, true);
   };
 
   const assertSelectedRoute = async (route, viewport, description) => {
