@@ -9,7 +9,6 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
-  getNodesBounds,
   useReactFlow,
   type Connection,
   type Edge,
@@ -667,7 +666,7 @@ function WorkflowGraphCanvas({
   controlledSelection,
   setSelection,
 }: WorkflowGraphCanvasProps) {
-  const { fitBounds, zoomIn, zoomOut, screenToFlowPosition } = useReactFlow<WorkflowStageNode, WorkflowTransitionEdge>()
+  const { fitBounds, getNodesBounds, zoomIn, zoomOut, screenToFlowPosition } = useReactFlow<WorkflowStageNode, WorkflowTransitionEdge>()
   const canvasRef = useRef<HTMLDivElement>(null)
   const [connecting, setConnecting] = useState(false)
   const [connectionSource, setConnectionSource] = useState<string | null>(null)
