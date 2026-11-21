@@ -77,6 +77,14 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
   const horizontalWidthBudget = Math.max(1, containerWidth - 64)
   const verticalLaneGap = 12
   const verticalWidthBudget = Math.max(1, containerWidth - 64)
+  const verticalRouteChipHeight = 32
+  const verticalRouteLabelGap = 8
+  const verticalNodeClearance = 16
+  const verticalCurveReserve = 8
+  const minimumVerticalBranchRankGap = 2 * verticalRouteChipHeight
+    + verticalRouteLabelGap
+    + 2 * verticalNodeClearance
+    + verticalCurveReserve
   const horizontalNodeWidth = Math.max(136, Math.min(244, (horizontalWidthBudget - (rankCount - 1) * horizontalRankGap) / rankCount))
   const verticalNodeWidth = Math.max(180, Math.min(260, verticalWidthBudget))
   const branchWidth = horizontal ? horizontalNodeWidth : verticalNodeWidth
@@ -85,7 +93,8 @@ export function workflowLayout(stageIds: readonly string[], transitions: readonl
   for (const route of edges.values()) route.labelMaxWidth = branchLabelMaxWidth
 
   const graph = new Graph<GraphLabel, NodeLabel, EdgeLabel>({ multigraph: true })
-  const rankSep = horizontal ? horizontalRankGap : 72
+  // A dense vertical rank gap can hold two 32px route pills, their gap, node margins, and curve slack.
+  const rankSep = horizontal ? horizontalRankGap : minimumVerticalBranchRankGap
   graph.setGraph({ rankdir: horizontal ? 'LR' : 'TB', ranksep: rankSep, nodesep: horizontal ? 56 : verticalLaneGap, edgesep: 32, marginx: 32, marginy: 52 })
   stageIds.forEach(id => graph.setNode(id, { width: branchWidth, height }))
   if (!horizontal) {
