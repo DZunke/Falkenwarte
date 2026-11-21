@@ -864,6 +864,7 @@ function routeLabelPosition(
 
 function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
   const [selectedBundleItem, setSelectedBundleItem] = useState<GraphRouteBundleItem | null>(null)
+  const focusInspectorAfterBundleSelection = useRef(false)
   const [safeLabelPosition, setSafeLabelPosition] = useState<{ key: string; x: number; y: number } | null>(null)
   const labelButtonRef = useRef<HTMLButtonElement>(null)
   const data = props.data
@@ -922,6 +923,7 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
       data.onSelectPlannedTransition?.(item.transitionIndex)
       event.preventDefault()
     } else {
+      focusInspectorAfterBundleSelection.current = data.graphKind === 'definition' && Boolean(data.onSelectBundleTransition)
       data.onSelectBundleTransition?.(item.transitionIndex)
     }
   }
@@ -957,6 +959,11 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
             data-testid={`workflow-graph-route-bundle-detail-${data.bundleSourceIndex}-${data.bundleTargetIndex}`}
             align="center"
             sideOffset={6}
+            onCloseAutoFocus={(event) => {
+              if (!focusInspectorAfterBundleSelection.current) return
+              focusInspectorAfterBundleSelection.current = false
+              event.preventDefault()
+            }}
             className="w-[min(26rem,calc(100vw-2rem))] max-w-[calc(100vw-1rem)]"
           >
             <DropdownMenuLabel className="whitespace-normal px-2 py-1.5 text-xs leading-5">
