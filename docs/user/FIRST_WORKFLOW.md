@@ -125,7 +125,7 @@ Wenn dem Ticket eine Workflowlabel-Route zugeordnet ist, hat deren eingefrorene 
 
 ## 8. Den Workflow starten
 
-Öffne das Ticket und danach **Ausführung**. Prüfe im Abschnitt **Workflow starten** das Feld **Workflow**. Für den mehrstufigen Auftrag wählst du **Discovery, Umsetzung und Review**. Für eine Leseaufgabe kannst du hier **Kurze Bestandsprüfung · Version 1** wählen. Die Auswahl gilt für diesen Start. Kontrolliere die angezeigte Phasenzahl und Version und klicke einmal auf **Workflow starten**.
+Öffne das Ticket und danach **Ausführung**. Bei einem Boardstandard steht **Workflow starten** vor dem Einzellauf. Prüfe im Feld **Workflow** die gewünschte Vorlage und öffne **Phasen und Rollen**, um die Phasennamen und die tatsächlich zugeordneten Rollen dieser Version zu sehen. Für den mehrstufigen Auftrag wählst du **Discovery, Umsetzung und Review**. Für eine Leseaufgabe kannst du hier **Kurze Bestandsprüfung · Version 1** wählen. Die Auswahl gilt für diesen Start; klicke einmal auf **Workflow starten**.
 
 Unter **Ausführungen** siehst du den neuen Ablauf. **Start wird übertragen** zeigt den Versand an T3, danach sollte **Läuft in T3** oder ein bereits weiter fortgeschrittener Status erscheinen. Eine Providerberechtigungsanfrage bestätigst du im zugehörigen T3-Thread.
 

@@ -417,6 +417,62 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
   const hasPendingApproval = task.human_attention.reasons.includes('approval_pending') || approvals.some((approval) => approval.status === 'pending')
 
   const profileStatus = (profile: components['schemas']['AgentProfile']) => !profile.enabled ? 'Deaktiviert' : !profile.configuration_valid ? 'Nicht startbereit' : 'Startbereit'
+  const workflowFirst = Boolean(task.workflow_label_id || (boardPolicy && boardPolicy.state !== 'unconfigured'))
+
+  const standaloneRunSection = (
+    <section data-testid="execution-single-run-section" className="space-y-3 rounded-lg border p-4">
+      <div className="flex items-center gap-2"><Play className="size-4 text-primary" /><h3 className="text-sm font-semibold">Einzellauf anfordern</h3></div>
+      {profilesQuery.isPending || projectBindingQuery.isPending ? <p role="status" className="text-sm text-muted-foreground">Projektbindung und Rollenprofile werden geladen…</p>
+        : projectBindingQuery.isError ? <p role="alert" className="text-sm text-destructive">Die aktive T3-Projektbindung konnte nicht geprüft werden.</p>
+          : !projectBinding ? <p className="text-sm text-muted-foreground">Binde dieses Projekt unter <a className="underline underline-offset-4" href="#/agents">Agents &amp; T3</a> an eine T3-Verbindung, bevor du einen Auftrag startest.</p>
+            : profiles.length === 0 && hasConnectionMismatch ? <p className="text-sm text-muted-foreground">Rollenprofile für andere T3-Verbindungen sind ausgeblendet. Starten ist nur mit derselben aktiven T3-Verbindung wie die Projektbindung möglich.</p>
+              : profiles.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein Rollenprofil freigegeben.</p> : <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-2"><Label htmlFor="execution-profile">Rollenprofil</Label><Select value={selectedProfileId} onValueChange={setSelectedProfileId} disabled={Boolean(selectedStage?.agent_profile_id)}><SelectTrigger id="execution-profile"><SelectValue placeholder="Rolle auswählen" /></SelectTrigger><SelectContent>{profilesForStage.map((profile) => <SelectItem key={profile.id} value={profile.id} disabled={!profile.enabled || !profile.configuration_valid}>{profile.name} · {profileStatus(profile)}</SelectItem>)}</SelectContent></Select>{selectedProfile?.configuration_error && <p className="text-xs text-amber-900">{selectedProfile.configuration_error}</p>}{selectedStage?.agent_profile_id && <p className="text-xs text-muted-foreground">Diese Workflowphase ist an das angezeigte Rollenprofil gebunden.</p>}</div>
+        <div className="grid gap-2"><Label htmlFor="execution-stage">Phase</Label>{standaloneWorkflow?.stages.length ? <Select value={selectedStageId} onValueChange={setSelectedStageId}><SelectTrigger id="execution-stage"><SelectValue placeholder="Phase auswählen" /></SelectTrigger><SelectContent>{standaloneWorkflow.stages.map((stage) => <SelectItem key={stage.id} value={stage.id}>{stage.name} · {stage.id}</SelectItem>)}</SelectContent></Select> : <Input id="execution-stage" value={selectedStageId} onChange={(event) => setSelectedStageId(event.target.value)} maxLength={100} />}{selectedStage?.agent_profile_id && !profilesForStage.some((profile) => profile.id === selectedStage.agent_profile_id && profile.configuration_valid && profile.enabled) && <p className="text-xs text-amber-900">Das festgelegte Rollenprofil dieser Phase ist nicht startbereit.</p>}</div>
+      </div>}
+      <div className="flex justify-end"><Button onClick={() => startRun.mutate()} disabled={!canRequestRun || startRun.isPending || profilesQuery.isPending || projectBindingQuery.isPending}><Play />{startRun.isPending ? 'Wird angefordert…' : 'Einzellauf anfordern'}</Button></div>
+    </section>
+  )
+
+  const workflowStartSection = (
+    <section data-testid="execution-workflow-section" className="space-y-3 rounded-lg border p-4">
+      <div className="flex items-center gap-2"><WorkflowIcon className="size-4 text-primary" /><h3 className="text-sm font-semibold">Workflow starten</h3></div>
+      {boardPolicyError
+        ? <p role="alert" className="text-sm text-destructive">Die Workflow-Einstellungen des Boards konnten nicht geladen werden. {boardPolicyError} <Button variant="link" size="sm" onClick={retryBoardPolicy}>Erneut laden</Button></p>
+        : !boardPolicy
+          ? <p role="status" className="text-sm text-muted-foreground">Workflow-Einstellungen des Boards werden geladen…</p>
+          : boardPolicy.state !== 'unconfigured' && <p role="status" className="text-sm text-muted-foreground">{boardPolicy.reason ?? (boardPolicy.state === 'available' ? preselectionHint : 'Für dieses Ticket ist der Workflowstart gesperrt.')}</p>}
+      {task.workflow_label_id && route && <p className="text-xs text-muted-foreground">Die Labelroute ist mit Version {route.workflow_definition_version} vorausgewählt. Wenn du sie wählst, bleibt diese Version gebunden; du kannst stattdessen eine andere aktive Vorlage wählen.</p>}
+      {workflowsQuery.isPending ? <p className="text-sm text-muted-foreground">Workflows werden geladen…</p> : workflowOptions.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein aktiver Workflow verfügbar.</p> : <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+        <div className="grid min-w-0 gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={displayedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={!boardPolicy || Boolean(boardPolicyError) || !['available', 'unconfigured'].includes(boardPolicy.state)}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>
+          {selectedWorkflow ? <details data-testid="execution-workflow-phase-preview" className="rounded-md border bg-muted/20 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium">Phasen und Rollen · Version {selectedWorkflow.definition_version}</summary>
+            {selectedWorkflow.stages.length > 0 ? <ol aria-label={`Phasen und Rollen der Version ${selectedWorkflow.definition_version}`} className="mt-2 space-y-1.5">
+              {selectedWorkflow.stages.map((stage) => {
+                const profile = profiles.find((candidate) => candidate.id === stage.agent_profile_id)
+                const profileDescription = !stage.agent_profile_id
+                  ? 'Keine Rolle zugewiesen'
+                  : profilesQuery.isError || projectBindingQuery.isError
+                    ? 'Rollenprofil konnte nicht geprüft werden'
+                    : profilesQuery.isPending || projectBindingQuery.isPending
+                      ? 'Rollenprofil wird geladen…'
+                      : profile
+                        ? `${profile.name}${profile.enabled && profile.configuration_valid ? '' : ` · ${profileStatus(profile)}`}`
+                        : 'Rolle nicht verfügbar'
+                return <li key={stage.id} className="flex min-w-0 flex-wrap justify-between gap-x-4 gap-y-0.5 text-sm"><span className="font-medium">{stage.name}</span><span className="text-muted-foreground">{profileDescription}</span></li>
+              })}
+            </ol> : <p className="mt-2 text-sm text-muted-foreground">Diese Workflowversion enthält keine Phasen.</p>}
+          </details> : <p className="text-xs text-muted-foreground">Wähle einen Workflow, um seine Phasen und Rollen zu sehen.</p>}</div>
+        <Button onClick={() => startWorkflow.mutate()} disabled={!workflowCanStart || startWorkflow.isPending}><WorkflowIcon />{startWorkflow.isPending ? 'Wird gestartet…' : 'Workflow starten'}</Button>
+      </div>}
+      {unavailableStageNames.length > 0 && profilesQuery.isSuccess && projectBindingQuery.isSuccess && <p role="alert" className="text-sm text-amber-900">Für folgende Phasen fehlt eine startbereite Rolle: {unavailableStageNames.join(', ')}. Öffne die Vorlage unter <a className="underline" href="#/workflows">Workflows</a> und weise jeder Phase eine Rolle für dieses Projekt und seine T3-Verbindung zu.</p>}
+      {!effectiveTaskRoute && routedWorkflowRequired && routingQuery.isPending && <p className="text-xs text-muted-foreground">Die gespeicherte Route wird geladen. Du kannst anschließend eine andere aktive Vorlage wählen.</p>}
+      {!effectiveTaskRoute && routedWorkflowRequired && routingQuery.isError && <p role="alert" className="text-xs text-destructive">Die versionierte Aufgabenroute konnte nicht geladen werden: {formatError(routingQuery.error)}</p>}
+      {routedWorkflowMissing && <p role="alert" className="text-xs text-destructive">Für das Workflowlabel dieser Aufgabe wurde keine versionierte Route gefunden. Der Workflowstart ist gesperrt.</p>}
+      {route && routedWorkflowQuery.isPending && <p className="text-xs text-muted-foreground">Die vorausgewählte Workflowversion wird geladen. Eine andere aktive Vorlage kannst du schon wählen.</p>}
+      {route && !routedWorkflowQuery.data && routedWorkflowQuery.isError && <p role="alert" className="text-xs text-destructive">Die vorausgewählte Workflowversion konnte nicht geladen werden: {formatError(routedWorkflowQuery.error)} Eine andere aktive Vorlage kann trotzdem gewählt werden.</p>}
+    </section>
+  )
 
   return (
     <div className="space-y-5 pb-6">
@@ -424,44 +480,13 @@ export default function TaskExecution({ task, project, boardId, boardPolicy, boa
       {(runsQuery.isError || profilesQuery.isError || projectBindingQuery.isError || workflowsQuery.isError || routingQuery.isError || workflowInstancesQuery.isError) && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formatError(runsQuery.error ?? profilesQuery.error ?? projectBindingQuery.error ?? workflowsQuery.error ?? routingQuery.error ?? workflowInstancesQuery.error)}</div>}
 
       <section className="space-y-3 rounded-lg border p-4">
-        <div><h3 className="text-sm font-semibold">Startbedingungen</h3><p className="mt-1 text-xs text-muted-foreground">Falkenwarte prüft Ticketstand, Rolle, T3-Verbindung und freien Ausführungsplatz erneut beim Start.</p></div>
+        <div><h3 className="text-sm font-semibold">Startbedingungen</h3></div>
         {constraints.length > 0 ? <ul className="list-disc space-y-1 pl-5 text-sm text-amber-900">{constraints.map((constraint) => <li key={constraint}>{constraint}</li>)}</ul> : <p className="text-sm text-muted-foreground">Für Ticket und Projekt sind keine bekannten Startblockaden offen.</p>}
         {hasPendingApproval && <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-amber-50 p-3"><p className="text-sm text-amber-950">Eine Ergebnismeldung wartet auf deine fachliche Entscheidung.</p><Button size="sm" variant="outline" onClick={onOpenDecisions}><ShieldCheck />Entscheidung öffnen</Button></div>}
         <p className="text-xs text-muted-foreground">Ein Phasenlauf schließt das Ticket nicht automatisch ab. Berichte bleiben Agentenmeldungen; Ticketkriterien und Projektabschlussregeln gelten unabhängig davon.</p>
       </section>
 
-      <section className="space-y-3 rounded-lg border p-4">
-        <div className="flex items-center gap-2"><Play className="size-4 text-primary" /><h3 className="text-sm font-semibold">Einzellauf anfordern</h3></div>
-        {profilesQuery.isPending || projectBindingQuery.isPending ? <p role="status" className="text-sm text-muted-foreground">Projektbindung und Rollenprofile werden geladen…</p>
-          : projectBindingQuery.isError ? <p role="alert" className="text-sm text-destructive">Die aktive T3-Projektbindung konnte nicht geprüft werden.</p>
-            : !projectBinding ? <p className="text-sm text-muted-foreground">Binde dieses Projekt unter <a className="underline underline-offset-4" href="#/agents">Agents &amp; T3</a> an eine T3-Verbindung, bevor du einen Auftrag startest.</p>
-              : profiles.length === 0 && hasConnectionMismatch ? <p className="text-sm text-muted-foreground">Rollenprofile für andere T3-Verbindungen sind ausgeblendet. Starten ist nur mit derselben aktiven T3-Verbindung wie die Projektbindung möglich.</p>
-                : profiles.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein Rollenprofil freigegeben.</p> : <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-2"><Label htmlFor="execution-profile">Rollenprofil</Label><Select value={selectedProfileId} onValueChange={setSelectedProfileId} disabled={Boolean(selectedStage?.agent_profile_id)}><SelectTrigger id="execution-profile"><SelectValue placeholder="Rolle auswählen" /></SelectTrigger><SelectContent>{profilesForStage.map((profile) => <SelectItem key={profile.id} value={profile.id} disabled={!profile.enabled || !profile.configuration_valid}>{profile.name} · {profileStatus(profile)}</SelectItem>)}</SelectContent></Select>{selectedProfile?.configuration_error && <p className="text-xs text-amber-900">{selectedProfile.configuration_error}</p>}{selectedStage?.agent_profile_id && <p className="text-xs text-muted-foreground">Diese Workflowphase ist an das angezeigte Rollenprofil gebunden.</p>}</div>
-          <div className="grid gap-2"><Label htmlFor="execution-stage">Phase</Label>{standaloneWorkflow?.stages.length ? <Select value={selectedStageId} onValueChange={setSelectedStageId}><SelectTrigger id="execution-stage"><SelectValue placeholder="Phase auswählen" /></SelectTrigger><SelectContent>{standaloneWorkflow.stages.map((stage) => <SelectItem key={stage.id} value={stage.id}>{stage.name} · {stage.id}</SelectItem>)}</SelectContent></Select> : <Input id="execution-stage" value={selectedStageId} onChange={(event) => setSelectedStageId(event.target.value)} maxLength={100} />}{selectedStage?.agent_profile_id && !profilesForStage.some((profile) => profile.id === selectedStage.agent_profile_id && profile.configuration_valid && profile.enabled) && <p className="text-xs text-amber-900">Das festgelegte Rollenprofil dieser Phase ist nicht startbereit.</p>}</div>
-        </div>}
-        <div className="flex justify-end"><Button onClick={() => startRun.mutate()} disabled={!canRequestRun || startRun.isPending || profilesQuery.isPending || projectBindingQuery.isPending}><Play />{startRun.isPending ? 'Wird angefordert…' : 'Einzellauf anfordern'}</Button></div>
-      </section>
-
-      <section className="space-y-3 rounded-lg border p-4">
-        <div className="flex items-center gap-2"><WorkflowIcon className="size-4 text-primary" /><h3 className="text-sm font-semibold">Workflow starten</h3></div>
-        {boardPolicyError
-          ? <p role="alert" className="text-sm text-destructive">Die Workflow-Einstellungen des Boards konnten nicht geladen werden. {boardPolicyError} <Button variant="link" size="sm" onClick={retryBoardPolicy}>Erneut laden</Button></p>
-          : !boardPolicy
-            ? <p role="status" className="text-sm text-muted-foreground">Workflow-Einstellungen des Boards werden geladen…</p>
-            : boardPolicy.state !== 'unconfigured' && <p role="status" className="text-sm text-muted-foreground">{boardPolicy.reason ?? (boardPolicy.state === 'available' ? preselectionHint : 'Für dieses Ticket ist der Workflowstart gesperrt.')}</p>}
-        {task.workflow_label_id && route && <p className="text-xs text-muted-foreground">Die Labelroute ist mit Version {route.workflow_definition_version} vorausgewählt. Wenn du sie wählst, bleibt diese Version gebunden; du kannst stattdessen eine andere aktive Vorlage wählen.</p>}
-        {workflowsQuery.isPending ? <p className="text-sm text-muted-foreground">Workflows werden geladen…</p> : workflowOptions.length === 0 ? <p className="text-sm text-muted-foreground">Für dieses Projekt ist kein aktiver Workflow verfügbar.</p> : <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-          <div className="grid gap-2"><Label htmlFor="execution-workflow">Workflow</Label><Select value={displayedWorkflowKey} onValueChange={setSelectedWorkflowKey} disabled={!boardPolicy || Boolean(boardPolicyError) || !['available', 'unconfigured'].includes(boardPolicy.state)}><SelectTrigger id="execution-workflow"><SelectValue placeholder="Workflow auswählen" /></SelectTrigger><SelectContent>{workflowOptions.map((workflow) => <SelectItem key={`${workflow.id}:${workflow.definition_version}`} value={`${workflow.id}:${workflow.definition_version}`}>{workflow.name} · Version {workflow.definition_version}</SelectItem>)}</SelectContent></Select>{selectedWorkflow && <p className="text-xs text-muted-foreground">{selectedWorkflow.stages.length} Phasen · Version {selectedWorkflow.definition_version}</p>}</div>
-          <Button onClick={() => startWorkflow.mutate()} disabled={!workflowCanStart || startWorkflow.isPending}><WorkflowIcon />{startWorkflow.isPending ? 'Wird gestartet…' : 'Workflow starten'}</Button>
-        </div>}
-        {unavailableStageNames.length > 0 && profilesQuery.isSuccess && projectBindingQuery.isSuccess && <p role="alert" className="text-sm text-amber-900">Für folgende Phasen fehlt eine startbereite Rolle: {unavailableStageNames.join(', ')}. Öffne die Vorlage unter <a className="underline" href="#/workflows">Workflows</a> und weise jeder Phase eine Rolle für dieses Projekt und seine T3-Verbindung zu.</p>}
-        {!effectiveTaskRoute && routedWorkflowRequired && routingQuery.isPending && <p className="text-xs text-muted-foreground">Die gespeicherte Route wird geladen. Du kannst anschließend eine andere aktive Vorlage wählen.</p>}
-        {!effectiveTaskRoute && routedWorkflowRequired && routingQuery.isError && <p role="alert" className="text-xs text-destructive">Die versionierte Aufgabenroute konnte nicht geladen werden: {formatError(routingQuery.error)}</p>}
-        {routedWorkflowMissing && <p role="alert" className="text-xs text-destructive">Für das Workflowlabel dieser Aufgabe wurde keine versionierte Route gefunden. Der Workflowstart ist gesperrt.</p>}
-        {route && routedWorkflowQuery.isPending && <p className="text-xs text-muted-foreground">Die vorausgewählte Workflowversion wird geladen. Eine andere aktive Vorlage kannst du schon wählen.</p>}
-        {route && !routedWorkflowQuery.data && routedWorkflowQuery.isError && <p role="alert" className="text-xs text-destructive">Die vorausgewählte Workflowversion konnte nicht geladen werden: {formatError(routedWorkflowQuery.error)} Eine andere aktive Vorlage kann trotzdem gewählt werden.</p>}
-      </section>
+      {workflowFirst ? <>{workflowStartSection}{standaloneRunSection}</> : <>{standaloneRunSection}{workflowStartSection}</>}
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Ausführungen</h3><p className="mt-1 text-xs text-muted-foreground">Jeder Versuch behält seine T3-Referenzen und Beobachtungen.</p></div><Button size="sm" variant="outline" onClick={() => { void refresh() }}><RefreshCw />Aktualisieren</Button></div>

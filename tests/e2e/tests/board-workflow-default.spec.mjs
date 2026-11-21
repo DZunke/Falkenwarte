@@ -66,7 +66,7 @@ async function createProfile(ownerApi, project, connection, name) {
   return result.data;
 }
 
-async function createWorkflow(ownerApi, projectId, profile, name) {
+async function createWorkflow(ownerApi, projectId, profile, name, stageName = 'Bearbeitung') {
   const result = await ownerApi.post('/workflows', {
     project_id: projectId,
     name,
@@ -74,7 +74,7 @@ async function createWorkflow(ownerApi, projectId, profile, name) {
     stages: [{
       id: 'bearbeiten',
       kind: 'agent_run',
-      name: 'Bearbeitung',
+      name: stageName,
       agent_profile_id: profile.id,
       instructions: 'Bearbeite diese Phase und melde das Ergebnis.',
       entry_conditions: [],
@@ -174,8 +174,9 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   test.info().annotations.push({ type: 'scenario', description: 'Boardworkflows werden gespeichert, vorausgewählt und nur durch ausdrücklichen Ticketstart ausgeführt; ein manuelles Label sperrt auch eine eingefrorene Workflowroute.' });
   const setup = await setupProject(ownerApi, ownerPage, baseURL, qaMocks, 'Boardworkflow expliziter Start');
   const profile = await createProfile(ownerApi, setup.project, setup.connection, `Redaktion ${setup.suffix}`);
+  const alternateProfile = await createProfile(ownerApi, setup.project, setup.connection, `Lektorat ${setup.suffix}`);
   const defaultWorkflow = await createWorkflow(ownerApi, setup.project.id, profile, `Standardworkflow ${setup.suffix}`);
-  const routeWorkflow = await createWorkflow(ownerApi, setup.project.id, profile, `Labelroute ${setup.suffix}`);
+  const routeWorkflow = await createWorkflow(ownerApi, setup.project.id, alternateProfile, `Labelroute ${setup.suffix}`, 'Prüfung');
   const unfinishedWorkflow = await createUnassignedWorkflow(ownerApi, setup.project.id, `Unvollständiger Workflow ${setup.suffix}`);
   const manualLabel = await ownerApi.createLabel(setup.project.id, {
     name: `Manuell ${setup.suffix}`,
@@ -259,6 +260,23 @@ test('board workflow defaults wait for an explicit click and manual labels overr
   await expect(workflowSelect).toContainText(defaultWorkflow.name);
   const startButton = panel.getByRole('button', { name: 'Workflow starten', exact: true });
   await expect(startButton).toBeEnabled();
+  const launchSectionOrder = await panel.locator('[data-testid="execution-workflow-section"], [data-testid="execution-single-run-section"]')
+    .evaluateAll((sections) => sections.map((section) => section.getAttribute('data-testid')));
+  expect(launchSectionOrder).toEqual(['execution-workflow-section', 'execution-single-run-section']);
+  const phasePreview = panel.getByTestId('execution-workflow-phase-preview');
+  await phasePreview.locator('summary').click();
+  await expect(phasePreview).toContainText('Bearbeitung');
+  await expect(phasePreview).toContainText(profile.name);
+  await selectOption(ownerPage, workflowSelect, `${routeWorkflow.name} · Version ${routeWorkflow.definition_version}`);
+  await expect(phasePreview).toContainText('Prüfung');
+  await expect(phasePreview).toContainText(alternateProfile.name);
+  await selectOption(ownerPage, workflowSelect, `${defaultWorkflow.name} · Version ${defaultWorkflow.definition_version}`);
+  await expect(phasePreview).toContainText('Bearbeitung');
+  await expect(phasePreview).toContainText(profile.name);
+  const beforePreviewStart = await ownerApi.get(`/workflow-instances?task_id=${task.id}`);
+  expect(beforePreviewStart.response.status(), JSON.stringify(beforePreviewStart.data)).toBe(200);
+  expect(beforePreviewStart.data.items).toHaveLength(0);
+  expect((await qaMocks.t3Journal()).accepted_launches).toHaveLength(0);
   await closeTaskSheet(sheet);
 
   const taskBeforeRoute = await ownerApi.get(`/tasks/${task.id}`);
