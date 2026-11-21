@@ -8,13 +8,17 @@ Lade unter **Agents & T3 → Skill herunterladen** den aktuellen Falkenwarte-Ski
 
 ## 1. Eine Workflowvorlage anlegen
 
-Öffne in der Hauptnavigation **Workflows** und wähle das Projekt, für das du den Ablauf bauen willst. Trage im Abschnitt **Workflowvorlage anlegen** unter **Workflowname** `Discovery, Umsetzung und Review` ein.
+Öffne **Workflows** und bleibe in der Ansicht **Vorlagen**. Klicke auf **Neue Vorlage**, wähle oben im Editor unter **Projekt** das Projekt und trage bei **Workflowname** `Discovery, Umsetzung und Review` ein.
 
 Eine neue Vorlage enthält bereits eine Arbeitsphase. Richte diese erste Phase vollständig ein, bevor du weitere hinzufügst.
 
+Für weitere Projekte legst du jeweils eine eigene Vorlage an. Öffne **Vorlagen → Neue Vorlage**, wähle das Projekt und trage dessen Ablauf ein. Rollen, Boardspalten und Themenlabels werden für dieses Projekt angeboten. Eine allgemeine Agentrolle kannst du in mehreren Projekten oder Phasen wiederverwenden, wenn sie dafür freigegeben ist.
+
 ## 2. Discovery-Phase einrichten und weitere Phasen ergänzen
 
-In der ersten Zeile trägst du bei **Name der Phase 1** `DDD Discovery` ein. Wähle bei **Art der Phase** **Arbeitsphase** und bei **Agentrolle für Phase 1** die für das Projekt und die aktive T3-Verbindung freigegebene Discovery-Rolle.
+Beim Anlegen ist die erste Phase bereits ausgewählt und **Phasendetails** sind geöffnet. Bei einer gespeicherten Vorlage klickst du im **Ablaufplan** auf die Phase, die du bearbeiten möchtest. Die Details erscheinen daneben oder bei schmalem Fenster darunter. Trage bei **Name der Phase 1** `DDD Discovery` ein. Wähle bei **Art der Phase** **Arbeitsphase** und bei **Agentrolle für Phase 1** eine für das Projekt und die aktive T3-Verbindung freigegebene Rolle.
+
+Du brauchst nicht für jede Phase eine andere Agentrolle. Wenn eine allgemeine Rolle alle Aufgaben übernehmen kann, wähle sie auch in den weiteren Phasen aus. Jede Phase startet einen eigenen Auftrag mit ihrem **Auftrag für diese Phase** und der gespeicherten Übergabe. Du kannst stattdessen spezialisierte Rollen kombinieren.
 
 Trage den folgenden Text unter **Auftrag für diese Phase** ein.
 
@@ -24,7 +28,7 @@ Lies das Ticket und die relevanten Stellen im Projekt. Kläre die fachlichen Beg
 
 Wähle bei **Boardspalte bei Phasenstart für Phase 1** auf deinem **Projektboard** die Option **In Arbeit · In Arbeit**. Der erste Name im Eintrag ist der Spaltenname. Der zweite zeigt die Statuskategorie an. Wenn die Discovery beginnt, wandert das Ticket nach **In Arbeit**.
 
-Nachdem die erste Phase ausgefüllt ist, klicke auf **Phase hinzufügen**. Trage in der neuen Zeile bei **Name der Phase 2** `Programmierung` ein, wähle **Arbeitsphase** und bei **Agentrolle für Phase 2** eine für dieses Projekt und die aktive T3-Verbindung freigegebene Programmierrolle.
+Nachdem die erste Phase ausgefüllt ist, klicke auf **Phase hinzufügen**. Die neue Phase wird ausgewählt und **Phasendetails** öffnen sich. Trage bei **Name der Phase 2** `Programmierung` ein, wähle **Arbeitsphase** und bei **Agentrolle für Phase 2** dieselbe allgemeine Rolle oder eine für dieses Projekt und die aktive T3-Verbindung freigegebene Programmierrolle.
 
 Trage den folgenden Text unter **Auftrag für diese Phase** ein.
 
@@ -34,33 +38,49 @@ Lies das Ticket und die Übergabe aus der Discovery. Setze die vereinbarten Änd
 
 Wähle für **Boardspalte bei Phasenstart für Phase 2** ebenfalls **In Arbeit · In Arbeit**, damit das Ticket bei einer Rückkehr aus dem Review wieder in der Spalte **In Arbeit** landet.
 
-Klicke erst jetzt erneut auf **Phase hinzufügen**. Trage bei **Name der Phase 3** `Review` ein, wähle **Reviewphase** und ordne unter **Agentrolle für Phase 3** die Reviewrolle zu. Wenn es sie noch nicht gibt, lass **Keine Agentrolle** ausgewählt. Du kannst sie nach dem Speichern der Vorlage anlegen und zuordnen.
+Klicke erst jetzt erneut auf **Phase hinzufügen**. Die neue Phase wird ausgewählt und **Phasendetails** öffnen sich. Trage bei **Name der Phase 3** `Review` ein, wähle **Reviewphase** und ordne unter **Agentrolle für Phase 3** dieselbe allgemeine Rolle oder eine passende Reviewrolle zu. Wenn es die gewünschte Rolle noch nicht gibt, lass **Keine Agentrolle** ausgewählt. Du kannst sie nach dem Speichern der Vorlage anlegen und zuordnen.
 
 Trage den folgenden Text unter **Auftrag für diese Phase** ein.
 
 ```text
-Prüfe die Umsetzung unabhängig anhand des Tickets, der Erfolgskriterien und der Übergabe. Nenne bei jedem Änderungsbedarf die betroffene Stelle, die Auswirkung und die nötige Korrektur. Melde Änderungen nötig, wenn die Programmierung nacharbeiten muss. Sind die Kriterien erfüllt, melde den Erfolg und nenne die geprüften Nachweise. Ändere selbst keine Dateien.
+Prüfe die Änderungen unabhängig anhand des Tickets, der Erfolgskriterien, der Discovery-Übergabe und der gemeldeten Prüfungen. Erstelle eine Merge-Einschätzung.
+
+Ordne die Merge-Reife als freigabefähig, riskant aber behebbar oder menschlicher Eingriff erforderlich ein.
+
+Melde Angenommen, wenn die Erfolgskriterien geprüft sind und kein ungelöstes Risiko gegen das Zusammenführen spricht. Nenne die Belege und offene Einschränkungen.
+
+Melde Änderungen nötig, wenn das Zusammenführen wegen konkreter, behebbarer Findings riskant wäre. Nenne die betroffene Stelle, die Auswirkung und die nötige Korrektur.
+
+Melde Blockiert, wenn ein Risiko oder eine offene Frage eine menschliche Entscheidung oder zusätzliche Prüfung erfordert. Nenne genau, was der Eigentümer entscheiden oder prüfen muss.
+
+Ändere keine Dateien und führe den Merge nicht aus.
 ```
+
+Für dieses Beispiel führt **Angenommen** zum Ende des Workflows. **Änderungen nötig** führt zurück zur Programmierung. Für **Blockiert** gibt es in der Reviewphase keine automatische Route, damit der Ablauf mit dem Klärungsgrund auf eine menschliche Entscheidung wartet. Der Workflow beurteilt die Merge-Reife, aber der Eigentümer führt den Merge selbst aus.
 
 Wähle bei **Boardspalte bei Phasenstart für Phase 3** **Review · Review**. Das Ticket wandert beim Phasenstart in die Spalte **Review**. Lass im Beispiel **Menschliche Freigabe** ausgeschaltet. Bei wiederholtem Änderungsbedarf entscheidest du über eine weitere Runde, sobald das Überarbeitungslimit erreicht ist.
 
-Du kannst eine Vorlage auch mit noch nicht belegten Rollen speichern und später vervollständigen. Einen Ticketlauf kannst du erst starten, wenn jede Phase eine startbereite Agentrolle hat. Wenn du vor dem Weitergehen selbst entscheiden sollst, aktiviere zusätzlich **Menschliche Freigabe** für diese Phase. Die Spaltenwahl ändert den Ticketstatus beim Phasenstart und schließt das Ticket nicht ab.
+Du kannst eine Vorlage auch mit noch nicht belegten Rollen speichern und später vervollständigen. Ein Ticketlauf kann erst starten und die Vorlage erst als Boardstandard dienen, wenn jede Phase eine startbereite Agentrolle hat. Wenn du vor dem Weitergehen selbst entscheiden sollst, aktiviere zusätzlich **Menschliche Freigabe** für diese Phase. Die Spaltenwahl ändert den Ticketstatus beim Phasenstart und schließt das Ticket nicht ab.
 
-Die erste Phase in der Liste beginnt den Ablauf. Wenn du die Reihenfolge ändern willst, verwende **Phase N nach oben verschieben** oder **Phase N nach unten verschieben**. Prüfe danach, dass die gewünschte Startphase an erster Stelle steht und jede Rolle zur Phase passt.
+Die Phase mit dem Badge **Startphase** beginnt den Ablauf. Der **Ablaufplan** ordnet Phasen auf breiten Ansichten von links nach rechts und auf schmalen Ansichten von oben nach unten an. Über die Schaltflächen neben dem Phasennamen in **Phasendetails** kannst du eine Phase nach oben oder unten verschieben.
 
 ## 3. Übergänge zwischen den Phasen festlegen
 
-Die Reihenfolge entscheidet, welche Phase zuerst startet. Prüfe im Bereich der Übergänge, dass **DDD Discovery** mit dem Ergebnis **Angenommen** über eine **Standardroute** zu **Programmierung** führt und **Programmierung** mit **Angenommen** zu **Review**.
+Eine Verzweigung bietet mehrere mögliche nächste Phasen. Pro Ergebnis wählt Falkenwarte einen Übergang und übergibt das Ticket an die Rolle dieser Zielphase.
 
-Klicke unter **Übergänge und Ergebnisrouten** einmal auf **Übergang hinzufügen**. Wähle in der neuen Zeile bei **Von Phase** den Eintrag **Review**, bei **Ergebnis** **Änderungen nötig** und bei **Zu Phase** **Programmierung**. Lass **Label für diesen Übergang** auf **Standardroute**. Fordert das Review eine Korrektur, bekommt die Programmierrolle die Begründung und die Karte kehrt nach **In Arbeit** zurück.
+Klicke auf einen Pfeil im **Ablaufplan**, um **Übergangsdetails · N** zu öffnen. Mit **Übergang hinzufügen** erstellst du eine Route. Die neue Route wird ausgewählt und ihre Details öffnen sich. Bearbeite dort **Von Phase**, **Ergebnis** und **Zu Phase**.
 
-Für die Rückfrage aus der Programmierung brauchst du ein Themenlabel. Falls es noch fehlt, speichere zunächst den Entwurf mit **Workflow anlegen**. Öffne **Labels**, wähle dein Projekt und klicke auf **Label anlegen**. Lass **Labelart** auf **Thema**, gib als **Name** `Rückfrage zur Discovery` ein und klicke auf **Speichern**. Lege dort bei Bedarf auch das Themenlabel `Manuell` für den späteren Boardstandard an. Kehre zu **Workflows** zurück und öffne deine gespeicherte Vorlage mit **Workflow bearbeiten**.
+Prüfe, dass **DDD Discovery** mit dem Ergebnis **Angenommen** über die **Standardroute** zu **Programmierung** führt und **Programmierung** mit **Angenommen** zu **Review**.
 
-Ein Übergang pro Phase und Ergebnis ist die **Standardroute**. Optional kannst du über **Gelabelte Alternative hinzufügen** eine weitere Route für dasselbe Ergebnis einrichten und unter **Label für diesen Übergang** ein aktives Themenlabel auswählen. Zum Beispiel kannst du für **Programmierung** das Ergebnis **Blockiert** über das Label `Rückfrage zur Discovery` zu **DDD Discovery** leiten. Der Agent kann diese angebotene Route bei einer Rückfrage im Phasenbericht nennen.
+Klicke auf **Übergang hinzufügen**. In der ausgewählten Route wählst du zuerst **Review** bei **Von Phase**, dann **Programmierung** bei **Zu Phase** und zuletzt **Änderungen nötig** bei **Ergebnis**. Gibt es bereits aktive Themenlabels, erscheint auch **Label für diesen Übergang**. Lass es auf **Standardroute**. Ohne aktive Themenlabels wird das Feld nicht angezeigt und die Route ist bereits die Standardroute. Fordert das Review eine Korrektur, bekommt die Programmierrolle die Begründung und die Karte kehrt nach **In Arbeit** zurück.
+
+Für die Rückfrage aus der Programmierung brauchst du ein aktives Themenlabel. Falls es noch fehlt, speichere den Entwurf mit **Workflow anlegen**. Öffne **Labels**, wähle dein Projekt und klicke auf **Label anlegen**. Lass **Labelart** auf **Thema**, gib als **Name** `Rückfrage zur Discovery` ein und klicke auf **Speichern**. Kehre zu **Workflows → Vorlagen** zurück und klicke bei deiner Vorlage auf **Graph öffnen**.
+
+Für die Rückfrage legst du eine eigene Route mit **Übergang hinzufügen** an. Verwende hier nicht **Gelabelte Alternative hinzufügen**, weil diese Schaltfläche eine vorhandene Phase-Ergebnis-Kombination automatisch um ein Label ergänzt. Klicke auf **Übergang hinzufügen** und stelle zuerst **Von Phase** auf **Programmierung**. Ändere danach **Zu Phase** in **DDD Discovery** und **Ergebnis** in **Blockiert**. Ändere das Ziel vor dem Ergebnis, damit **Blockiert** nicht vorübergehend als Selbstübergang gesperrt ist. Wähle zuletzt bei **Label für diesen Übergang** `Rückfrage zur Discovery`. Der Agent kann diese angebotene Route bei einer Rückfrage im Phasenbericht nennen.
 
 Beim Hinzufügen einer Phase ergänzt Falkenwarte einen Übergang **Angenommen** von der bisherigen letzten Phase, wenn es dort noch keine solche Route gibt. Vorhandene Übergänge werden nicht still umgebogen. Wenn eine Phase nicht erreichbar ist oder ein Ergebnis keine passende Standardroute hat, klicke auf **Übergang hinzufügen**, fülle **Von Phase**, **Ergebnis** und **Zu Phase** aus und prüfe die Route in der Übersicht.
 
-Verwende für einen Themenabzweig ausschließlich ein aktives Themenlabel, das zu deinem Projekt gehört. Eine im Phasenbericht ausdrücklich gewählte Route hat Vorrang vor Ticketlabels, auch wenn der Agent die **Standardroute** ausdrücklich wählt. Wenn der Bericht keine Route nennt, wählt Falkenwarte einen eindeutigen passenden Themenabzweig aus den aktiven Ticketlabels. Gibt es keinen passenden Labelabzweig, greift die **Standardroute**, sofern sie für das Ergebnis vorhanden ist.
+Verwende für einen Themenabzweig ausschließlich ein aktives Themenlabel, das zu deinem Projekt gehört. Eine im Phasenbericht ausdrücklich gewählte Route hat Vorrang vor Ticketlabels, auch wenn der Agent ausdrücklich die **Standardroute** wählt. Nennt der Bericht keine Route, nimmt Falkenwarte einen eindeutigen passenden Abzweig aus den aktiven Themenlabels des Tickets. Gibt es keinen passenden Abzweig, gilt die **Standardroute**, sofern sie für das Ergebnis vorhanden ist.
 
 Ein Themenabzweig wählt das nächste Ziel und fordert für sich allein keine menschliche Freigabe an. Führt er in eine bereits besuchte frühere Phase, zählt dieser Rücksprung zur Reparaturgrenze, unabhängig davon, ob der Übergang gelabelt oder eine Standardroute ist.
 
@@ -72,13 +92,13 @@ Aktiviere **Menschliche Freigabe** für eine Phase, wenn du ihren Bericht prüfe
 
 Bei einer Phase mit Freigabepflicht fordert der Phasenlauf weiterhin eine Entscheidung an. Öffne dafür im Ticket **Ausführung**, wähle den Phasenlauf, lies den Bericht und klicke auf **Freigabe anfordern**. Entscheide die offene Freigabe anschließend unter **Entscheidungen**. Bereits gespeicherte Eingangsbedingungen bleiben sichtbar und erhalten, lassen sich im Editor aber nicht als freie Ausdrücke neu formulieren.
 
-Wähle für den ersten Durchgang unter **Automatische Überarbeitungsrunden** zum Beispiel `1`. Möglich sind Werte von `0` bis `20`. Jedes Ergebnis **Änderungen nötig** und jeder Rücksprung in eine bereits besuchte frühere Phase zählt, auch über eine Standardroute. Bis zum Limit kann Falkenwarte solche Runden automatisch fortsetzen. Bei `0` wartet die erste Runde auf deine Entscheidung. Am Limit prüfst du den letzten Bericht und kannst eine einzelne zusätzliche Runde mit Hinweis freigeben oder den Workflow abbrechen.
+Wähle für den ersten Durchgang unter **Überarbeitungsrunden** zum Beispiel `1`. Möglich sind Werte von `0` bis `20`. Jedes Ergebnis **Änderungen nötig** und jeder Rücksprung in eine bereits besuchte frühere Phase zählt, auch über eine Standardroute. Bis zum Limit kann Falkenwarte solche Runden automatisch fortsetzen. Bei `0` wartet die erste Runde auf deine Entscheidung. Am Limit prüfst du den letzten Bericht und kannst eine einzelne zusätzliche Runde mit Hinweis freigeben oder den Workflow abbrechen.
 
 ## 5. Vorlage speichern und Version prüfen
 
-Klicke auf **Workflow anlegen** oder, wenn du gerade die gespeicherte Vorlage bearbeitest, auf **Workflowversion speichern**. In **Workflows und laufende Instanzen** siehst du den Namen, die aktive Version und die Phasen. Die Vorlage startet damit keinen Agenten.
+Klicke auf **Workflow anlegen**. Danach erscheint die Vorlage in **Vorlagen** mit ihrer aktuellen Version. Das Speichern startet keinen Agenten.
 
-Wenn du später Änderungen vornehmen willst, öffne **Workflow bearbeiten** und speichere sie mit **Workflowversion speichern**. Das erzeugt eine neue Version. Bereits gestartete Abläufe behalten ihre gespeicherte Version auch beim Pausieren und Fortsetzen. Neue Starts verwenden die aktuelle Version.
+Wenn du später Änderungen vornehmen willst, klicke in **Vorlagen** bei der gespeicherten Vorlage auf **Graph öffnen** und dann auf **Workflowversion speichern**. Das erzeugt eine neue Version. Bereits gestartete Abläufe behalten ihre gespeicherte Version auch beim Pausieren und Fortsetzen. Neue Starts verwenden die aktuelle Version.
 
 ## 6. Eine Vorlage als Boardstandard auswählen
 
@@ -92,17 +112,17 @@ Die Boardvorgabe wählt einen Workflow für den späteren Start vor. Speichern o
 
 Öffne das Projektboard und wähle **Neues Ticket** oder ein vorhandenes Ticket mit einer klaren Aufgabe und prüfbaren Erfolgskriterien. Setze das Ticket auf **Bereit**, wenn es noch im **Backlog** steht.
 
-Wenn das Board eine Standardvorlage hat, siehst du sie im Ticket als Vorauswahl, sofern kein konfiguriertes Ausschlusslabel gesetzt ist. Prüfe die gewählte Vorlage, bevor du startest.
+Wenn dem Ticket eine Workflowlabel-Route zugeordnet ist, hat deren eingefrorene Version Vorrang vor dem Boardstandard und wird vorausgewählt. Ohne Ticketroute wählt Falkenwarte den Boardstandard vor. Das manuelle Ausschlusslabel des Boards sperrt den Workflowstart auch dann, wenn eine Vorlage vorausgewählt ist.
 
 ## 8. Den Workflow starten
 
-Öffne das Ticket und danach **Ausführung**. Prüfe im Abschnitt **Workflow starten** das Feld **Workflow** und wähle deine Vorlage, falls sie nicht bereits vorausgewählt ist. Kontrolliere die angezeigte Phasenzahl und Version und klicke einmal auf **Workflow starten**.
+Öffne das Ticket und danach **Ausführung**. Prüfe im Abschnitt **Workflow starten** das Feld **Workflow**. Die Vorauswahl kannst du für diesen Start durch einen anderen aktiven und startbereiten Workflow des Projekts ersetzen. Das ändert weder den Boardstandard noch die Workflowlabel-Zuordnung. Kontrolliere die angezeigte Phasenzahl und Version und klicke einmal auf **Workflow starten**.
 
 Unter **Ausführungen** siehst du den neuen Ablauf. **Start wird übertragen** zeigt den Versand an T3, danach sollte **Läuft in T3** oder ein bereits weiter fortgeschrittener Status erscheinen. Eine Providerberechtigungsanfrage bestätigst du im zugehörigen T3-Thread.
 
 ## 9. Fortschritt und Übergaben lesen
 
-Öffne im Ticket **Ablauf**. Unter **Workflows und Agentenläufe** siehst du die gespeicherten Phasen, ihre Rollen und Zustände. Öffne **Phasenauftrag ansehen**, um die für diese Version gespeicherte Arbeitsanweisung zu lesen. Unter **Tatsächliche Übergänge** erkennst du, welche Route Falkenwarte für ein gemeldetes Ergebnis gewählt hat.
+Öffne im Ticket **Ablauf**. Unter **Workflows und Agentenläufe** siehst du die gespeicherten Phasen, ihre Rollen und Zustände. Im **Workflowablauf** zeigt das Diagramm außerdem die möglichen Routen dieser Version. Klicke auf eine tatsächliche Route, um das gewählte Ergebnis, den zugehörigen Lauf und die verknüpfte Agentenmeldung zu lesen; das **Übergabeprotokoll ansehen** ist dabei geöffnet. Mit **Details schließen** kehrst du zum Diagramm zurück. Du erreichst dieselbe Ansicht über **Workflows → Läufe → Ticketablauf ansehen**.
 
 Öffne den Lauf der empfangenden Phase und klicke auf **Übergabeprotokoll ansehen**. Dort liest du den Bericht, offene Fragen und Links, die diese Rolle zu Beginn erhalten hat. Falkenwarte speichert die Übergabe mit dem Quellbericht und dem beim Übergang gültigen Stand.
 

@@ -71,7 +71,9 @@ Ein Ergebnisbericht ist eine Agentmeldung und kann Nachweise mit Status `reporte
 | `rejected` | Der gemeldete Phasenabschluss wird zurückgewiesen und der Run als fehlgeschlagen markiert. |
 | `invalidated` | Ergebnisdigest oder Aufgabenrevision weichen vom aktuellen Stand ab. Die Anwendung überträgt die alte Entscheidung nicht auf den neuen Stand. |
 
-Eine Workflowdefinition enthält versionierte Phasen, Bedingungen, Übergänge und Laufzeitgrenzen. `WorkflowDefinitionPolicy` prüft Grenzen, Übergänge und zeitlich erreichbare Bedingungen. Eine gestartete Instanz verwendet den Snapshot ihrer Definition auch nach dem Pausieren und Fortsetzen. Neue Instanzen starten mit der dann aktuellen Version.
+Eine Workflowdefinition enthält versionierte Phasen, Bedingungen, Übergänge und Laufzeitgrenzen. `WorkflowDefinitionPolicy` prüft Grenzen, Übergänge und zeitlich erreichbare Bedingungen. Eine gestartete Instanz verwendet den Snapshot ihrer Definition auch nach dem Pausieren und Fortsetzen.
+
+Ein Projekt kann mehrere Vorlagen anbieten. Beim ausdrücklichen Start im Ticket gilt für die Vorauswahl zuerst die eingefrorene Workflowlabel-Route, danach der Boardstandard. Wählt der Eigentümer die Ticketroute, startet ihre gebundene Version. Wählt er eine andere startbereite Vorlage, verwendet die neue Instanz deren aktuelle Version. Das manuelle Ausschlusslabel des Boards sperrt Workflowstarts für das betreffende Ticket.
 
 Jede Agentenphase bestimmt ihre Rolle und kann einen eigenen Arbeitsauftrag enthalten. Ein projektgebundener Workflow kann beim Phasenstart zusätzlich eine Boardspalte vorgeben. WorkManagement verwendet dafür den Zielstatus der Spalte. Kann das Ticket etwa wegen einer harten WIP-Grenze nicht dorthin wechseln, pausiert die Instanz vor dem Agentenauftrag. Eine Phase ohne Boardziel lässt das Ticket in seiner bisherigen Spalte.
 
