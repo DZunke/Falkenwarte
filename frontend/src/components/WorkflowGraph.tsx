@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -166,6 +166,7 @@ type WorkflowStageNode = Node<WorkflowStageNodeData, 'workflowStage'>
 
 type WorkflowTransitionEdgeData = {
   edgeIndex: number
+  nodeBounds: { x: number; y: number; width: number; height: number }[]
   graphKind: GraphTransition['graphKind']
   transitionIndex?: number
   eventIndexes?: number[]
@@ -625,25 +626,71 @@ function StageNodeView({ data, selected }: NodeProps<WorkflowStageNode>) {
   )
 }
 
-function roundedPolyline(points: { x: number; y: number }[]): { path: string; labelX: number; labelY: number } {
-  if (points.length < 2) return { path: '', labelX: 0, labelY: 0 }
-  const distances = points.slice(1).map((point, index) => Math.hypot(point.x - points[index].x, point.y - points[index].y))
-  const totalLength = distances.reduce((sum, distance) => sum + distance, 0)
-  let remaining = totalLength / 2
-  let labelX = points[0].x
-  let labelY = points[0].y
-  for (let index = 0; index < distances.length; index++) {
-    const distance = distances[index]
-    if (remaining <= distance) {
-      const ratio = distance === 0 ? 0 : remaining / distance
-      labelX = points[index].x + (points[index + 1].x - points[index].x) * ratio
-      labelY = points[index].y + (points[index + 1].y - points[index].y) * ratio
-      break
+type TransitionPathGeometry = {
+  path: string
+  labelX: number
+  labelY: number
+  pointAt: (progress: number) => { x: number; y: number }
+}
+
+type TransitionPathPart = {
+  length: number
+  pointAt: (progress: number) => { x: number; y: number }
+}
+
+function cubicPoint(
+  source: { x: number; y: number },
+  control1: { x: number; y: number },
+  control2: { x: number; y: number },
+  target: { x: number; y: number },
+  progress: number,
+): { x: number; y: number } {
+  const t = Math.max(0, Math.min(1, progress))
+  const inverse = 1 - t
+
+  return {
+    x: inverse ** 3 * source.x + 3 * inverse ** 2 * t * control1.x + 3 * inverse * t ** 2 * control2.x + t ** 3 * target.x,
+    y: inverse ** 3 * source.y + 3 * inverse ** 2 * t * control1.y + 3 * inverse * t ** 2 * control2.y + t ** 3 * target.y,
+  }
+}
+
+function quadraticPoint(
+  start: { x: number; y: number },
+  control: { x: number; y: number },
+  end: { x: number; y: number },
+  progress: number,
+): { x: number; y: number } {
+  const t = Math.max(0, Math.min(1, progress))
+  const inverse = 1 - t
+
+  return {
+    x: inverse ** 2 * start.x + 2 * inverse * t * control.x + t ** 2 * end.x,
+    y: inverse ** 2 * start.y + 2 * inverse * t * control.y + t ** 2 * end.y,
+  }
+}
+
+function roundedPolyline(points: { x: number; y: number }[]): TransitionPathGeometry {
+  if (points.length < 2) return { path: '', labelX: 0, labelY: 0, pointAt: () => ({ x: 0, y: 0 }) }
+  let path = `M ${points[0].x} ${points[0].y}`
+  const pathParts: TransitionPathPart[] = []
+  let cursor = points[0]
+
+  const appendLine = (end: { x: number; y: number }) => {
+    const start = cursor
+    const length = Math.hypot(end.x - start.x, end.y - start.y)
+    path += ` L ${end.x} ${end.y}`
+    if (length > 0) {
+      pathParts.push({
+        length,
+        pointAt: (progress) => ({
+          x: start.x + (end.x - start.x) * progress,
+          y: start.y + (end.y - start.y) * progress,
+        }),
+      })
     }
-    remaining -= distance
+    cursor = end
   }
 
-  let path = `M ${points[0].x} ${points[0].y}`
   for (let index = 1; index < points.length - 1; index++) {
     const previous = points[index - 1]
     const current = points[index]
@@ -651,18 +698,64 @@ function roundedPolyline(points: { x: number; y: number }[]): { path: string; la
     const previousLength = Math.hypot(current.x - previous.x, current.y - previous.y)
     const nextLength = Math.hypot(next.x - current.x, next.y - current.y)
     const radius = Math.min(18, previousLength / 3, nextLength / 3)
-    if (radius <= 0) continue
+    if (radius <= 0) {
+      appendLine(current)
+      continue
+    }
     const before = { x: current.x - ((current.x - previous.x) / previousLength) * radius, y: current.y - ((current.y - previous.y) / previousLength) * radius }
     const after = { x: current.x + ((next.x - current.x) / nextLength) * radius, y: current.y + ((next.y - current.y) / nextLength) * radius }
-    path += ` L ${before.x} ${before.y} Q ${current.x} ${current.y} ${after.x} ${after.y}`
+    appendLine(before)
+    path += ` Q ${current.x} ${current.y} ${after.x} ${after.y}`
+
+    const samples = Array.from({ length: 24 }, (_, sampleIndex) => sampleIndex / 24)
+    let previousPoint = before
+    let length = 0
+    const distances = samples.map((progress) => {
+      const point = quadraticPoint(before, current, after, progress)
+      length += Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y)
+      previousPoint = point
+      return length
+    })
+    pathParts.push({
+      length,
+      pointAt: (progress) => {
+        const targetDistance = length * progress
+        const sampleIndex = distances.findIndex((distance) => distance >= targetDistance)
+        if (sampleIndex < 0) return after
+
+        const previousDistance = sampleIndex === 0 ? 0 : distances[sampleIndex - 1]
+        const segmentLength = distances[sampleIndex] - previousDistance
+        const segmentProgress = segmentLength === 0 ? 0 : (targetDistance - previousDistance) / segmentLength
+        const previousProgress = sampleIndex === 0 ? 0 : samples[sampleIndex - 1]
+        const nextProgress = samples[sampleIndex]
+        const curveProgress = previousProgress + (nextProgress - previousProgress) * segmentProgress
+
+        return quadraticPoint(before, current, after, curveProgress)
+      },
+    })
+    cursor = after
   }
   const last = points[points.length - 1]
-  path += ` L ${last.x} ${last.y}`
+  appendLine(last)
+  const totalLength = pathParts.reduce((sum, part) => sum + part.length, 0)
+  const pointAt = (progress: number) => {
+    let remaining = totalLength * Math.max(0, Math.min(1, progress))
+    for (let index = 0; index < pathParts.length; index++) {
+      const part = pathParts[index]
+      if (remaining <= part.length || index === pathParts.length - 1) {
+        return part.pointAt(part.length === 0 ? 0 : remaining / part.length)
+      }
+      remaining -= part.length
+    }
 
-  return { path, labelX, labelY }
+    return last
+  }
+  const midpoint = pointAt(0.5)
+
+  return { path, labelX: midpoint.x, labelY: midpoint.y, pointAt }
 }
 
-function transitionPath(props: EdgeProps<WorkflowTransitionEdge>): { path: string; labelX: number; labelY: number } {
+function transitionPath(props: EdgeProps<WorkflowTransitionEdge>): TransitionPathGeometry {
   const { sourceX, sourceY, targetX, targetY, data } = props
   const lane = data?.lane ?? 0
   const layout = data?.layout ?? 'horizontal'
@@ -671,10 +764,16 @@ function transitionPath(props: EdgeProps<WorkflowTransitionEdge>): { path: strin
   if (layout === 'horizontal') {
     if (data?.isReturn) {
       const laneY = Math.max(sourceY, targetY) + 68 + lane * 72
+      const source = { x: sourceX, y: sourceY }
+      const control1 = { x: sourceX, y: laneY }
+      const control2 = { x: targetX, y: laneY }
+      const target = { x: targetX, y: targetY }
+      const midpoint = cubicPoint(source, control1, control2, target, 0.5)
       return {
         path: `M ${sourceX} ${sourceY} C ${sourceX} ${laneY}, ${targetX} ${laneY}, ${targetX} ${targetY}`,
-        labelX: (sourceX + targetX) / 2,
-        labelY: (sourceY + 6 * laneY + targetY) / 8,
+        labelX: midpoint.x,
+        labelY: midpoint.y,
+        pointAt: (progress) => cubicPoint(source, control1, control2, target, progress),
       }
     }
 
@@ -682,47 +781,116 @@ function transitionPath(props: EdgeProps<WorkflowTransitionEdge>): { path: strin
     const reach = Math.max(28, Math.min(130, Math.abs(targetX - sourceX) * 0.35))
     const control1 = { x: sourceX + reach, y: laneY }
     const control2 = { x: targetX - reach, y: laneY }
-    const labelProgress = Math.abs(targetY - sourceY) > 24 ? (targetX >= sourceX ? 0.58 : 0.42) : 0.5
-    const inverseProgress = 1 - labelProgress
-    const labelX = inverseProgress ** 3 * sourceX
-      + 3 * inverseProgress ** 2 * labelProgress * control1.x
-      + 3 * inverseProgress * labelProgress ** 2 * control2.x
-      + labelProgress ** 3 * targetX
-    const labelY = inverseProgress ** 3 * sourceY
-      + 3 * inverseProgress ** 2 * labelProgress * control1.y
-      + 3 * inverseProgress * labelProgress ** 2 * control2.y
-      + labelProgress ** 3 * targetY
+    const source = { x: sourceX, y: sourceY }
+    const target = { x: targetX, y: targetY }
+    const midpoint = cubicPoint(source, control1, control2, target, 0.5)
     return {
       path: `M ${sourceX} ${sourceY} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${targetX} ${targetY}`,
-      labelX,
-      labelY,
+      labelX: midpoint.x,
+      labelY: midpoint.y,
+      pointAt: (progress) => cubicPoint(source, control1, control2, target, progress),
     }
   }
 
   if (data?.isReturn) {
     const laneX = Math.max(sourceX, targetX) + 42 + lane * 56
+    const source = { x: sourceX, y: sourceY }
+    const control1 = { x: laneX, y: sourceY }
+    const control2 = { x: laneX, y: targetY }
+    const target = { x: targetX, y: targetY }
+    const midpoint = cubicPoint(source, control1, control2, target, 0.5)
     return {
       path: `M ${sourceX} ${sourceY} C ${laneX} ${sourceY}, ${laneX} ${targetY}, ${targetX} ${targetY}`,
-      labelX: (sourceX + 6 * laneX + targetX) / 8,
-      labelY: (sourceY + targetY) / 2,
+      labelX: midpoint.x,
+      labelY: midpoint.y,
+      pointAt: (progress) => cubicPoint(source, control1, control2, target, progress),
     }
   }
 
   const laneX = (sourceX + targetX) / 2 + lane * 56
   const controlY1 = sourceY + (targetY - sourceY) * 0.35
   const controlY2 = targetY - (targetY - sourceY) * 0.35
+  const source = { x: sourceX, y: sourceY }
+  const control1 = { x: laneX, y: controlY1 }
+  const control2 = { x: laneX, y: controlY2 }
+  const target = { x: targetX, y: targetY }
+  const midpoint = cubicPoint(source, control1, control2, target, 0.5)
   return {
     path: `M ${sourceX} ${sourceY} C ${laneX} ${controlY1}, ${laneX} ${controlY2}, ${targetX} ${targetY}`,
-    labelX: (sourceX + targetX + 6 * laneX) / 8,
-    labelY: (sourceY + targetY + 3 * controlY1 + 3 * controlY2) / 8,
+    labelX: midpoint.x,
+    labelY: midpoint.y,
+    pointAt: (progress) => cubicPoint(source, control1, control2, target, progress),
   }
+}
+
+function routeLabelPosition(
+  path: TransitionPathGeometry,
+  width: number,
+  height: number,
+  nodeBounds: readonly { x: number; y: number; width: number; height: number }[],
+): { x: number; y: number } {
+  const nodeClearance = 8
+  const candidates = [0.5]
+  for (let step = 1; step <= 20; step++) {
+    const offset = step * 0.02
+    candidates.push(0.5 + offset, 0.5 - offset)
+  }
+
+  let best = path.pointAt(0.5)
+  let bestOverlap = Number.POSITIVE_INFINITY
+  for (const progress of candidates) {
+    const point = path.pointAt(progress)
+    const left = point.x - width / 2
+    const right = point.x + width / 2
+    const top = point.y - height / 2
+    const bottom = point.y + height / 2
+    let overlapArea = 0
+
+    for (const node of nodeBounds) {
+      const overlapWidth = Math.min(right, node.x + node.width + nodeClearance) - Math.max(left, node.x - nodeClearance)
+      const overlapHeight = Math.min(bottom, node.y + node.height + nodeClearance) - Math.max(top, node.y - nodeClearance)
+      if (overlapWidth > 0 && overlapHeight > 0) overlapArea += overlapWidth * overlapHeight
+    }
+
+    if (overlapArea === 0) return point
+    if (overlapArea < bestOverlap) {
+      best = point
+      bestOverlap = overlapArea
+    }
+  }
+
+  return best
 }
 
 function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
   const [selectedBundleItem, setSelectedBundleItem] = useState<GraphRouteBundleItem | null>(null)
+  const [safeLabelPosition, setSafeLabelPosition] = useState<{ key: string; x: number; y: number } | null>(null)
+  const labelButtonRef = useRef<HTMLButtonElement>(null)
   const data = props.data
+  const path = useMemo(() => transitionPath(props), [
+    props.sourceX,
+    props.sourceY,
+    props.targetX,
+    props.targetY,
+    data?.lane,
+    data?.layout,
+    data?.isReturn,
+    data?.waypoints,
+  ])
+  const nodeBounds = data?.nodeBounds ?? []
+  const labelPositionKey = `${path.labelX}:${path.labelY}:${nodeBounds.map((node) => `${node.x},${node.y},${node.width},${node.height}`).join('|')}`
+  useLayoutEffect(() => {
+    const button = labelButtonRef.current
+    if (!button) return
+    const point = routeLabelPosition(path, button.offsetWidth, button.offsetHeight, nodeBounds)
+    setSafeLabelPosition((current) => current?.key === labelPositionKey && Math.abs(current.x - point.x) < 0.1 && Math.abs(current.y - point.y) < 0.1
+      ? current
+      : { key: labelPositionKey, ...point })
+  }, [path, labelPositionKey, nodeBounds, data?.labelMaxWidth, data?.accessibleLabel])
+  const labelPosition = safeLabelPosition?.key === labelPositionKey
+    ? safeLabelPosition
+    : { x: path.labelX, y: path.labelY }
   if (!data) return null
-  const path = transitionPath(props)
   const color = data.graphKind === 'planned'
     ? data.selectionStatus === 'selected' ? 'var(--primary)' : 'var(--muted-foreground)'
     : outcomeColor(data.outcome, data.isReturn)
@@ -763,11 +931,12 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
       <EdgeLabelRenderer>
         <div
           className="workflow-graph__edge-label nodrag nopan absolute z-10 pointer-events-auto"
-          style={{ transform: `translate(-50%, -50%) translate(${path.labelX}px, ${path.labelY}px)` }}
+          style={{ transform: `translate(-50%, -50%) translate(${labelPosition.x}px, ${labelPosition.y}px)` }}
         >
           <DropdownMenuTrigger asChild>
             <button
               type="button"
+              ref={labelButtonRef}
               data-testid={`workflow-graph-route-bundle-${data.bundleSourceIndex}-${data.bundleTargetIndex}`}
               aria-label={data.bundleAccessibleLabel}
               title={data.bundleAccessibleLabel}
@@ -857,10 +1026,11 @@ function TransitionEdgeView(props: EdgeProps<WorkflowTransitionEdge>) {
       <EdgeLabelRenderer>
         <div
           className="workflow-graph__edge-label nodrag nopan absolute z-10 pointer-events-auto"
-          style={{ transform: `translate(-50%, -50%) translate(${path.labelX}px, ${path.labelY}px)` }}
+          style={{ transform: `translate(-50%, -50%) translate(${labelPosition.x}px, ${labelPosition.y}px)` }}
         >
           <button
             type="button"
+            ref={labelButtonRef}
             data-testid={testId}
             aria-label={data.accessibleLabel}
             aria-pressed={props.selected}
@@ -947,6 +1117,7 @@ function WorkflowGraphCanvas({
     layout,
     containerWidth || 1100,
   ), [stageNodes, transitions, layout, containerWidth])
+  const nodeBounds = useMemo(() => [...graphLayout.nodes.values()].map(({ x, y, width, height }) => ({ x, y, width, height })), [graphLayout])
   const onConnectStagesRef = useRef(onConnectStages)
   const onReconnectTransitionRef = useRef(onReconnectTransition)
   onConnectStagesRef.current = onConnectStages
@@ -1084,6 +1255,7 @@ function WorkflowGraphCanvas({
         reconnectable: mode === 'definition' && !disabled && Boolean(onReconnectTransition),
         data: {
           edgeIndex: index,
+          nodeBounds,
           graphKind: transition.graphKind,
           transitionIndex: transition.transitionIndex,
           eventIndexes: transition.eventIndexes,
@@ -1122,7 +1294,7 @@ function WorkflowGraphCanvas({
         selected,
       } satisfies WorkflowTransitionEdge
     })
-  }, [transitions, mode, stageIndexById, stageNodes, routeLabels, routeLabelNames, graphLayout, controlledSelection, onReconnectTransition, onSelectRunTransition, onSelectPlannedTransition, runActivity, layout, setSelection, disabled])
+  }, [transitions, mode, stageIndexById, stageNodes, routeLabels, routeLabelNames, graphLayout, nodeBounds, controlledSelection, onReconnectTransition, onSelectRunTransition, onSelectPlannedTransition, runActivity, layout, setSelection, disabled])
 
   const isValidConnection = useCallback((connection: Connection | WorkflowTransitionEdge) => {
     const source = connection.source
