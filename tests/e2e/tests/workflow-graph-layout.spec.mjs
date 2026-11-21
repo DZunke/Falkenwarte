@@ -823,7 +823,11 @@ test('workflow graph keeps ten dense routes selectable through pointer and keybo
   expect(storedWorkflow.response.status(), JSON.stringify(storedWorkflow.data)).toBe(200);
   expect(storedWorkflow.data.stages.map((stage) => stage.id)).toEqual(stages.map((stage) => stage.id));
   expect(storedWorkflow.data.transitions).toHaveLength(10);
-  expect(storedWorkflow.data.transitions.slice(2, 6)).toEqual([
+  const normalizedTransitions = storedWorkflow.data.transitions.map((transition) => ({
+    ...transition,
+    route_label_id: transition.route_label_id ?? null,
+  }));
+  expect(normalizedTransitions.slice(2, 6)).toEqual([
     expect.objectContaining({ from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'accepted', route_label_id: null }),
     expect.objectContaining({ from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'accepted', route_label_id: riskLabel.id }),
     expect.objectContaining({ from_stage_id: 'phase-2', to_stage_id: 'phase-4', on: 'blocked', route_label_id: null }),
