@@ -27,6 +27,10 @@ Stelle eine Rückfrage über den sichtbaren T3- oder Nutzer-Dialog, wenn dieser 
 
 Lege ein Falkenwarte-Ticket nur auf ausdrücklichen Auftrag an. `tasks_create` benötigt `project_id`, `title` und eine neue `client_request_id`; `outcome=accepted` quittiert die Anlage, nicht den Abschluss der asynchronen Klassifikation. Lies den Intake mit `tasks_intake_get({"task_id":"<task_id>"})` und der Fähigkeit `tasks.read`. Bei `needs_information` darfst du nur an den ursprünglichen Melder gerichtete Felder mit `tasks_supply_information` beantworten: `task_id`, `answers` als Liste aus `{"field_key":"...","value":"..."}`, neue `client_request_id` und aktuelle Taskversion als `expected_version`. Beide schreibenden Werkzeuge benötigen `tasks.write`; lies danach den Intake erneut. Eigentümerentscheidungen triffst du nicht.
 
+## Zusammenführbarkeit beurteilen
+
+Verlangt der Phasenauftrag eine Merge-Einschätzung, vergleiche die Änderung mit dem angegebenen Zielstand. Nenne im Nachweis vom Typ `review` die geprüfte Revision oder den Arbeitsbaum, die betroffenen Dateien, ausgeführte Prüfungen und das begründete Urteil. Fehlt für eine automatische Zusammenführung eine Voraussetzung, nenne sie konkret. Wähle die angebotene Route für diesen Befund und übergib offene Entscheidungen in `open_questions`. Ein tatsächlicher Git-Merge benötigt einen eigenen Auftrag.
+
 ## Ergebnisbericht
 
 Rufe unmittelbar vor dem Bericht `runs_get({"run_id":"<Run-ID>"})` auf. Die Antwortfelder `id`, `attempt_no`, `snapshot.task_revision` müssen zu deinem Startauftrag passen; verwende `version` als `expected_version`. Wenn Lesen oder aktuelle Version fehlen, rate nicht, sondern bitte um `runs.read`.
