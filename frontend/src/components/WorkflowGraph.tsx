@@ -646,6 +646,7 @@ type WorkflowGraphCanvasProps = {
   onReconnectTransition?: WorkflowGraphProps['onReconnectTransition']
   disabled?: boolean
   containerWidth: number
+  containerHeight: number
   graphStages: GraphStage[]
   controlledSelection: WorkflowGraphSelection
   setSelection: (selection: WorkflowGraphSelection) => void
@@ -663,6 +664,7 @@ function WorkflowGraphCanvas({
   onReconnectTransition,
   disabled = false,
   containerWidth,
+  containerHeight,
   graphStages: stageNodes,
   controlledSelection,
   setSelection,
@@ -740,6 +742,8 @@ function WorkflowGraphCanvas({
       selected: isSelected,
     } satisfies WorkflowStageNode
   }), [stageNodes, layout, containerWidth, graphLayout, controlledSelection, connectionSource, connecting, onConnectStages, onReconnectTransition, transitions, setSelection, onSelectRun, disabled])
+  const fitDataRef = useRef({ nodes: graphNodes, layout: graphLayout })
+  fitDataRef.current = { nodes: graphNodes, layout: graphLayout }
 
   const graphEdges = useMemo(() => transitions.map((transition, index) => {
     const sourceIndex = stageIndexById.get(transition.from_stage_id) ?? 0
@@ -834,12 +838,21 @@ function WorkflowGraphCanvas({
     reconnectingTransitionIndex.current = null
   }, [disabled, onReconnectTransition, isValidConnection, setSelection])
 
-  const currentDefinition = `${mode}:${layout}:${stageNodes.map((stage) => stage.id).join(',')}:${transitions.map((transition) => `${transition.graphKind}:${transition.from_stage_id}>${transition.to_stage_id}:${transition.on}:${transition.route_label_id ?? ''}:${transition.eventIndexes?.join('.') ?? ''}`).join(',')}`
+  const geometryKey = JSON.stringify([
+    mode,
+    layout,
+    stageNodes.map((stage) => stage.id),
+    graphEdges.map(({ source, target, data }) => [
+      source, target, data.graphKind, data.outcome, data.routeLabel,
+      data.conditionsCount, data.selectionStatus, data.selectedVisits?.length,
+    ]),
+  ])
   const fitGraph = useCallback((duration = 180) => {
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      if (!canvasRef.current || graphNodes.length === 0) return
-      const nodesBounds = getNodesBounds(graphNodes)
-      const layoutNodes = [...graphLayout.nodes.values()]
+      const { nodes, layout: currentLayout } = fitDataRef.current
+      if (!canvasRef.current || nodes.length === 0) return
+      const nodesBounds = getNodesBounds(nodes)
+      const layoutNodes = [...currentLayout.nodes.values()]
       if (layoutNodes.length === 0) return
       let minX = Math.min(...layoutNodes.map((node) => node.x))
       let minY = Math.min(...layoutNodes.map((node) => node.y))
@@ -861,7 +874,7 @@ function WorkflowGraphCanvas({
         maxX = Math.max(maxX, bottomRight.x + 10)
         maxY = Math.max(maxY, bottomRight.y + 10)
       }
-      for (const edge of graphLayout.edges.values()) {
+      for (const edge of currentLayout.edges.values()) {
         for (const waypoint of edge.waypoints ?? []) {
           minX = Math.min(minX, waypoint.x)
           minY = Math.min(minY, waypoint.y)
@@ -872,14 +885,14 @@ function WorkflowGraphCanvas({
       if (maxX <= minX || maxY <= minY) return
       void fitBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }, { padding: 0.035, duration })
     }))
-  }, [fitBounds, graphNodes, graphLayout, screenToFlowPosition, getNodesBounds])
+  }, [fitBounds, screenToFlowPosition, getNodesBounds])
 
   useEffect(() => {
     if (graphNodes.length === 0 || !nodesInitialized) return
-    const frame = window.requestAnimationFrame(() => fitGraph(250))
+    const frame = window.requestAnimationFrame(() => fitGraph(0))
 
     return () => window.cancelAnimationFrame(frame)
-  }, [fitGraph, currentDefinition, containerWidth, graphNodes.length, nodesInitialized])
+  }, [fitGraph, geometryKey, containerWidth, containerHeight, graphNodes.length, nodesInitialized])
 
   const cancelConnectionMode = useCallback(() => {
     setConnecting(false)
@@ -1013,8 +1026,6 @@ function WorkflowGraphCanvas({
         maxZoom={1.4}
         deleteKeyCode={null}
         selectionKeyCode={null}
-        fitView
-        fitViewOptions={{ padding: 0.08, minZoom: 0.045, maxZoom: 1.15 }}
         className="workflow-graph__flow"
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
@@ -1076,6 +1087,7 @@ export function WorkflowGraph({
   const containerRef = useRef<HTMLDivElement>(null)
   const instructionsId = useId()
   const [containerWidth, setContainerWidth] = useState(0)
+  const [containerHeight, setContainerHeight] = useState(0)
   const [localSelection, setLocalSelection] = useState<WorkflowGraphSelection>(null)
   const definitionTransitions = transitions ?? []
   const graphTransitions = useMemo(() => mode === 'run'
@@ -1089,7 +1101,10 @@ export function WorkflowGraph({
     if (!element) return
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0]
-      if (entry) setContainerWidth(entry.contentRect.width)
+      if (entry) {
+        setContainerWidth(entry.contentRect.width)
+        setContainerHeight(entry.contentRect.height)
+      }
     })
     observer.observe(element)
 
@@ -1142,6 +1157,7 @@ export function WorkflowGraph({
             onReconnectTransition={onReconnectTransition}
             disabled={disabled}
             containerWidth={widthForLayout}
+            containerHeight={containerHeight}
             graphStages={graphStagesData}
             controlledSelection={controlledSelection}
             setSelection={setSelection}
