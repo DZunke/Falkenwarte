@@ -759,15 +759,67 @@ final class RunHandler implements OperationHandler
             throw new Problem(409, 'approval_stale', 'Die Entscheidung muss sich auf den aktuellen Ergebnisstand beziehen.');
         }
         $report = $this->currentReport($run);
+
+        $approval = $this->approvalForResult($run, $report, (string) $body['kind'], 'pending');
+        if (null !== $approval) {
+            $this->openAttention($run['task_id'], $run['project_id'], 'approval_pending', 'owner');
+
+            return $approval;
+        }
+
+        return $this->createApproval($run, $report, (string) $body['kind'], $body['reason'] ?? null);
+    }
+
+    /** @param array<string, mixed> $run @param array<string, mixed> $report @return array<string, mixed> */
+    private function createApproval(array $run, array $report, string $kind, ?string $reason): array
+    {
         $approval = $this->store->save('approvals', [
-            'project_id' => $run['project_id'], 'run_id' => $runId, 'attempt_no' => $run['attempt_no'],
+            'project_id' => $run['project_id'], 'run_id' => $run['id'], 'attempt_no' => $run['attempt_no'],
             'task_revision' => $report['task_revision'], 'result_digest' => $run['result_digest'],
             'status' => 'pending', 'requested_at' => $this->store->now(), 'decided_at' => null,
-            'decided_by' => null, 'reason' => $body['reason'] ?? null, 'kind' => (string) $body['kind'],
+            'decided_by' => null, 'reason' => $reason, 'kind' => $kind,
         ], 'approval.requested');
         $this->openAttention($run['task_id'], $run['project_id'], 'approval_pending', 'owner');
 
         return $approval;
+    }
+
+    /** @param array<string, mixed> $run @param array<string, mixed> $report @return array<string, mixed>|null */
+    private function approvalForResult(array $run, array $report, ?string $kind = null, ?string $status = null): ?array
+    {
+        foreach ($this->store->all('approvals', (string) $run['project_id']) as $approval) {
+            if (($approval['run_id'] ?? null) === $run['id']
+                && (int) ($approval['attempt_no'] ?? 0) === (int) $run['attempt_no']
+                && (int) ($approval['task_revision'] ?? 0) === (int) $report['task_revision']
+                && (null === $kind || ($approval['kind'] ?? null) === $kind)
+                && (null === $status || ($approval['status'] ?? null) === $status)
+                && is_string($approval['result_digest'] ?? null)
+                && hash_equals((string) $run['result_digest'], $approval['result_digest'])) {
+                return $approval;
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $run @param array<string, mixed> $report @param array<string, mixed> $task */
+    private function ensureAutomaticPhaseApproval(array $run, array $report, array $task): void
+    {
+        if (empty($report['accepted_for_reconciliation'])
+            || 'reported_success' !== ($report['outcome'] ?? null)
+            || (int) $report['attempt_no'] !== (int) $run['attempt_no']
+            || (int) $report['task_revision'] !== (int) $run['snapshot']['task_revision']
+            || (int) $task['version'] !== (int) $run['snapshot']['task_revision']
+            || !is_string($run['result_digest'] ?? null)) {
+            return;
+        }
+
+        if (null !== $this->approvalForResult($run, $report)) {
+            return;
+        }
+
+        $kind = 'review' === ($run['snapshot']['stage_kind'] ?? null) ? 'review' : 'completion';
+        $this->createApproval($run, $report, $kind, null);
     }
 
     /** @return array<string, mixed> */
@@ -820,6 +872,9 @@ final class RunHandler implements OperationHandler
             $run['state'] = 'failed';
             $run['status_reason'] = 'Die Eigentümerentscheidung hat den gemeldeten Phasenabschluss zurückgewiesen.';
             $this->store->save('runs', $run, 'run.phase_rejected');
+            if (null !== $run['workflow_instance_id']) {
+                $this->store->enqueue('workflow.advance', ['instance_id' => $run['workflow_instance_id']]);
+            }
         }
 
         return $approval;
@@ -1980,6 +2035,12 @@ final class RunHandler implements OperationHandler
             is_string($run['result_digest'] ?? null) ? $run['result_digest'] : null,
         );
 
+        if ('approval_pending' === $decision->outcome && !empty($policy['require_human_phase_decision'])) {
+            if (null !== $report) {
+                $this->ensureAutomaticPhaseApproval($run, $report, $task);
+            }
+        }
+
         if ('failed' === $decision->outcome) {
             $run['state'] = 'failed';
             $run['status_reason'] = $decision->reason;
@@ -2323,8 +2384,12 @@ final class RunHandler implements OperationHandler
             return;
         }
         $report = $this->currentReport($latest, false);
+        $rejectedSuccessfulReport = 'failed' === $latest['state']
+            && null !== $report
+            && 'reported_success' === ($report['outcome'] ?? null);
         $outcome = match (true) {
             'succeeded' === $latest['state'] => 'accepted',
+            $rejectedSuccessfulReport => 'failed',
             null !== $report => (string) $report['outcome'],
             'failed' === $latest['state'] => 'failed',
             'cancelled' === $latest['state'] => 'blocked',
@@ -2341,7 +2406,7 @@ final class RunHandler implements OperationHandler
             static fn (array $candidate): bool => ($candidate['from_stage_id'] ?? null) === $stageId
                 && ($candidate['on'] ?? null) === $outcome,
         ));
-        $runReportSelectedRoute = null !== $report && array_key_exists('route_label_id', $report);
+        $runReportSelectedRoute = !$rejectedSuccessfulReport && null !== $report && array_key_exists('route_label_id', $report);
         $routeLabelId = $runReportSelectedRoute ? $report['route_label_id'] : null;
         $matchingTaskRoutes = [];
         if (!$runReportSelectedRoute) {
