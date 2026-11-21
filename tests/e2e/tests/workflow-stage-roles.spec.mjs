@@ -250,7 +250,7 @@ async function approvePhaseIfRequired(ownerApi, runId) {
   if (!String(run.status_reason ?? '').includes('Eigentümerentscheidung')) {
     return readUntil(ownerApi, '/runs/' + runId, (item) => item.state === 'succeeded', 'Die Reviewphase muss nach dem externen Abschluss automatisch enden.');
   }
-  const pendingApprovals = await readUntil(ownerApi, '/approvals?run_id=' + runId + '&status=pending', (page) => page.items?.length === 1, 'Die verpflichtende Phasenentscheidung muss automatisch angelegt werden.');
+  const pendingApprovals = await readUntil(ownerApi, '/approvals?project_id=' + run.project_id + '&run_id=' + runId + '&status=pending', (page) => page.items?.length === 1, 'Die verpflichtende Phasenentscheidung muss automatisch angelegt werden.');
   const approval = pendingApprovals.items[0];
   const expectedKind = run.snapshot.stage_kind === 'review' ? 'review' : 'completion';
   expect(approval).toMatchObject({

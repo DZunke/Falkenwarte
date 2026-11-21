@@ -186,7 +186,8 @@ function assertNoOverlap(bounds, description) {
       const right = bounds[rightIndex];
       const overlapX = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
       const overlapY = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
-      expect(overlapX > 1 && overlapY > 1, `${description}: ${left.name} und ${right.name} dürfen sich nicht überdecken.`).toBe(false);
+      const rect = ({ name, x, y, width, height }) => `${name} [x=${x.toFixed(1)}, y=${y.toFixed(1)}, w=${width.toFixed(1)}, h=${height.toFixed(1)}]`;
+      expect(overlapX > 1 && overlapY > 1, `${description}: ${rect(left)} und ${rect(right)} dürfen sich nicht überdecken (Überlappung x=${overlapX.toFixed(1)}, y=${overlapY.toFixed(1)}).`).toBe(false);
     }
   }
 }
@@ -305,24 +306,51 @@ async function assertGraphContentsFitPane(graph, expectedStageCount, expectedRou
   }
 }
 
-async function assertFieldsFit(ownerPage, inspector, fieldNames, viewport, description) {
-  const fields = [];
+async function assertFieldsFit(inspector, fieldNames, viewport, description) {
+  const controls = [];
   for (const name of fieldNames) {
     const control = inspector.getByLabel(name, { exact: true });
     await expect(control, `${description}: ${name} ist sichtbar`).toBeVisible();
-    const box = await control.boundingBox();
-    expect(box, `${description}: ${name} hat eine DOM-Hit-Area`).not.toBeNull();
-    expect(box.width, `${description}: ${name} ist bedienbar`).toBeGreaterThan(80);
-    fields.push({ name, ...box });
+    controls.push(control);
+  }
+
+  const measurement = await inspector.evaluate((element, names) => {
+    const inspectorBounds = element.getBoundingClientRect();
+    const fields = names.map((name) => {
+      const label = [...element.querySelectorAll('label')].find((candidate) => candidate.textContent?.trim() === name);
+      const control = label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+      if (!label || !control || !element.contains(control)) return { name, missing: true };
+
+      const bounds = control.getBoundingClientRect();
+      const style = getComputedStyle(control);
+      return {
+        name,
+        missing: false,
+        visible: style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0,
+        x: bounds.left - inspectorBounds.left,
+        y: bounds.top - inspectorBounds.top,
+        width: bounds.width,
+        height: bounds.height,
+      };
+    });
+
+    return {
+      inspector: { x: 0, y: 0, width: inspectorBounds.width, height: inspectorBounds.height },
+      fields,
+    };
+  }, fieldNames);
+  const fields = measurement.fields;
+  for (const field of fields) {
+    expect(field.missing, `${description}: ${field.name} ist über sein Label mit einem Control im Inspector verknüpft.`).toBe(false);
+    expect(field.visible, `${description}: ${field.name} ist sichtbar.`).toBe(true);
+    expect(field.width, `${description}: ${field.name} ist bedienbar.`).toBeGreaterThan(80);
   }
   assertNoOverlap(fields, description);
 
-  const inspectorBox = await inspector.boundingBox();
-  expect(inspectorBox).not.toBeNull();
-  for (const field of fields) assertBoundsInside(field, inspectorBox, `${description}: ${field.name} bleibt im Inspector`);
+  for (const field of fields) assertBoundsInside(field, measurement.inspector, `${description}: ${field.name} bleibt im Inspector`);
 
-  for (const name of fieldNames) {
-    const control = inspector.getByLabel(name, { exact: true });
+  for (const [index, name] of fieldNames.entries()) {
+    const control = controls[index];
     await control.scrollIntoViewIfNeeded();
     const box = await control.boundingBox();
     expect(box).not.toBeNull();
@@ -504,7 +532,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
     }
     await assertGraphContentsFitPane(graph, 3, 4, `${viewport.name} Phaseninspector`);
     await assertGraphGridColumns(stageInspector, viewport.width >= 1280 ? 2 : 1, `${viewport.name}: Canvas und Phaseninspector verwenden nur verfügbare Spalten.`);
-    await assertFieldsFit(ownerPage, stageInspector, [
+    await assertFieldsFit(stageInspector, [
       'Name der Phase 1',
       'Art der Phase',
       'Agentrolle für Phase 1',
@@ -523,11 +551,11 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await expect(standardInspector.getByLabel('Zu Phase')).toContainText(stageNames[0]);
       await expect(standardInspector.getByLabel('Label für diesen Übergang')).toContainText('Standardroute');
       await assertGraphContentsFitPane(graph, 3, 4, 'Desktop Standardrouteninspector');
-      await assertFieldsFit(ownerPage, standardInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Standardrückroute');
+      await assertFieldsFit(standardInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Standardrückroute');
       const transitionInspector = await selectReturnTransition(ownerPage, graph, 3, false);
       await assertGraphContentsFitPane(graph, 3, 4, 'Desktop gelabelter Übergangsinspector');
       await assertGraphGridColumns(transitionInspector, 2, 'Der Rückweg öffnet dieselbe Canvas-/Inspector-Aufteilung.');
-      await assertFieldsFit(ownerPage, transitionInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Rückroute');
+      await assertFieldsFit(transitionInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Rückroute');
       const routeLabelControl = transitionInspector.getByLabel('Label für diesen Übergang', { exact: true });
       await routeLabelControl.click();
       await expect(ownerPage.getByRole('option', { name: longRouteLabelName, exact: true })).toBeVisible();
@@ -542,7 +570,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await assertPageFits(ownerPage, viewport, 'Dunkles Desktop-Theme');
       const darkInspector = await selectReturnTransition(ownerPage, graph, 3, true);
       await assertGraphContentsFitPane(graph, 3, 4, 'Dunkler Desktop Übergangsinspector');
-      await assertFieldsFit(ownerPage, darkInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Dunkle Desktop-Rückroute');
+      await assertFieldsFit(darkInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Dunkle Desktop-Rückroute');
       await testInfo.attach('workflow-graph-desktop-dark', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
       await darkInspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
       await expect(darkInspector).toHaveCount(0);
@@ -553,7 +581,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await expect(inspectorHeading).toBeInViewport();
       await assertGraphContentsFitPane(graph, 3, 4, `${viewport.name} Übergangsinspector`);
       await assertGraphGridColumns(transitionInspector, 1, `${viewport.name}: Canvas und Inspector stehen in einer Spalte.`);
-      await assertFieldsFit(ownerPage, transitionInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, `${viewport.name}-Rückroute`);
+      await assertFieldsFit(transitionInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, `${viewport.name}-Rückroute`);
       await testInfo.attach(`workflow-graph-${viewport.width}`, { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
       await transitionInspector.getByRole('button', { name: 'Details schließen', exact: true }).click();
       await expect(transitionInspector).toHaveCount(0);
@@ -635,7 +663,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
   await expect(noLabelInspector.getByLabel('Zu Phase')).toContainText(stageNames[0]);
   await expect(noLabelInspector.getByLabel('Label für diesen Übergang')).toHaveCount(0);
   await assertGraphGridColumns(noLabelInspector, 2, 'Ohne Themenlabels reserviert das Layout nur Canvas und Inspector.');
-  await assertFieldsFit(ownerPage, noLabelInspector, ['Von Phase', 'Ergebnis', 'Zu Phase'], { width: 1588, height: 850 }, 'Rückroute ohne Themenlabels');
+  await assertFieldsFit(noLabelInspector, ['Von Phase', 'Ergebnis', 'Zu Phase'], { width: 1588, height: 850 }, 'Rückroute ohne Themenlabels');
 
   const connectButton = noLabelGraph.graph.getByTestId('workflow-graph-connect-mode');
   await connectButton.click();

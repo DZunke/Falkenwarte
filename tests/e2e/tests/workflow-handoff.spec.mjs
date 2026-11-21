@@ -293,7 +293,7 @@ test('M4 implementation hands a frozen report to review and the owner completes 
     expect(reviewResult.report.evidence_ids).toHaveLength(1);
     const reviewEvidenceId = reviewResult.report.evidence_ids[0];
     const awaitingPhaseDecision = await readUntil(ownerApi, `/runs/${reviewRunId}`, (run) => run.state === 'verifying' && run.status_reason?.includes('Eigentümerentscheidung'), 'Die Reviewphase muss ihre eigene Ownerentscheidung abwarten.');
-    const pendingApprovals = await readUntil(ownerApi, `/approvals?run_id=${reviewRunId}&status=pending`, (page) => page.items?.length === 1, 'Die Reviewphase muss genau eine automatische Reviewentscheidung für den gemeldeten Ergebnisstand anlegen.');
+    const pendingApprovals = await readUntil(ownerApi, `/approvals?project_id=${project.id}&run_id=${reviewRunId}&status=pending`, (page) => page.items?.length === 1, 'Die Reviewphase muss genau eine automatische Reviewentscheidung für den gemeldeten Ergebnisstand anlegen.');
     const reviewApproval = pendingApprovals.items[0];
     expect(reviewApproval).toMatchObject({
       run_id: reviewRunId,
