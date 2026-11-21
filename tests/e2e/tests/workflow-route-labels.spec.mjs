@@ -410,12 +410,15 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     for (const index of selectedCandidateIndexes) {
       await expect(workflowGraph.getByTestId(`workflow-graph-planned-transition-${index}`)).toHaveCount(0);
     }
-    await expect(plannedEdges).toHaveCount(finalFlow.candidate_transitions.length - new Set(selectedCandidateIndexes).size);
     const alternativeIndexes = [labelB.id, labelC.id].map((routeLabelId) => finalFlow.candidate_transitions.findIndex((transition) => transition.route_label_id === routeLabelId));
     expect(alternativeIndexes.every((index) => index >= 0)).toBe(true);
     for (const index of alternativeIndexes) {
       expect(finalFlow.selected_transitions.some((event) => candidateMatchesEvent(finalFlow.candidate_transitions[index], event))).toBe(false);
+      await expect(workflowGraph.getByTestId(`workflow-graph-planned-transition-${index}`)).toHaveCount(0);
     }
+    const individuallyRenderedCandidateCount = finalFlow.candidate_transitions.length
+      - new Set([...selectedCandidateIndexes, ...alternativeIndexes]).size;
+    await expect(plannedEdges).toHaveCount(individuallyRenderedCandidateCount);
     const defaultAlternativeIndex = finalFlow.candidate_transitions.findIndex((transition) => transition.from_stage_id === 'reporting' && transition.to_stage_id === 'fallback' && !transition.route_label_id);
     expect(defaultAlternativeIndex).toBeGreaterThanOrEqual(0);
     expect(finalFlow.selected_transitions.some((event) => candidateMatchesEvent(finalFlow.candidate_transitions[defaultAlternativeIndex], event))).toBe(false);
@@ -440,19 +443,21 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     const instanceBeforeInspectingAlternative = await ownerApi.get(`/workflow-instances/${instance.id}`);
     expect(instanceBeforeInspectingAlternative.data.run_ids).toHaveLength(3);
     await alternativeItems[0].click();
-    await expect(routeBundleDetails).toContainText(labelB.name);
-    const selectedPlannedRoute = ownerPage.getByTestId(`workflow-graph-route-bundle-selection-${sourceStageIndex}-${targetStageIndex}`);
-    await expect(selectedPlannedRoute).toContainText(labelB.name);
-    await expect(selectedPlannedRoute).toContainText('Diese Auswahl im Diagramm startet keinen Auftrag.');
-    await expect(flowPanel.getByTestId(`task-flow-planned-transition-${alternativeIndexes[0]}`)).toContainText(labelB.name);
+    await expect(routeBundleDetails).toBeHidden();
+    const plannedRouteDetails = flowPanel.getByTestId(`task-flow-planned-transition-${alternativeIndexes[0]}`);
+    await expect(plannedRouteDetails).toContainText(labelB.name);
+    await expect(plannedRouteDetails).toContainText('Diese Auswahl zeigt nur die gespeicherte Definition. Sie startet keinen Auftrag.');
+    await routeBundle.click();
+    await expect(routeBundleDetails).toBeVisible();
+    await expect(alternativeItems[1]).toBeVisible();
     await alternativeItems[1].click();
-    await expect(routeBundleDetails).toContainText(labelC.name);
-    await expect(selectedPlannedRoute).toContainText(labelC.name);
-    await expect(flowPanel.getByTestId(`task-flow-planned-transition-${alternativeIndexes[1]}`)).toContainText(labelC.name);
+    await expect(routeBundleDetails).toBeHidden();
+    const plannedRouteDetailsC = flowPanel.getByTestId(`task-flow-planned-transition-${alternativeIndexes[1]}`);
+    await expect(plannedRouteDetailsC).toContainText(labelC.name);
+    await expect(plannedRouteDetailsC).toContainText('Diese Auswahl zeigt nur die gespeicherte Definition. Sie startet keinen Auftrag.');
     await testInfo.attach('ticket-flow-dense-route-options', { body: await ownerPage.screenshot({ fullPage: true }), contentType: 'image/png' });
     expect((await ownerApi.get(`/workflow-instances/${instance.id}`)).data.run_ids).toHaveLength(3);
     expect((await taskFlow(ownerApi, task.id, instance.id)).selected_transitions).toEqual(finalFlow.selected_transitions);
-    await routeBundle.click();
     await expect(routeBundleDetails).toBeHidden();
     const plannedDefaultAlternative = workflowGraph.getByTestId(`workflow-graph-planned-transition-${defaultAlternativeIndex}`);
     await expect(plannedDefaultAlternative).toBeVisible();
