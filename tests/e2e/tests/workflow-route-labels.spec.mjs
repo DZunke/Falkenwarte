@@ -399,7 +399,7 @@ test('reporting role selects a frozen route back to Discovery with its report ha
       const label = position === 0 ? labelB : labelC;
       await expect(alternative).toBeVisible();
       await expect(alternative).toContainText(label.name);
-      await expect(alternative).toContainText('Möglich');
+      await expect(alternative).toContainText('Bisher unbesucht');
     }
     const instanceBeforeInspectingAlternative = await ownerApi.get(`/workflow-instances/${instance.id}`);
     expect(instanceBeforeInspectingAlternative.data.run_ids).toHaveLength(3);
@@ -407,7 +407,7 @@ test('reporting role selects a frozen route back to Discovery with its report ha
     await expect(routeBundleDetails).toContainText(labelB.name);
     const selectedPlannedRoute = ownerPage.getByTestId(`workflow-graph-route-bundle-selection-${sourceStageIndex}-${targetStageIndex}`);
     await expect(selectedPlannedRoute).toContainText(labelB.name);
-    await expect(selectedPlannedRoute).toContainText('Wird erst nach einer tatsächlichen Auswahl ausgeführt.');
+    await expect(selectedPlannedRoute).toContainText('Diese Auswahl im Diagramm startet keinen Auftrag.');
     await alternativeItems[1].click();
     await expect(routeBundleDetails).toContainText(labelC.name);
     await expect(selectedPlannedRoute).toContainText(labelC.name);
