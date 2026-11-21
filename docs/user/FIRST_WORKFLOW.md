@@ -12,6 +12,8 @@ Lade unter **Agents & T3 → Skill herunterladen** den aktuellen Falkenwarte-Ski
 
 Eine neue Vorlage enthält bereits eine Arbeitsphase. Richte diese erste Phase vollständig ein, bevor du weitere hinzufügst.
 
+Für eine Vorlage zur Prüfung von Integrationskandidaten und offenen Risiken kannst du denselben Graphen mit vier Phasen aufbauen. [Vierphasige Vorlage „Integrationsreife prüfen“ einrichten](INTEGRATION_READINESS_WORKFLOW.md)
+
 ## 2. Discovery-Phase einrichten und weitere Phasen ergänzen
 
 Beim Anlegen ist die erste Phase bereits ausgewählt und **Phasendetails** sind geöffnet. Bei einer gespeicherten Vorlage klickst du im **Ablaufplan** auf die Phase, die du bearbeiten möchtest. Die Details erscheinen daneben oder bei schmalem Fenster darunter. Trage bei **Name der Phase 1** `DDD Discovery` ein. Wähle bei **Art der Phase** **Arbeitsphase** und bei **Agentrolle für Phase 1** eine für das Projekt und die aktive T3-Verbindung freigegebene Rolle.
