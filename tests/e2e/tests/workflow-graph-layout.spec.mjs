@@ -202,6 +202,75 @@ async function assertPageFits(ownerPage, viewport, description) {
   expect(documentBounds.clientWidth).toBeLessThanOrEqual(viewport.width);
 }
 
+async function measureRouteLabelPathDistances(graph, transitionIndexes) {
+  return graph.evaluate((element, indexes) => indexes.map((index) => {
+    const label = element.querySelector(`[data-workflow-edge-index="${index}"]`);
+    const edge = [...element.querySelectorAll('.react-flow__edge')]
+      .find((candidate) => candidate.getAttribute('data-id') === `workflow-definition-${index}`);
+    const path = edge?.querySelector('.react-flow__edge-path');
+    const pathMatrix = path?.getScreenCTM();
+    if (!label || !(path instanceof SVGPathElement) || !pathMatrix) {
+      return { index, missing: true };
+    }
+
+    const bounds = label.getBoundingClientRect();
+    const center = { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+    const length = path.getTotalLength();
+    const sampleCount = 800;
+    let nearestDistanceCssPixels = Number.POSITIVE_INFINITY;
+    let nearestPoint = null;
+    for (let sample = 0; sample <= sampleCount; sample += 1) {
+      const pathPoint = path.getPointAtLength(length * sample / sampleCount);
+      const screenPoint = new DOMPoint(pathPoint.x, pathPoint.y).matrixTransform(pathMatrix);
+      const distance = Math.hypot(screenPoint.x - center.x, screenPoint.y - center.y);
+      if (distance < nearestDistanceCssPixels) {
+        nearestDistanceCssPixels = distance;
+        nearestPoint = { x: screenPoint.x, y: screenPoint.y };
+      }
+    }
+
+    return {
+      index,
+      missing: false,
+      center,
+      nearestPoint,
+      nearestDistanceCssPixels,
+      pathData: path.getAttribute('d'),
+      screenMatrix: [pathMatrix.a, pathMatrix.b, pathMatrix.c, pathMatrix.d, pathMatrix.e, pathMatrix.f],
+    };
+  }), transitionIndexes);
+}
+
+async function assertRouteLabelsFollowSvgPaths(graph, transitionIndexes, description) {
+  let lastMeasurements;
+  let previousGeometry = '';
+  let stableReads = 0;
+  await expect.poll(async () => {
+    lastMeasurements = await measureRouteLabelPathDistances(graph, transitionIndexes);
+    if (lastMeasurements.some((measurement) => measurement.missing)) {
+      stableReads = 0;
+      previousGeometry = '';
+      return false;
+    }
+    const geometry = JSON.stringify(lastMeasurements.map(({ center, nearestPoint, pathData, screenMatrix }) => ({
+      center,
+      nearestPoint,
+      pathData,
+      screenMatrix,
+    })));
+    stableReads = geometry === previousGeometry ? stableReads + 1 : 0;
+    previousGeometry = geometry;
+    return stableReads >= 2;
+  }, { timeout: 10_000, message: `${description}: SVG-Pfade und zugehörige Routenlabels müssen stabil messbar sein.` }).toBe(true);
+
+  for (const measurement of lastMeasurements) {
+    expect(
+      measurement.nearestDistanceCssPixels,
+      `${description}: Route ${measurement.index} Labelzentrum (${measurement.center.x.toFixed(1)}, ${measurement.center.y.toFixed(1)} CSS-Pixel) folgt ihrem sichtbaren SVG-Pfad; nächster Punkt (${measurement.nearestPoint.x.toFixed(1)}, ${measurement.nearestPoint.y.toFixed(1)}), Distanz ${measurement.nearestDistanceCssPixels.toFixed(2)} CSS-Pixel bei 800 gleichmäßig verteilten Pfadproben.`,
+    ).toBeLessThanOrEqual(8);
+  }
+}
+
 async function assertNodes(graph, viewport, description) {
   const nodes = graph.locator('[data-testid^="workflow-graph-stage-"]');
   await expect(nodes).toHaveCount(3);
@@ -524,6 +593,9 @@ test('workflow graph stays selectable, readable and within bounds across desktop
     expect(graphBox.x).toBeGreaterThanOrEqual(-1);
     expect(graphBox.x + graphBox.width).toBeLessThanOrEqual(viewport.width + 1);
     await assertGraphContentsFitPane(graph, 3, 4, `${viewport.name} Ausgangsansicht`);
+    if (viewport.width === 1588) {
+      await assertRouteLabelsFollowSvgPaths(graph, [0, 1], 'Desktop Ausgangsansicht: direkte Routechips liegen auf ihren SVG-Pfaden');
+    }
     await assertNodes(graph, viewport, viewport.name);
     const stageInspector = await selectStage(ownerPage, graph, 'research', stageNames[0], profiles[0].name, viewport.width < 1280);
     if (viewport.width < 1280) {
@@ -555,6 +627,7 @@ test('workflow graph stays selectable, readable and within bounds across desktop
       await assertFieldsFit(standardInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Standardrückroute');
       const transitionInspector = await selectReturnTransition(ownerPage, graph, 3, false);
       await assertGraphContentsFitPane(graph, 3, 4, 'Desktop gelabelter Übergangsinspector');
+      await assertRouteLabelsFollowSvgPaths(graph, [0, 1], 'Desktop Übergangsinspector: direkte Routechips folgen ihren nach dem Reflow gezeichneten SVG-Pfaden');
       await assertGraphGridColumns(transitionInspector, 2, 'Der Rückweg öffnet dieselbe Canvas-/Inspector-Aufteilung.');
       await assertFieldsFit(transitionInspector, ['Von Phase', 'Ergebnis', 'Zu Phase', 'Label für diesen Übergang'], viewport, 'Desktop-Rückroute');
       const routeLabelControl = transitionInspector.getByLabel('Label für diesen Übergang', { exact: true });
