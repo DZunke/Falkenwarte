@@ -13,5 +13,5 @@ interface BoardWorkflowPolicyReader
     /** @param array<string, mixed> $workflow */
     public function isReadyForBoard(array $workflow, string $projectId): bool;
 
-    public function assertStartAllowed(array $task, ?string $boardId, string $workflowId, int $definitionVersion): void;
+    public function assertStartAllowed(array $task, ?string $boardId, string $workflowId, int $definitionVersion, bool $allowOwnerOverride = false): void;
 }

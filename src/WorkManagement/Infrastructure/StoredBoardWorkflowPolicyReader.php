@@ -102,7 +102,7 @@ final readonly class StoredBoardWorkflowPolicyReader implements BoardWorkflowPol
         return $this->projection('available', $candidate['board_id'], $candidate['workflow_id'], $candidate['definition_version'], null);
     }
 
-    public function assertStartAllowed(array $task, ?string $boardId, string $workflowId, int $definitionVersion): void
+    public function assertStartAllowed(array $task, ?string $boardId, string $workflowId, int $definitionVersion, bool $allowOwnerOverride = false): void
     {
         $policy = $this->resolve($task, $boardId);
         if ('excluded' === $policy['state']) {
@@ -127,6 +127,14 @@ final readonly class StoredBoardWorkflowPolicyReader implements BoardWorkflowPol
             }
 
             return;
+        }
+
+        if ($hasPinnedChoice && !$allowOwnerOverride) {
+            $code = $hasTaskRoute ? 'workflow_route_conflict' : 'board_workflow_conflict';
+            $detail = $hasTaskRoute
+                ? 'Der automatische Start muss die eingefrorene Ticketroute verwenden.'
+                : 'Der automatische Start muss den für dieses Board festgelegten Standard verwenden.';
+            throw new Problem(409, $code, $detail);
         }
 
         if ($hasPinnedChoice) {

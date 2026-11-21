@@ -977,7 +977,7 @@ final class RunHandler implements OperationHandler
         if (null !== $boardId && !is_string($boardId)) {
             throw new Problem(422, 'validation_failed', 'Die Boardauswahl ist ungültig.');
         }
-        $this->boardWorkflowPolicy->assertStartAllowed($task, $boardId, (string) $body['workflow_id'], (int) $body['definition_version']);
+        $this->boardWorkflowPolicy->assertStartAllowed($task, $boardId, (string) $body['workflow_id'], (int) $body['definition_version'], $actor->owner);
         $workflow = $this->workflowDefinition((string) $body['workflow_id'], (int) $body['definition_version']);
         if (!$workflow['enabled'] || (null !== $workflow['project_id'] && $workflow['project_id'] !== $task['project_id'])) {
             throw new Problem(409, 'workflow_unavailable', 'Der Workflow ist deaktiviert oder gehört zu einem anderen Projekt.');
