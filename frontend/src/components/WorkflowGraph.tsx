@@ -579,7 +579,7 @@ function StageNodeView({ data, selected }: NodeProps<WorkflowStageNode>) {
         }}
         className={cn(
           'workflow-graph__node nodrag nopan flex min-h-0 w-full flex-1 flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 text-left text-card-foreground transition-colors hover:border-primary/55 focus-visible:outline-none',
-          runs.length > 0 && 'rounded-b-none border-b-0 pb-1',
+          runs.length > 0 && 'gap-1 rounded-b-none border-b-0 px-3 pt-2 pb-1',
           data.connectionSource && 'ring-2 ring-primary/60',
           data.stage.missing && 'cursor-not-allowed border-dashed opacity-70',
         )}
@@ -593,10 +593,10 @@ function StageNodeView({ data, selected }: NodeProps<WorkflowStageNode>) {
           {data.stage.start && !data.stage.statusLabel && <Badge variant="secondary" className="px-1.5 text-[10px]">Startphase</Badge>}
           {data.connectionSource && <Badge variant="secondary" className="px-1.5 text-[10px]">Ausgang</Badge>}
         </span>
-        <span className="flex min-h-0 grow items-center overflow-hidden" title={data.stage.name}>
+        <span className={cn('flex min-h-0 grow items-center overflow-hidden', runs.length > 0 && 'min-h-[2.5rem]')} title={data.stage.name}>
           <span lang="de" className="line-clamp-2 hyphens-auto text-base font-semibold leading-tight [overflow-wrap:anywhere]">{data.stage.name}</span>
         </span>
-        <span className="grid min-w-0 gap-1 border-t pt-2 text-xs">
+        <span className={cn('grid min-w-0 gap-1 border-t pt-2 text-xs', runs.length > 0 && 'gap-0.5 pt-1')}>
           <span className="flex min-w-0 items-center gap-2">
             <UserRound className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span className="truncate" title={data.stage.profileTitle ?? data.stage.profileLabel}>{data.stage.profileLabel}</span>
